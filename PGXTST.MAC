@@ -1,0 +1,184 @@
+;============================================================
+; FILE:    PGXTST.MAC
+; PROJECT: VI
+; MODULE:  PAGING exerciser (test harness -- NOT editor code).
+;
+; PGTST.MAC proved WordMaster's file layer RAM-only (the whole file fits in the
+; window, nothing evicts).  PGXTST forces REAL eviction and proves the paged
+; round-trip is byte-exact.
+;
+; The knob is WINCAP: after BINIT (which sets BUFEND from the TPA top) the harness
+; LOWERS BUFEND to TXTBEG+WINSIZE, shrinking the window so a modest test file no
+; longer fits.  This is not a second code path -- PGCONST scales its constants
+; from BUFEND's high byte exactly as on a small machine, so the identical load /
+; spill / save code runs, just with the eviction seams actually firing.  WINSIZE
+; is kept large enough that BUFEND's high byte stays >= ~10H, or PGCONST's
+; PGSCAL would round to 0 (a degenerate machine that can't page at all).
+;
+; The battery (same shape as PGTST):
+;   1. BINIT           -- init the gap buffer
+;   2. WINCAP          -- BUFEND := TXTBEG + WINSIZE  (shrink the window)
+;   3. OPENFIL         -- open the command-tail file and read it via FILLBUF; a
+;                         file larger than the window loads only its head, leaving
+;                         input unread (005BH stays set) -- the paging signal
+;   4. measure         -- checksum + length of the loaded (partial) text
+;   5. record RESLEN, and the harness reads 005BH, to confirm eviction engaged
+;   6. edit + SAVEFIL  -- insert a marker, then SAVCLO's FLUSHTX/FILLBF2 loop
+;                         pages the WHOLE file through OUTFCB with real marks
+;
+; pgxtst.py stages files larger than the window, runs PGXTST, confirms the load
+; was partial (paging fired), and byte-compares the full load+edit round-trip.
+;============================================================
+
+WBOOT	EQU	0
+INREM	EQU	5BH		; CP/M zero-page: OPENFIL's "source has data" flag
+
+	EXTRN	BINIT
+	EXTRN	OPENFIL, SAVEFIL
+	EXTRN	INSBLK, PUTCUR
+	EXTRN	TXTBEG, GAPBEG, GAPEND, TXTEND, BUFEND
+
+WINSIZE EQU	1800H		; forced window: TXTBEG..TXTBEG+WINSIZE (~6 KB)
+EDITAT	EQU	150		; insert offset (in the resident head, near top)
+
+	PUBLIC	LDCKS, LDLEN, RESLEN, INREM0, DONE
+	PUBLIC	CNTTST			; BUF.MAC PAGESTP count-test (resident stub)
+	PUBLIC	CMDCNT, KBPOLL		; BUF.MAC line-move EXTRNs (stubbed)
+
+	CSEG
+
+;============================================================
+; The battery: shrink the window, load, checksum, edit, save.
+;============================================================
+START:	LXI	SP,STACK
+	CALL	BINIT
+;--- WINCAP: lower BUFEND to TXTBEG+WINSIZE so the file no longer fits ---
+	LHLD	TXTBEG		; = TXTBAS just after BINIT (empty buffer)
+	LXI	D,WINSIZE
+	DAD	D
+	SHLD	BUFEND		; the forced (small) window top
+	CALL	OPENFIL		; read the command-tail file (partial if > window)
+;--- record the load: checksum/length of the resident text + paging evidence ---
+	CALL	TMEASURE	; -> CKSUM, TLEN of the loaded logical text
+	LHLD	CKSUM
+	SHLD	LDCKS
+	LHLD	TLEN
+	SHLD	LDLEN
+	SHLD	RESLEN		; resident bytes after load (< filesize if paged)
+	LDA	INREM		; 005BH: FFH if input still unread (paging fired)
+	STA	INREM0
+;--- edit: insert a marker at EDITAT (in the resident head) ---
+	LHLD	GAPEND		; cursor at start -> GAPEND is logical offset 0
+	LXI	D,EDITAT
+	DAD	D		; HL = address of logical offset EDITAT
+	CALL	PUTCUR		; move the cursor there
+	LXI	D,MARKER
+	LXI	B,MARKLN
+	CALL	INSBLK		; insert MARKER at the cursor
+	CALL	SAVEFIL		; FLUSHTX/FILLBF2 page the whole file back out
+	MVI	A,0FFH
+	STA	DONE		; reached the end cleanly
+	JMP	WBOOT
+
+;CNTTST -- stub for BUF.MAC's PAGESTP (DELTO's tail): resident battery, so Z
+; ("count exhausted") is correct -- PAGESTP returns instead of CALLing an
+; unresolved-to-0000 (WBOOT) symbol.  See BUFTST for the full note.
+CNTTST:
+	XRA	A
+	RET
+;CMDCNT / KBPOLL -- stubs for BUF.MAC's line move (GOLINE/SCRLST): no command
+; count and no keyboard in this batch battery.
+KBPOLL:
+	RET
+CMDCNT: DW	0
+
+;------------------------------------------------------------
+; TMEASURE -- order-sensitive checksum + length of the logical text.
+; Logical text = [TXTBEG..GAPBEG) ++ [GAPEND..TXTEND).  (Same as PGTST.MAC.)
+;------------------------------------------------------------
+TMEASURE:
+	LXI	H,0
+	SHLD	CKSUM
+	SHLD	TLEN
+
+	LHLD	TXTBEG
+	XCHG			; DE = TXTBEG
+	LHLD	GAPBEG		; HL = GAPBEG
+	CALL	SPANBC		; BC = GAPBEG - TXTBEG
+	LHLD	TXTBEG
+	CALL	SUMBC
+
+	LHLD	GAPEND
+	XCHG			; DE = GAPEND
+	LHLD	TXTEND		; HL = TXTEND
+	CALL	SPANBC		; BC = TXTEND - GAPEND
+	LHLD	GAPEND
+	CALL	SUMBC
+	RET
+
+;------------------------------------------------------------
+; SUMBC -- fold BC bytes at [HL] into CKSUM (rotate-left-1 then add), TLEN += BC.
+;------------------------------------------------------------
+SUMBC:
+	MOV	A,B
+	ORA	C
+	RZ
+	PUSH	H
+	PUSH	B
+	LHLD	TLEN
+	DAD	B
+	SHLD	TLEN		; TLEN += BC
+	POP	B
+	POP	H
+SBLP:
+	MOV	A,B
+	ORA	C
+	RZ
+	MOV	A,M
+	PUSH	H
+	PUSH	B
+	LHLD	CKSUM
+	DAD	H		; CKSUM <<= 1, CY = old bit 15
+	JNC	SB1
+	INX	H		; fold the carry back in (rotate left 1)
+SB1:
+	MVI	D,0
+	MOV	E,A
+	DAD	D		; CKSUM += byte
+	SHLD	CKSUM
+	POP	B
+	POP	H
+	INX	H
+	DCX	B
+	JMP	SBLP
+
+;------------------------------------------------------------
+; SPANBC -- BC := HL - DE (HL kept).  Local copy (harness self-contained).
+;------------------------------------------------------------
+SPANBC:
+	MOV	A,L
+	SUB	E
+	MOV	C,A
+	MOV	A,H
+	SBB	D
+	MOV	B,A
+	RET
+
+;------------------------------------------------------------
+; Data
+;------------------------------------------------------------
+MARKER: DB	'[EDIT@150]'	; distinctive edit marker inserted at EDITAT
+MARKLN	EQU	$-MARKER
+
+CKSUM:	DW	0		; scratch: checksum of the current logical text
+TLEN:	DW	0		; scratch: length of the current logical text
+LDCKS:	DW	0		; checksum of the loaded (resident) text
+LDLEN:	DW	0		; length of the loaded (resident) text
+RESLEN: DW	0		; resident byte count after load (< filesize=paged)
+INREM0: DB	0		; snapshot of 005BH after load (FFH => paging fired)
+DONE:	DB	0		; nonzero if the battery reached the end
+
+	DS	64
+STACK:
+
+	END	START

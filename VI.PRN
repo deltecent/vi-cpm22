@@ -1,0 +1,233 @@
+	MACRO-80 3.44	09-Dec-81	PAGE	1
+
+
+                                ;============================================================
+                                ; FILE:    VI.MAC
+                                ; PROJECT: VI
+                                ; MODULE:  Editor entry + main render-dispatch loop.
+                                ;------------------------------------------------------------
+                                ; The real program: it owns START (0100H), stands up the buffer, discovers the
+                                ; terminal geometry, opens the file named on the command tail, paints, then runs
+                                ; the edit loop -- read a key, dispatch it through the vi core (CMD.MAC), repaint,
+                                ; until :q / :wq sets QUITF -- which is the one key that does NOT repaint: the
+                                ; text on the screen is what the editor leaves behind, cursor on the bottom row.
+                                ;
+                                ; The command line is read before anything else (CMDTAIL is also the default DMA
+                                ; address, so the first sector read would take it with it), and its '+{n}' is
+                                ; applied once the file is loaded and before the first paint.
+                                ;
+                                ; VI links FIRST so START sits at the CP/M TPA base 0100H; BUF links LAST so its
+                                ; MEMBAS (top of the image) is the base of the gap-buffer arena.
+                                ;
+                                ; The loop sets a default render intent (R_FULL) before each dispatch; CMD.MAC
+                                ; lowers it to R_MOVE for a pure cursor motion, so SCDRAW repositions the cursor
+                                ; without a full repaint when the viewport did not move; the edits that can be
+                                ; drawn cheaper set their own R_* intent (RENDER.md).
+                                ;
+                                ; EXTRNS: BINIT (BUF); SCINIT/SCDRAW/SCDONE (SCRN); GETKEY (KEY);
+                                ;         FOPEN/CMDDIS/QUITF (CMD).
+                                ;============================================================
+                         C      	INCLUDE VI.INC
+                         C      ;============================================================
+                         C      ; FILE:    VI.INC
+                         C      ; PROJECT: VI -- vi-style CP/M editor on WordMaster's gap buffer
+                         C      ; CPU:     Intel 8080 (strict -- no Z80 extensions)
+                         C      ; ASSEMBLER: Microsoft M80
+                         C      ;------------------------------------------------------------
+                         C      ; Shared equates for the vi LAYER only (KEY.MAC, CMD.MAC).  BUF.MAC and
+                         C      ; PAGE.MAC are verbatim WordMaster transcriptions and define their own local
+                         C      ; constants; they do NOT include this file.  INCLUDE VI.INC first in KEY/CMD.
+                         C      ; There is one windowed gap buffer (BUF.MAC's flat pointer row), so there is no
+                         C      ; buffer descriptor or mode flag here.
+                         C      ;============================================================
+                         C      
+                         C      ;------------------------------------------------------------
+                         C      ; CP/M SYSTEM ADDRESSES
+                         C      ;------------------------------------------------------------
+  0005                   C      BDOS	EQU	0005H		; BDOS entry point
+  0000                   C      WBOOT	EQU	0000H		; warm boot / exit to CP/M
+  005C                   C      DFTFCB	EQU	005CH		; default FCB (command argument 1)
+  0080                   C      CMDTAIL EQU	0080H		; command tail / default DMA
+                         C      
+                         C      ;------------------------------------------------------------
+                         C      ; BDOS FUNCTION NUMBERS (only those the vi layer uses)
+                         C      ;------------------------------------------------------------
+  0001                   C      BF_CONIN  EQU	1		; console input (blocking)
+  0002                   C      BF_CONOUT EQU	2		; console output: E = char
+  0009                   C      BF_PRTSTR EQU	9		; print $-terminated string: DE = addr
+  000B                   C      BF_CONST  EQU	11		; console status
+  0019                   C      BF_CURDSK EQU	25		; current disk: A = 0 (A:) ..
+	MACRO-80 3.44	09-Dec-81	PAGE	1-1
+
+
+                         C      
+                         C      ;------------------------------------------------------------
+                         C      ; ASCII AND CP/M CONTROL CODES
+                         C      ;------------------------------------------------------------
+  0000                   C      NUL	EQU	00H		; null (string terminator)
+  0007                   C      BEL	EQU	07H		; bell
+  0008                   C      BS	EQU	08H		; backspace (Ctrl-H)
+  0009                   C      TAB	EQU	09H		; horizontal tab
+  000A                   C      LF	EQU	0AH		; line feed  -- the line TERMINATOR
+  000D                   C      CR	EQU	0DH		; carriage return -- decoration before LF
+  001B                   C      ESC	EQU	1BH		; escape
+  007F                   C      DEL	EQU	7FH		; rubout / delete
+  001A                   C      CPMEOF	EQU	1AH		; CP/M end-of-file marker (Ctrl-Z)
+                         C      
+  0008                   C      TABWID	EQU	8		; tab stop interval (display only)
+                         C      
+                         C      ;------------------------------------------------------------
+                         C      ; RENDER INTENT (RINTENT) -- what the last dispatched command did, so SCRN.MAC
+                         C      ; can choose the cheapest correct paint.  The command layer (CMD.MAC) sets it
+                         C      ; per key; SCRN.MAC reads it.  The default is the conservative R_FULL (full
+                         C      ; repaint = the proven Stage-3a behavior); pure cursor motions lower it to
+                         C      ; R_MOVE so the renderer repositions the cursor without redrawing; an in-line
+                         C      ; edit lowers it to R_LINE so only the current row is redrawn.  A mistag can
+                         C      ; therefore only cost an unnecessary full repaint, never leave stale text.
+                         C      ;------------------------------------------------------------
+  0000                   C      R_FULL	EQU	0		; edit area may be stale -> full repaint (SCDRAW)
+  0001                   C      R_MOVE	EQU	1		; cursor moved only -> reposition (if viewport stable)
+  0002                   C      R_LINE	EQU	2		; current line changed only -> redraw that one row
+  0003                   C      R_DLIN	EQU	3		; one line deleted at the cursor row -> DL + redraw bottom
+  0004                   C      R_ICH	EQU	4		; one printable char inserted mid-line -> ICH (no tail redraw)
+  0005                   C      R_ILIN	EQU	5		; one line opened at the cursor row -> IL + redraw that row and the one above
+  0006                   C      R_JOIN	EQU	6		; the line below joined onto the cursor's -> redraw that row + DL the one under it
+                         C      
+                         C      ;------------------------------------------------------------
+                         C      ; EDITOR MODES (EDMODE)
+                         C      ;------------------------------------------------------------
+  0000                   C      EM_CMD	EQU	0		; command mode (default)
+  0001                   C      EM_INS	EQU	1		; insert mode
+  0002                   C      EM_REP	EQU	2		; replace mode ('R')
+  0003                   C      EM_EX	EQU	3		; ex command line (transient, inside VC_EX)
+                         C      
+                         C      ; THE MESSAGE THE BOTTOM ROW STILL OWES (MSGWHT).  A message is drawn after the
+                         C      ; frame, never during the command, because a full repaint blanks that row.
+  0000                   C      MW_NON	EQU	0		; nothing to say
+  0001                   C      MW_FIL	EQU	1		; the file just opened
+  0002                   C      MW_WRT	EQU	2		; ':w' wrote it
+  0003                   C      MW_CTG	EQU	3		; '^G' -- where am I
+                         C      
+  0028                   C      EXMAX	EQU	40		; max chars on the ':' ex command line
+                         C      
+                         C      ;------------------------------------------------------------
+                         C      ; RESERVE BLOCK -- sizes of storage that RSV.MAC holds above the linked image
+                         C      ; on behalf of another module.  They live here, not in the module that uses
+                         C      ; the storage, so the module and RSV.MAC cannot disagree about a size.
+                         C      ;------------------------------------------------------------
+  0080                   C      DOTMAX	EQU	128		; keys one recorded change may hold (see '.')
+	MACRO-80 3.44	09-Dec-81	PAGE	1-2
+
+
+  0020                   C      KBRSIZ	EQU	32		; KEY.MAC's type-ahead ring (a power of two)
+  0003                   C      MKMAX	EQU	3		; marks 'a'-'c' -- three is enough (COMMANDS.md)
+  0004                   C      MKSIZ	EQU	4		; each: its offset, then PGTOPM when it was set
+                         C      
+                         C      ;------------------------------------------------------------
+                         C      ; KEY DECODER -- GETKEY return types (B) and action codes (C when B=KT_ACT).
+                         C      ; See KEY.MAC.
+                         C      ;------------------------------------------------------------
+  0000                   C      KT_NONE EQU	0		; no key (unrecognised ESC sequence, discarded)
+  0001                   C      KT_ACT	EQU	1		; C = ACT_xxx action code
+  0002                   C      KT_CHAR EQU	2		; C = ASCII character (printable or control)
+                         C      
+  0001                   C      ACT_CURUP EQU	1		; cursor up    (ESC[A / ESC OA)
+  0002                   C      ACT_CURDN EQU	2		; cursor down  (ESC[B / ESC OB)
+  0003                   C      ACT_CURRT EQU	3		; cursor right (ESC[C / ESC OC)
+  0004                   C      ACT_CURLT EQU	4		; cursor left  (ESC[D / ESC OD)
+  0005                   C      ACT_LINST EQU	5		; Home / line start (ESC[H / ESC[1~)
+  0006                   C      ACT_LINEN EQU	6		; End  / line end   (ESC[F / ESC[4~)
+  0007                   C      ACT_PGUP  EQU	7		; page up   (ESC[5~)
+  0008                   C      ACT_PGDN  EQU	8		; page down (ESC[6~)
+  0009                   C      ACT_INS	  EQU	9		; Insert key (ESC[2~)
+  000A                   C      ACT_DEL	  EQU	10		; Delete key (ESC[3~)
+  000B                   C      ACT_ESC	  EQU	11		; lone ESC (after timeout)
+  000B                   C      ACT_MAX	  EQU	11		; highest defined action code
+                         C      
+  01F4                   C      ESCTMO	EQU	500		; polls before a lone ESC is confirmed
+                                
+                                	EXTRN	BINIT			; BUF.MAC -- stand up the arena
+                                	EXTRN	FOPEN			; CMD.MAC  -- open + load the file (or none)
+                                	EXTRN	ARGSCN, ARGGO		; CMD.MAC  -- '+{n}' / '-R' on the line
+                                	EXTRN	SCINIT, SCDRAW, SCDONE	; SCRN.MAC -- geometry / paint / teardown
+                                	EXTRN	MODEMS			; SCRN.MAC -- '-- INSERT --' on the bottom row
+                                	EXTRN	MSGPST			; CMD.MAC  -- the message this key left
+                                	EXTRN	SCPRE			; SCRN.MAC -- snapshot displayed viewport
+                                	EXTRN	GETKEY			; KEY.MAC  -- decoded key
+                                	EXTRN	CMDDIS, QUITF		; CMD.MAC  -- dispatch one key / quit flag
+                                	EXTRN	RINTENT			; CMD.MAC  -- render intent (default per key)
+                                	EXTRN	VISTK			; RSV.MAC  -- the stack, above the image
+                                
+  0000'                         	CSEG
+                                
+  0000'                         START:
+  0000'   31 0000*              	LXI	SP,VISTK
+  0003'   CD 0000*              	CALL	ARGSCN			; '+{n}' / '-R': FIRST, since the line
+                                					;   sits at the default DMA address
+  0006'   CD 0000*              	CALL	BINIT			; gap-buffer pointer row + arena bounds
+  0009'   CD 0000*              	CALL	SCINIT			; terminal geometry (DSR autodetect)
+  000C'   CD 0000*              	CALL	FOPEN			; open the source FCB staged at 005CH
+  000F'   CD 0000*              	CALL	ARGGO			; '+{n}': the line to start on
+  0012'   3E 00                 	MVI	A,R_FULL		; nothing is on the screen yet, and
+  0014'   32 0000*              	STA	RINTENT			;   ARGGO dispatched real keys that
+                                					;   may have lowered the intent
+  0017'   CD 0000*              	CALL	SCDRAW			; first full paint
+  001A'   CD 0000*              	CALL	MSGPST			; ... and vim's load line under it
+  001D'                         MLOOP:
+  001D'   CD 0000*              	CALL	GETKEY			; B = KT_xxx, C = char / action code
+	MACRO-80 3.44	09-Dec-81	PAGE	1-3
+
+
+  0020'   CD 0000*              	CALL	SCPRE			; snapshot the displayed viewport pre-dispatch
+  0023'   3E 00                 	MVI	A,R_FULL		; default: full repaint unless a motion lowers it
+  0025'   32 0000*              	STA	RINTENT
+  0028'   CD 0000*              	CALL	CMDDIS			; dispatch through the vi core (may set R_MOVE)
+  002B'   3A 0000*              	LDA	QUITF
+  002E'   B7                    	ORA	A
+  002F'   C2 003E'              	JNZ	MQUIT			; quitting: do not repaint what we are leaving
+  0032'   CD 0000*              	CALL	SCDRAW			; repaint: full, or cursor-only for a still motion
+  0035'   CD 0000*              	CALL	MODEMS			; '-- INSERT --' when the mode changed
+  0038'   CD 0000*              	CALL	MSGPST			; ... or whatever this key asked to say
+  003B'   C3 001D'              	JMP	MLOOP
+  003E'                         MQUIT:
+  003E'   CD 0000*              	CALL	SCDONE			; restore the terminal
+  0041'   C3 0000               	JMP	WBOOT			; back to CP/M
+                                
+                                	END	START
+	MACRO-80 3.44	09-Dec-81	PAGE	S
+
+
+Macros:
+
+Symbols:
+0002 	ACT_CURDN       0004 	ACT_CURLT       0003 	ACT_CURRT       
+0001 	ACT_CURUP       000A 	ACT_DEL         000B 	ACT_ESC         
+0009 	ACT_INS         0006 	ACT_LINEN       0005 	ACT_LINST       
+000B 	ACT_MAX         0008 	ACT_PGDN        0007 	ACT_PGUP        
+0010*	ARGGO           0004*	ARGSCN          0005 	BDOS            
+0007 	BEL             0001 	BF_CONIN        0002 	BF_CONOUT       
+000B 	BF_CONST        0019 	BF_CURDSK       0009 	BF_PRTSTR       
+0007*	BINIT           0008 	BS              0029*	CMDDIS          
+0080 	CMDTAIL         001A 	CPMEOF          000D 	CR              
+007F 	DEL             005C 	DFTFCB          0080 	DOTMAX          
+0000 	EM_CMD          0003 	EM_EX           0001 	EM_INS          
+0002 	EM_REP          001B 	ESC             01F4 	ESCTMO          
+0028 	EXMAX           000D*	FOPEN           001E*	GETKEY          
+0020 	KBRSIZ          0001 	KT_ACT          0002 	KT_CHAR         
+0000 	KT_NONE         000A 	LF              0003 	MKMAX           
+0004 	MKSIZ           001D'	MLOOP           0036*	MODEMS          
+003E'	MQUIT           0039*	MSGPST          0003 	MW_CTG          
+0001 	MW_FIL          0000 	MW_NON          0002 	MW_WRT          
+0000 	NUL             002C*	QUITF           0026*	RINTENT         
+0003 	R_DLIN          0000 	R_FULL          0004 	R_ICH           
+0005 	R_ILIN          0006 	R_JOIN          0002 	R_LINE          
+0001 	R_MOVE          003F*	SCDONE          0033*	SCDRAW          
+000A*	SCINIT          0021*	SCPRE           0000'	START           
+0009 	TAB             0008 	TABWID          0001*	VISTK           
+0000 	WBOOT           
+
+
+
+No Fatal error(s)
+
+

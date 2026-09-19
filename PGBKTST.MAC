@@ -1,0 +1,190 @@
+;============================================================
+; FILE:    PGBKTST.MAC
+; PROJECT: VI
+; MODULE:  BACKWARD-PAGING exerciser (test harness -- NOT editor code).
+;
+; PGXTST/PGXINS proved the FORWARD paging paths.  PGBKTST proves the BACKWARD
+; path -- the deque window sliding both ways over a file far larger than RAM:
+;
+;   forward scroll = SPILL (evict the top to OUTFCB) + FILLBUF (read the bottom)
+;   backward scroll = REWIND (re-read the top from OUTFCB) + SPILLB->PAGEBOT
+;                     (evict the bottom back to the source / VIBACKUP$$$)
+;
+; It drives WM's own primitives the way the editor's paging does -- the
+; gap/cursor positioning the editor does with PUTCUR + PAGEDIR (through
+; SCRLST / PAGESTP) is done here by the harness:
+;
+;   1. BINIT + WINCAP  -- shrink the window (BUFEND := TXTBEG + WINSIZE)
+;   2. OPENFIL         -- load a file LARGER than the window (partial load)
+;   3. FORWARD WALK    -- until INRDY is false: PUTCUR(TXTEND) puts all resident
+;                         text ABOVE the gap, then PAGEDIR (DIRFLG>=0) = FILLBUF,
+;                         whose RESVBF0 SPILLs the top to OUTFCB (raising TXTBEG,
+;                         freeing RAM below it) before reading the next input
+;                         record.  The whole head pages out to OUTFCB.
+;   4. BACKWARD WALK   -- until OUTPOS (OUTFCB position) stops falling: PUTCUR(
+;                         TXTBEG) puts all resident text BELOW the gap, then
+;                         PAGEDIR (DIRFLG<0) = REWIND, whose RESVBUF SPILLBs the
+;                         bottom (PAGEBOT) to free room, then RDPREVs OUTFCB
+;                         records back in below TXTBEG.  The head pages back.
+;   5. SAVEFIL         -- DIRFLG := forward; SAVCLO drains + reassembles.
+;
+; With no edit, the round-trip must reproduce the ORIGINAL file byte-for-byte:
+; the same bytes have slid out to OUTFCB and back, been evicted to the input
+; side and re-read, and been stitched together by the deque marks.  pgbktst.py
+; byte-compares the saved file against the untouched original.
+;============================================================
+
+WBOOT	EQU	0
+
+	EXTRN	BINIT
+	EXTRN	OPENFIL, SAVEFIL
+	EXTRN	PUTCUR, INSBLK
+	EXTRN	PAGEDIR, INRDY
+	EXTRN	CMP16
+	EXTRN	TXTBEG, GAPBEG, GAPEND, TXTEND, BUFEND, TXTBAS
+	EXTRN	OUTREC, OUTPOS, DIRFLG, BAKREC, BAKRDY
+
+WINSIZE EQU	1800H		; forced window (~6 KB), same as PGXTST/PGXINS
+MAXPG	EQU	250		; per-walk iteration cap (safety only)
+INSN	EQU	200		; misaligning insert (NOT a 128 multiple)
+
+	PUBLIC	SNTXTA, SNTXTB, SNOUTR, SNOPOS, SNTXB2, SNOPO2
+	PUBLIC	NFW, NBK, SNBAK, SNBRDY, DONE
+	PUBLIC	CNTTST			; BUF.MAC PAGESTP count-test (resident stub)
+	PUBLIC	CMDCNT, KBPOLL		; BUF.MAC line-move EXTRNs (stubbed)
+
+	CSEG
+
+;============================================================
+; The battery.
+;============================================================
+START:	LXI	SP,STACK
+	CALL	BINIT
+;--- WINCAP: shrink the window ---
+	LHLD	TXTBEG		; = TXTBAS just after BINIT
+	SHLD	SNTXTA		; remember the window base
+	LXI	D,WINSIZE
+	DAD	D
+	SHLD	BUFEND
+	CALL	OPENFIL		; load the large file -- partial, tail on disk
+;============================================================
+; FORWARD WALK -- page the head out to OUTFCB until the input is exhausted.
+;============================================================
+	XRA	A
+	STA	DIRFLG		; scroll forward
+	LXI	H,0
+	SHLD	NFW
+	MVI	C,MAXPG
+FWDLP:
+	LHLD	TXTEND
+	CALL	PUTCUR		; gap to the end -> all resident text ABOVE it
+	PUSH	B
+	CALL	PAGEDIR		; DIRFLG>=0 -> FILLBUF (SPILL top + read bottom)
+	POP	B
+	LHLD	NFW
+	INX	H
+	SHLD	NFW
+	CALL	INRDY		; A = input-ready flags; Z when input exhausted
+	JZ	FWDDON
+	DCR	C
+	JNZ	FWDLP
+FWDDON:
+;--- snapshot the forward-eviction evidence ---
+	LHLD	OUTREC
+	SHLD	SNOUTR		; records spilled to OUTFCB (> 0)
+	LHLD	OUTPOS
+	SHLD	SNOPOS		; OUTFCB position after the forward walk (> 0)
+	LHLD	TXTBEG
+	SHLD	SNTXTB		; TXTBEG raised well above TXTBAS
+;--- insert at the document END (cursor sits at TXTEND after the forward walk).
+;    The input is exhausted, so these bytes come from NO source record; when the
+;    backward SPILLB evicts them off the bottom they cannot be un-read from the
+;    source (RECDEC) and must be written to VIBACKUP$$$ -- PAGEBOT's PBWBAK
+;    backup-write branch.  DIRFLG is still forward here.
+	LHLD	TXTEND
+	CALL	PUTCUR
+	LXI	D,BLOCK
+	LXI	B,INSN
+	CALL	INSBLK
+;============================================================
+; BACKWARD WALK -- rewind the head back from OUTFCB until OUTFCB is exhausted.
+;============================================================
+	MVI	A,0FFH
+	STA	DIRFLG		; scroll backward
+	LXI	H,0
+	SHLD	NBK
+	MVI	C,MAXPG
+BKLP:
+	LHLD	TXTBEG
+	CALL	PUTCUR		; gap to the top -> all resident text BELOW it
+	LHLD	OUTPOS
+	SHLD	PREVOP		; OUTFCB position before this page-in
+	PUSH	B
+	CALL	PAGEDIR		; DIRFLG<0 -> REWIND (SPILLB bottom + read top)
+	POP	B
+	LHLD	OUTPOS
+	XCHG			; DE = OUTPOS(new)
+	LHLD	PREVOP		; HL = OUTPOS(old)
+	CALL	CMP16
+	JZ	BKDON		; OUTPOS unchanged -> OUTFCB exhausted, done
+	LHLD	NBK
+	INX	H
+	SHLD	NBK
+	DCR	C
+	JNZ	BKLP
+BKDON:
+;--- snapshot the rewind evidence ---
+	LHLD	OUTPOS
+	SHLD	SNOPO2		; OUTFCB position after rewind (back toward 0)
+	LHLD	TXTBEG
+	SHLD	SNTXB2		; TXTBEG lowered back toward TXTBAS
+	LHLD	BAKREC
+	SHLD	SNBAK		; BAKREC (diagnostic)
+	LDA	BAKRDY
+	STA	SNBRDY		; FFH => VIBACKUP$$$ was actually written (WRREC)
+;--- save it all back out (forward, non-scrolling) ---
+	XRA	A
+	STA	DIRFLG
+	CALL	SAVEFIL
+	MVI	A,0FFH
+	STA	DONE
+	JMP	WBOOT
+
+;CNTTST -- stub for BUF.MAC's PAGESTP (DELTO's tail): resident battery, so Z
+; ("count exhausted") is correct -- PAGESTP returns instead of CALLing an
+; unresolved-to-0000 (WBOOT) symbol.  See BUFTST for the full note.
+CNTTST:
+	XRA	A
+	RET
+;CMDCNT / KBPOLL -- stubs for BUF.MAC's line move (GOLINE/SCRLST): no command
+; count and no keyboard in this batch battery.
+KBPOLL:
+	RET
+CMDCNT: DW	0
+
+;------------------------------------------------------------
+; Data
+;------------------------------------------------------------
+;INSN-byte misaligning insert (8 x 25 chars = 200 bytes; no CR/LF/^Z)
+BLOCK:
+	REPT	8
+	DB	'pgbk-misalign-insert-0123'
+	ENDM
+
+PREVOP: DW	0		; scratch: OUTPOS before a rewind step
+SNTXTA: DW	0		; TXTBAS (window base) for reference
+SNTXTB: DW	0		; TXTBEG after the forward walk (>> TXTBAS)
+SNOUTR: DW	0		; OUTREC after the forward walk (> 0)
+SNOPOS: DW	0		; OUTPOS after the forward walk (> 0)
+SNTXB2: DW	0		; TXTBEG after the backward walk
+SNOPO2: DW	0		; OUTPOS after the backward walk (< SNOPOS)
+NFW:	DW	0		; forward PAGEDIR calls
+NBK:	DW	0		; productive backward PAGEDIR calls
+SNBAK:	DW	0		; BAKREC after the walk (diagnostic)
+SNBRDY: DB	0		; BAKRDY after the walk (FFH => $$B written)
+DONE:	DB	0
+
+	DS	64
+STACK:
+
+	END	START

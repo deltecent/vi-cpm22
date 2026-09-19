@@ -1,0 +1,266 @@
+	MACRO-80 3.44	09-Dec-81	PAGE	1
+
+
+                                ;============================================================
+                                ; FILE:    RSV.MAC
+                                ; PROJECT: VI
+                                ; MODULE:  The reserve block -- storage that lives ABOVE the linked image.
+                                ;------------------------------------------------------------
+                                ; L80 writes every byte between 0100H and the top of the image into the .COM,
+                                ; DS included -- and what it writes there is not zeros, it is whatever was in
+                                ; L80's own memory as it linked (dump UNDREC out of an old VI.COM and you get
+                                ; 8080 code).  So a DS inside the image costs a byte of FILE, and a sector of
+                                ; load time, for every byte of storage, and buys nothing at all: the loader
+                                ; faithfully copies rubbish that the program overwrites before it reads it.
+                                ;
+                                ; This module holds that storage instead.  It emits NO bytes, so it adds
+                                ; nothing to the image; linking it LAST puts its (empty) CSEG at the top, and
+                                ; every member is named as an offset from there.  BUF.MAC's PBEGMEM -- the
+                                ; base of the gap-buffer arena -- then starts at RSVTOP rather than at the
+                                ; image top, so the arena is exactly the size it always was.  Nothing is
+                                ; bought here except .COM bytes; nothing is paid except that these names now
+                                ; resolve through the linker instead of inside their own module.
+                                ;
+                                ; WHAT MAY LIVE HERE.  Only a DS, and only one that is written before it is
+                                ; read.  Two things disqualify a block:
+                                ;
+                                ;   - an initialised neighbour it is contracted to.  SRCHST is read through
+                                ;     [DE-1] for its length (SRCHBF), and SREPL through SREPLN the same way;
+                                ;     PAGE's three FCBs carry WRREC/CLOSEC open flags at FCB-1 and FCB-2.
+                                ;     Those flag bytes are DB 0 and must stay DB 0, so the DS they sit against
+                                ;     stays with them.
+                                ;   - any reliance on starting clear.  There is no such thing: see above.
+                                ;
+                                ; SECBUF comes here with its two guard bytes, because all three are DS and
+                                ; move together -- STAGSEC writes SECBUF-1 through SECBUF+128 (C=82H) and
+                                ; ^Z-pads whatever the copy did not fill, so no stale byte reaches a sector.
+                                ;
+                                ; Sizes that also exist in the module that uses the storage are declared in
+                                ; VI.INC (DOTMAX, KBRSIZ, EXMAX) so the two cannot disagree.  The one size
+                                ; that cannot be shared -- BUF.MAC does not include VI.INC -- carries a CHECK
+                                ; line below, which build_vi.py evaluates against BUF.MAC on every build.
+                                ;============================================================
+                         C      	INCLUDE VI.INC
+                         C      ;============================================================
+                         C      ; FILE:    VI.INC
+                         C      ; PROJECT: VI -- vi-style CP/M editor on WordMaster's gap buffer
+                         C      ; CPU:     Intel 8080 (strict -- no Z80 extensions)
+                         C      ; ASSEMBLER: Microsoft M80
+                         C      ;------------------------------------------------------------
+                         C      ; Shared equates for the vi LAYER only (KEY.MAC, CMD.MAC).  BUF.MAC and
+                         C      ; PAGE.MAC are verbatim WordMaster transcriptions and define their own local
+                         C      ; constants; they do NOT include this file.  INCLUDE VI.INC first in KEY/CMD.
+                         C      ; There is one windowed gap buffer (BUF.MAC's flat pointer row), so there is no
+                         C      ; buffer descriptor or mode flag here.
+                         C      ;============================================================
+                         C      
+                         C      ;------------------------------------------------------------
+                         C      ; CP/M SYSTEM ADDRESSES
+                         C      ;------------------------------------------------------------
+	MACRO-80 3.44	09-Dec-81	PAGE	1-1
+
+
+  0005                   C      BDOS	EQU	0005H		; BDOS entry point
+  0000                   C      WBOOT	EQU	0000H		; warm boot / exit to CP/M
+  005C                   C      DFTFCB	EQU	005CH		; default FCB (command argument 1)
+  0080                   C      CMDTAIL EQU	0080H		; command tail / default DMA
+                         C      
+                         C      ;------------------------------------------------------------
+                         C      ; BDOS FUNCTION NUMBERS (only those the vi layer uses)
+                         C      ;------------------------------------------------------------
+  0001                   C      BF_CONIN  EQU	1		; console input (blocking)
+  0002                   C      BF_CONOUT EQU	2		; console output: E = char
+  0009                   C      BF_PRTSTR EQU	9		; print $-terminated string: DE = addr
+  000B                   C      BF_CONST  EQU	11		; console status
+  0019                   C      BF_CURDSK EQU	25		; current disk: A = 0 (A:) ..
+                         C      
+                         C      ;------------------------------------------------------------
+                         C      ; ASCII AND CP/M CONTROL CODES
+                         C      ;------------------------------------------------------------
+  0000                   C      NUL	EQU	00H		; null (string terminator)
+  0007                   C      BEL	EQU	07H		; bell
+  0008                   C      BS	EQU	08H		; backspace (Ctrl-H)
+  0009                   C      TAB	EQU	09H		; horizontal tab
+  000A                   C      LF	EQU	0AH		; line feed  -- the line TERMINATOR
+  000D                   C      CR	EQU	0DH		; carriage return -- decoration before LF
+  001B                   C      ESC	EQU	1BH		; escape
+  007F                   C      DEL	EQU	7FH		; rubout / delete
+  001A                   C      CPMEOF	EQU	1AH		; CP/M end-of-file marker (Ctrl-Z)
+                         C      
+  0008                   C      TABWID	EQU	8		; tab stop interval (display only)
+                         C      
+                         C      ;------------------------------------------------------------
+                         C      ; RENDER INTENT (RINTENT) -- what the last dispatched command did, so SCRN.MAC
+                         C      ; can choose the cheapest correct paint.  The command layer (CMD.MAC) sets it
+                         C      ; per key; SCRN.MAC reads it.  The default is the conservative R_FULL (full
+                         C      ; repaint = the proven Stage-3a behavior); pure cursor motions lower it to
+                         C      ; R_MOVE so the renderer repositions the cursor without redrawing; an in-line
+                         C      ; edit lowers it to R_LINE so only the current row is redrawn.  A mistag can
+                         C      ; therefore only cost an unnecessary full repaint, never leave stale text.
+                         C      ;------------------------------------------------------------
+  0000                   C      R_FULL	EQU	0		; edit area may be stale -> full repaint (SCDRAW)
+  0001                   C      R_MOVE	EQU	1		; cursor moved only -> reposition (if viewport stable)
+  0002                   C      R_LINE	EQU	2		; current line changed only -> redraw that one row
+  0003                   C      R_DLIN	EQU	3		; one line deleted at the cursor row -> DL + redraw bottom
+  0004                   C      R_ICH	EQU	4		; one printable char inserted mid-line -> ICH (no tail redraw)
+  0005                   C      R_ILIN	EQU	5		; one line opened at the cursor row -> IL + redraw that row and the one above
+  0006                   C      R_JOIN	EQU	6		; the line below joined onto the cursor's -> redraw that row + DL the one under it
+                         C      
+                         C      ;------------------------------------------------------------
+                         C      ; EDITOR MODES (EDMODE)
+                         C      ;------------------------------------------------------------
+  0000                   C      EM_CMD	EQU	0		; command mode (default)
+  0001                   C      EM_INS	EQU	1		; insert mode
+  0002                   C      EM_REP	EQU	2		; replace mode ('R')
+  0003                   C      EM_EX	EQU	3		; ex command line (transient, inside VC_EX)
+                         C      
+                         C      ; THE MESSAGE THE BOTTOM ROW STILL OWES (MSGWHT).  A message is drawn after the
+                         C      ; frame, never during the command, because a full repaint blanks that row.
+	MACRO-80 3.44	09-Dec-81	PAGE	1-2
+
+
+  0000                   C      MW_NON	EQU	0		; nothing to say
+  0001                   C      MW_FIL	EQU	1		; the file just opened
+  0002                   C      MW_WRT	EQU	2		; ':w' wrote it
+  0003                   C      MW_CTG	EQU	3		; '^G' -- where am I
+                         C      
+  0028                   C      EXMAX	EQU	40		; max chars on the ':' ex command line
+                         C      
+                         C      ;------------------------------------------------------------
+                         C      ; RESERVE BLOCK -- sizes of storage that RSV.MAC holds above the linked image
+                         C      ; on behalf of another module.  They live here, not in the module that uses
+                         C      ; the storage, so the module and RSV.MAC cannot disagree about a size.
+                         C      ;------------------------------------------------------------
+  0080                   C      DOTMAX	EQU	128		; keys one recorded change may hold (see '.')
+  0020                   C      KBRSIZ	EQU	32		; KEY.MAC's type-ahead ring (a power of two)
+  0003                   C      MKMAX	EQU	3		; marks 'a'-'c' -- three is enough (COMMANDS.md)
+  0004                   C      MKSIZ	EQU	4		; each: its offset, then PGTOPM when it was set
+                         C      
+                         C      ;------------------------------------------------------------
+                         C      ; KEY DECODER -- GETKEY return types (B) and action codes (C when B=KT_ACT).
+                         C      ; See KEY.MAC.
+                         C      ;------------------------------------------------------------
+  0000                   C      KT_NONE EQU	0		; no key (unrecognised ESC sequence, discarded)
+  0001                   C      KT_ACT	EQU	1		; C = ACT_xxx action code
+  0002                   C      KT_CHAR EQU	2		; C = ASCII character (printable or control)
+                         C      
+  0001                   C      ACT_CURUP EQU	1		; cursor up    (ESC[A / ESC OA)
+  0002                   C      ACT_CURDN EQU	2		; cursor down  (ESC[B / ESC OB)
+  0003                   C      ACT_CURRT EQU	3		; cursor right (ESC[C / ESC OC)
+  0004                   C      ACT_CURLT EQU	4		; cursor left  (ESC[D / ESC OD)
+  0005                   C      ACT_LINST EQU	5		; Home / line start (ESC[H / ESC[1~)
+  0006                   C      ACT_LINEN EQU	6		; End  / line end   (ESC[F / ESC[4~)
+  0007                   C      ACT_PGUP  EQU	7		; page up   (ESC[5~)
+  0008                   C      ACT_PGDN  EQU	8		; page down (ESC[6~)
+  0009                   C      ACT_INS	  EQU	9		; Insert key (ESC[2~)
+  000A                   C      ACT_DEL	  EQU	10		; Delete key (ESC[3~)
+  000B                   C      ACT_ESC	  EQU	11		; lone ESC (after timeout)
+  000B                   C      ACT_MAX	  EQU	11		; highest defined action code
+                         C      
+  01F4                   C      ESCTMO	EQU	500		; polls before a lone ESC is confirmed
+                                
+                                	PUBLIC	VISTK			; VI.MAC   -- the stack
+                                	PUBLIC	DOTSCR, DOTBUF		; CMD.MAC  -- '.' scratch + last change
+                                	PUBLIC	FNAME, ZTOP, PLUSB	; CMD.MAC  -- name, G/gg top, '+{n}'
+                                	PUBLIC	EXBUF			; CMD.MAC  -- the ':' line
+                                	PUBLIC	KBRING			; KEY.MAC  -- type-ahead ring
+                                	PUBLIC	WRTYP, SECBUF		; PAGE.MAC -- saved type, sector stage
+                                	PUBLIC	UNDREC			; BUF.MAC  -- the captured change
+                                	PUBLIC	MKTAB			; CMD.MAC  -- the marks 'm' sets
+                                	PUBLIC	RSVTOP			; BUF.MAC  -- PBEGMEM, the arena base
+                                
+                                ;--- Sizes ------------------------------------------------------------------
+                                ;UNDREC is URSIZE*URMAX in BUF.MAC, which does not include VI.INC.  The CHECK
+                                ;line is read by build_vi.py, which evaluates the expression against BUF.MAC's
+                                ;own equates and fails the build if the two ever drift apart.
+                                ;CHECK BUF.MAC URSIZE*URMAX = 168
+  00A8                          RVUNDN	EQU	168		; UNDREC:  BUF.MAC URSIZE*URMAX
+	MACRO-80 3.44	09-Dec-81	PAGE	1-3
+
+
+  0080                          RVSTKN	EQU	128		; VISTK:   64 was enough until '.' replayed a
+                                				;          command through CMDDIS from inside
+                                				;          a handler
+  000C                          RVFNMN	EQU	12		; FNAME:   drive, name, type
+  0003                          RVZTPN	EQU	3		; ZTOP:    a 3-byte file position
+  0006                          RVPLSN	EQU	6		; PLUSB:   '+{n}' digits, 0-terminated
+  0003                          RVWRTN	EQU	3		; WRTYP:   an FCB type field
+  0080                          RVSECN	EQU	128		; SECBUF:  one CP/M sector
+                                
+                                ;--- Layout, as offsets from the image top ----------------------------------
+                                ;Plain constants, so no relocatable symbol is ever used to build another.
+                                ;DOTBUF must follow DOTSCR: the '.' overflow test walks one into the other.
+  0000                          RVSTK	EQU	0
+  0080                          RVDOTS	EQU	RVSTK+RVSTKN
+  0100                          RVDOTB	EQU	RVDOTS+DOTMAX
+  0180                          RVFNM	EQU	RVDOTB+DOTMAX
+  018C                          RVZTP	EQU	RVFNM+RVFNMN
+  018F                          RVPLS	EQU	RVZTP+RVZTPN
+  0195                          RVEXB	EQU	RVPLS+RVPLSN
+  01BE                          RVKBR	EQU	RVEXB+EXMAX+1
+  01DE                          RVWRT	EQU	RVKBR+KBRSIZ
+  01E2                          RVSEC	EQU	RVWRT+RVWRTN+1	; +1: STAGSEC's guard byte at SECBUF-1
+  0263                          RVUND	EQU	RVSEC+RVSECN+1	; +1: ... and its guard at SECBUF+128
+  030B                          RVMKT	EQU	RVUND+RVUNDN
+  0317                          RVSIZE	EQU	RVMKT+MKMAX*MKSIZ
+                                
+  0000'                         	CSEG
+  0000'                         RSVBAS:				; the top of the linked image -- no bytes here
+                                
+  0080'                         VISTK	EQU	RSVBAS+RVSTK+RVSTKN	; the stack GROWS DOWN from its top
+  0080'                         DOTSCR	EQU	RSVBAS+RVDOTS
+  0100'                         DOTBUF	EQU	RSVBAS+RVDOTB
+  0180'                         FNAME	EQU	RSVBAS+RVFNM
+  018C'                         ZTOP	EQU	RSVBAS+RVZTP
+  018F'                         PLUSB	EQU	RSVBAS+RVPLS
+  0195'                         EXBUF	EQU	RSVBAS+RVEXB
+  01BE'                         KBRING	EQU	RSVBAS+RVKBR
+  01DE'                         WRTYP	EQU	RSVBAS+RVWRT
+  01E2'                         SECBUF	EQU	RSVBAS+RVSEC
+  0263'                         UNDREC	EQU	RSVBAS+RVUND
+  030B'                         MKTAB	EQU	RSVBAS+RVMKT
+  0317'                         RSVTOP	EQU	RSVBAS+RVSIZE		; BUF.MAC's PBEGMEM: the arena base
+                                
+                                	END
+	MACRO-80 3.44	09-Dec-81	PAGE	S
+
+
+Macros:
+
+Symbols:
+0002 	ACT_CURDN       0004 	ACT_CURLT       0003 	ACT_CURRT       
+0001 	ACT_CURUP       000A 	ACT_DEL         000B 	ACT_ESC         
+0009 	ACT_INS         0006 	ACT_LINEN       0005 	ACT_LINST       
+000B 	ACT_MAX         0008 	ACT_PGDN        0007 	ACT_PGUP        
+0005 	BDOS            0007 	BEL             0001 	BF_CONIN        
+0002 	BF_CONOUT       000B 	BF_CONST        0019 	BF_CURDSK       
+0009 	BF_PRTSTR       0008 	BS              0080 	CMDTAIL         
+001A 	CPMEOF          000D 	CR              007F 	DEL             
+005C 	DFTFCB          0100I'	DOTBUF          0080 	DOTMAX          
+0080I'	DOTSCR          0000 	EM_CMD          0003 	EM_EX           
+0001 	EM_INS          0002 	EM_REP          001B 	ESC             
+01F4 	ESCTMO          0195I'	EXBUF           0028 	EXMAX           
+0180I'	FNAME           01BEI'	KBRING          0020 	KBRSIZ          
+0001 	KT_ACT          0002 	KT_CHAR         0000 	KT_NONE         
+000A 	LF              0003 	MKMAX           0004 	MKSIZ           
+030BI'	MKTAB           0003 	MW_CTG          0001 	MW_FIL          
+0000 	MW_NON          0002 	MW_WRT          0000 	NUL             
+018FI'	PLUSB           0000'	RSVBAS          0317I'	RSVTOP          
+0100 	RVDOTB          0080 	RVDOTS          0195 	RVEXB           
+0180 	RVFNM           000C 	RVFNMN          01BE 	RVKBR           
+030B 	RVMKT           018F 	RVPLS           0006 	RVPLSN          
+01E2 	RVSEC           0080 	RVSECN          0317 	RVSIZE          
+0000 	RVSTK           0080 	RVSTKN          0263 	RVUND           
+00A8 	RVUNDN          01DE 	RVWRT           0003 	RVWRTN          
+018C 	RVZTP           0003 	RVZTPN          0003 	R_DLIN          
+0000 	R_FULL          0004 	R_ICH           0005 	R_ILIN          
+0006 	R_JOIN          0002 	R_LINE          0001 	R_MOVE          
+01E2I'	SECBUF          0009 	TAB             0008 	TABWID          
+0263I'	UNDREC          0080I'	VISTK           0000 	WBOOT           
+01DEI'	WRTYP           018CI'	ZTOP            
+
+
+
+No Fatal error(s)
+
+

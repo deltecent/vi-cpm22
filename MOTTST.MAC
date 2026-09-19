@@ -1,0 +1,187 @@
+;============================================================
+; FILE:    MOTTST.MAC
+; PROJECT: VI
+; MODULE:  MOTION exerciser (test harness -- NOT editor code).
+;
+; Companion to CMDTST (which proves edits + ex + save).  MOTTST walks the cursor
+; through the motion set and snapshots (TOFF,TLINE,TCOL) after EACH motion into
+; parallel arrays, so mottst.py can check every landing offset.  Same scripted-
+; console trick as CMDTST; here a 01H sentinel appends a snapshot rather than
+; overwriting one.  No edits, so it ends with a plain :q (MODF stays 0).
+;
+; File "abc def ghi\r\njklmno\r\na(b[c]d)e\r\n":
+;   a0 b1 c2 .3 d4 e5 f6 .7 g8 h9 i10  CR11 LF12
+;   j13 k14 l15 m16 n17 o18            CR19 LF20
+;   a21 (22 b23 [24 c25 ]26 d27 )28 e29 CR30 LF31   (LOGLEN=32)
+; Line 2's nested brackets are kept only because every landing is measured
+; against this file.  Script (snapshot after each): the motion set, then the
+; screen-relative motions H M L and the scrolls ^F ^B ^D ^U ^L against a
+; stubbed viewport (NEDIT=3, WINROW=0, SCBOT=2) -- SCRN.MAC owns those live, so
+; here they are fixed so every landing is deterministic.
+;============================================================
+	INCLUDE VI.INC
+
+	EXTRN	BINIT
+	EXTRN	FOPEN			; CMD.MAC
+	EXTRN	CMDRUN, QSNAP
+	EXTRN	TOFFV, TLINEV, TCOLV
+
+	PUBLIC	BCONST, BCONIN, BCONOU
+	PUBLIC	NEDIT, WINROW		; CMD.MAC's screen EXTRNs (no renderer here)
+	PUBLIC	SCBOT, SCEOF, SCBOF, WFILL
+	PUBLIC	EXPRM, EXRUB, OUTCH	; CMD.MAC's ':' line echo (no renderer here)
+	PUBLIC	EXMSG, OUTSTR		; CMD.MAC's ex message (no renderer here)
+	PUBLIC	SCURS			; CMD.MAC's '^G' cursor restore
+	PUBLIC	CBOL, CURDCL		; CMD.MAC's '^G' cursor column
+	PUBLIC	DONE, SNCNT, SNOFF, SNLIN, SNCOL
+
+	CSEG
+
+START:	LXI	SP,STACK
+	CALL	BINIT
+	CALL	FOPEN
+	CALL	CMDRUN
+	MVI	A,0FFH
+	STA	DONE
+	JMP	WBOOT
+
+BCONST:
+	XRA	A
+	RET
+
+SCURS:				; nothing is on a screen here
+EXPRM:				; CMD.MAC's ':' line echo -- swallowed here
+EXMSG:
+OUTSTR:
+EXRUB:
+OUTCH:
+BCONOU:				; CMD.MAC's find-char miss bell -- swallowed here
+	RET
+
+CBOL:	DW	0		; the renderer's cursor column, absent here
+CURDCL: DW	0		;   ... and the one a TAB expands it to
+
+BCONIN:
+	LHLD	KIDX
+	LXI	D,KLEN
+	MOV	A,L
+	SUB	E
+	MOV	A,H
+	SBB	D
+	JNC	BCI_EOF
+	LHLD	KIDX
+	LXI	D,KSCRIPT
+	DAD	D
+	MOV	A,M
+	LHLD	KIDX
+	INX	H
+	SHLD	KIDX
+	CPI	01H
+	JZ	BCI_SNAP
+	RET
+BCI_EOF:
+	JMP	WBOOT
+
+;--- append a snapshot to the parallel arrays ---
+BCI_SNAP:
+	CALL	QSNAP
+	LDA	SNCNT
+	MOV	L,A
+	MVI	H,0
+	DAD	H		; HL = idx*2
+	SHLD	SNIX
+	LXI	D,SNOFF
+	DAD	D
+	XCHG			; DE = &SNOFF[idx]
+	LHLD	TOFFV
+	MOV	A,L
+	STAX	D
+	INX	D
+	MOV	A,H
+	STAX	D
+	LHLD	SNIX
+	LXI	D,SNLIN
+	DAD	D
+	XCHG
+	LHLD	TLINEV
+	MOV	A,L
+	STAX	D
+	INX	D
+	MOV	A,H
+	STAX	D
+	LHLD	SNIX
+	LXI	D,SNCOL
+	DAD	D
+	XCHG
+	LHLD	TCOLV
+	MOV	A,L
+	STAX	D
+	INX	D
+	MOV	A,H
+	STAX	D
+	LDA	SNCNT
+	INR	A
+	STA	SNCNT
+	JMP	BCONIN
+
+;------------------------------------------------------------
+; Data
+;------------------------------------------------------------
+KSCRIPT:
+	DB	'l',01H
+	DB	'w',01H
+	DB	'w',01H
+	DB	'$',01H
+	DB	'0',01H
+	DB	'e',01H
+	DB	'j',01H
+	DB	'j',01H
+	DB	'k',01H
+	DB	'G',01H
+	DB	'g','g',01H
+	DB	'W',01H
+	DB	'b',01H
+	DB	'h',01H
+	DB	'/','d','e','f',0DH,01H
+	DB	'n',01H
+	DB	'3','l',01H
+	DB	'2','w',01H
+	DB	'^',01H
+	DB	'B',01H
+;--- screen-relative H/M/L (stubbed NEDIT=3, WINROW=0 over the 3-line file) ---
+	DB	'g','g',01H		; reset -> line0 0
+	DB	'H',01H			; H  -> top line 0
+	DB	'2','H',01H		; 2H -> 2nd line from top = line1 13
+	DB	'L',01H			; L  -> bottom visible line2 21
+	DB	'2','L',01H		; 2L -> 2nd from bottom = line1 13
+	DB	'M',01H			; M  -> middle of [0..2] = line1 13
+	DB	'3','L',01H		; 3L -> floored at top = line0 0
+	DB	'5','H',01H		; 5H -> clamps at last line2 21
+;--- scrolls (^F -> the last line; ^B no-op at BOF; ^D/^U step one line) ---
+	DB	'g','g',01H		; reset -> line0 0
+	DB	06H,01H			; ^F -> last line (row SCBOT) -> line2 21
+	DB	04H,01H			; ^D -> at the last line, stays 21
+	DB	02H,01H			; ^B -> top line at top, no-op, stay 21
+	DB	15H,01H			; ^U -> cursor up 1 -> line1 13
+	DB	0CH,01H			; ^L -> redraw only, no move 13
+	DB	':','q',0DH
+KLEN	EQU	$-KSCRIPT
+
+KIDX:	DW	0
+NEDIT:	DB	3		; stubbed edit-row count (SCRN owns this live)
+WINROW: DW	0		; SCRN.MAC stubs: row 0 at the top of the file
+SCBOT:	DB	2		; last text row
+SCEOF:	DB	1		; the whole file is on the screen
+SCBOF:	DB	1
+WFILL:	DB	0
+SNIX:	DW	0
+SNCNT:	DB	0
+SNOFF:	DS	128		; 64 snapshot slots (2 bytes each)
+SNLIN:	DS	128
+SNCOL:	DS	128
+DONE:	DB	0
+
+	DS	64
+STACK:
+
+	END	START

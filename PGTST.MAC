@@ -1,0 +1,161 @@
+;============================================================
+; FILE:    PGTST.MAC
+; PROJECT: VI
+; MODULE:  File-I/O exerciser (test harness -- NOT editor code).
+;
+; Drives WordMaster's file-I/O layer (PAGE.MAC, transcribed verbatim) end to
+; end on a file that fits in RAM, so nothing evicts:
+;   1. BINIT   -- init the gap buffer
+;   2. OPENFIL -- open the file named on the command tail (CP/M staged its FCB
+;                 at 005CH) and read it into the buffer via FILLBUF
+;   3. measure -- an order-sensitive checksum + length of the loaded text, so
+;                 pgtst.py can verify the LOAD against the source file directly
+;   4. SAVEFIL -- flush the buffer to name.$$$ and swap names (source->name.BAK,
+;                 name.$$$->original), so pgtst.py can byte-compare the SAVE
+;
+; The only non-WM code here is harness glue: the sequencer (START) and the
+; checksum walk (TMEASURE/SUMBC/SPANBC), identical to BUFTST.MAC's.  pgtst.py
+; reads LDCKS/LDLEN + the window pointers + ERRFLG and pulls the saved file back.
+;============================================================
+
+WBOOT	EQU	0
+
+	EXTRN	BINIT
+	EXTRN	OPENFIL, SAVEFIL
+	EXTRN	INSBLK, PUTCUR
+	EXTRN	TXTBEG, GAPBEG, GAPEND, TXTEND
+
+EDITAT	EQU	150		; insert offset (mid record 1, crosses a boundary)
+
+	PUBLIC	LDCKS, LDLEN, DONE
+	PUBLIC	CNTTST			; BUF.MAC PAGESTP count-test (resident stub)
+	PUBLIC	CMDCNT, KBPOLL		; BUF.MAC line-move EXTRNs (stubbed)
+
+	CSEG
+
+;============================================================
+; The battery: load the file, checksum it, save it back.
+;============================================================
+START:	LXI	SP,STACK
+	CALL	BINIT
+	CALL	OPENFIL		; read the command-tail file into the buffer
+	CALL	TMEASURE	; -> CKSUM, TLEN of the loaded logical text
+	LHLD	CKSUM
+	SHLD	LDCKS
+	LHLD	TLEN
+	SHLD	LDLEN
+;--- edit: insert a marker at EDITAT, opening a gap that straddles a record
+;    boundary, so SAVEFIL's FLUSHTX must collapse a real mid-buffer gap. ---
+	LHLD	GAPEND		; cursor at start -> GAPEND is logical offset 0
+	LXI	D,EDITAT
+	DAD	D		; HL = address of logical offset EDITAT
+	CALL	PUTCUR		; move the cursor there
+	LXI	D,MARKER
+	LXI	B,MARKLN
+	CALL	INSBLK		; insert MARKER at the cursor
+	CALL	SAVEFIL		; write it back out (name.$$$ -> original)
+	MVI	A,0FFH
+	STA	DONE		; reached the end cleanly
+	JMP	WBOOT
+
+;CNTTST -- stub for BUF.MAC's PAGESTP (DELTO's tail): resident battery, so Z
+; ("count exhausted") is correct -- PAGESTP returns instead of CALLing an
+; unresolved-to-0000 (WBOOT) symbol.  See BUFTST for the full note.
+CNTTST:
+	XRA	A
+	RET
+;CMDCNT / KBPOLL -- stubs for BUF.MAC's line move (GOLINE/SCRLST): no command
+; count and no keyboard in this batch battery.
+KBPOLL:
+	RET
+CMDCNT: DW	0
+
+;------------------------------------------------------------
+; TMEASURE -- order-sensitive checksum + length of the logical text.
+; Logical text = [TXTBEG..GAPBEG) ++ [GAPEND..TXTEND); CKSUM carries across
+; both spans so it reflects byte order.  (Same as BUFTST.MAC.)
+;------------------------------------------------------------
+TMEASURE:
+	LXI	H,0
+	SHLD	CKSUM
+	SHLD	TLEN
+
+	LHLD	TXTBEG
+	XCHG			; DE = TXTBEG
+	LHLD	GAPBEG		; HL = GAPBEG
+	CALL	SPANBC		; BC = GAPBEG - TXTBEG
+	LHLD	TXTBEG
+	CALL	SUMBC
+
+	LHLD	GAPEND
+	XCHG			; DE = GAPEND
+	LHLD	TXTEND		; HL = TXTEND
+	CALL	SPANBC		; BC = TXTEND - GAPEND
+	LHLD	GAPEND
+	CALL	SUMBC
+	RET
+
+;------------------------------------------------------------
+; SUMBC -- fold BC bytes at [HL] into CKSUM (rotate-left-1 then add), TLEN += BC.
+;------------------------------------------------------------
+SUMBC:
+	MOV	A,B
+	ORA	C
+	RZ
+	PUSH	H
+	PUSH	B
+	LHLD	TLEN
+	DAD	B
+	SHLD	TLEN		; TLEN += BC
+	POP	B
+	POP	H
+SBLP:
+	MOV	A,B
+	ORA	C
+	RZ
+	MOV	A,M
+	PUSH	H
+	PUSH	B
+	LHLD	CKSUM
+	DAD	H		; CKSUM <<= 1, CY = old bit 15
+	JNC	SB1
+	INX	H		; fold the carry back in (rotate left 1)
+SB1:
+	MVI	D,0
+	MOV	E,A
+	DAD	D		; CKSUM += byte
+	SHLD	CKSUM
+	POP	B
+	POP	H
+	INX	H
+	DCX	B
+	JMP	SBLP
+
+;------------------------------------------------------------
+; SPANBC -- BC := HL - DE (HL kept).  Local copy (harness self-contained).
+;------------------------------------------------------------
+SPANBC:
+	MOV	A,L
+	SUB	E
+	MOV	C,A
+	MOV	A,H
+	SBB	D
+	MOV	B,A
+	RET
+
+;------------------------------------------------------------
+; Data
+;------------------------------------------------------------
+MARKER: DB	'[EDIT@150]'	; distinctive edit marker inserted at EDITAT
+MARKLN	EQU	$-MARKER
+
+CKSUM:	DW	0		; scratch: checksum of the current logical text
+TLEN:	DW	0		; scratch: length of the current logical text
+LDCKS:	DW	0		; checksum of the loaded file (pgtst.py reads)
+LDLEN:	DW	0		; length of the loaded file
+DONE:	DB	0		; nonzero if the battery reached the end
+
+	DS	64
+STACK:
+
+	END	START

@@ -1,0 +1,101 @@
+;============================================================
+; FILE:    RSV.MAC
+; PROJECT: VI
+; MODULE:  The reserve block -- storage that lives ABOVE the linked image.
+;------------------------------------------------------------
+; L80 writes every byte between 0100H and the top of the image into the .COM,
+; DS included -- and what it writes there is not zeros, it is whatever was in
+; L80's own memory as it linked (dump UNDREC out of an old VI.COM and you get
+; 8080 code).  So a DS inside the image costs a byte of FILE, and a sector of
+; load time, for every byte of storage, and buys nothing at all: the loader
+; faithfully copies rubbish that the program overwrites before it reads it.
+;
+; This module holds that storage instead.  It emits NO bytes, so it adds
+; nothing to the image; linking it LAST puts its (empty) CSEG at the top, and
+; every member is named as an offset from there.  BUF.MAC's PBEGMEM -- the
+; base of the gap-buffer arena -- then starts at RSVTOP rather than at the
+; image top, so the arena is exactly the size it always was.  Nothing is
+; bought here except .COM bytes; nothing is paid except that these names now
+; resolve through the linker instead of inside their own module.
+;
+; WHAT MAY LIVE HERE.  Only a DS, and only one that is written before it is
+; read.  Two things disqualify a block:
+;
+;   - an initialised neighbour it is contracted to.  SRCHST is read through
+;     [DE-1] for its length (SRCHBF), and SREPL through SREPLN the same way;
+;     PAGE's three FCBs carry WRREC/CLOSEC open flags at FCB-1 and FCB-2.
+;     Those flag bytes are DB 0 and must stay DB 0, so the DS they sit against
+;     stays with them.
+;   - any reliance on starting clear.  There is no such thing: see above.
+;
+; SECBUF comes here with its two guard bytes, because all three are DS and
+; move together -- STAGSEC writes SECBUF-1 through SECBUF+128 (C=82H) and
+; ^Z-pads whatever the copy did not fill, so no stale byte reaches a sector.
+;
+; Sizes that also exist in the module that uses the storage are declared in
+; VI.INC (DOTMAX, KBRSIZ, EXMAX) so the two cannot disagree.  The one size
+; that cannot be shared -- BUF.MAC does not include VI.INC -- carries a CHECK
+; line below, which build_vi.py evaluates against BUF.MAC on every build.
+;============================================================
+	INCLUDE VI.INC
+
+	PUBLIC	VISTK			; VI.MAC   -- the stack
+	PUBLIC	DOTSCR, DOTBUF		; CMD.MAC  -- '.' scratch + last change
+	PUBLIC	FNAME, ZTOP, PLUSB	; CMD.MAC  -- name, G/gg top, '+{n}'
+	PUBLIC	EXBUF			; CMD.MAC  -- the ':' line
+	PUBLIC	KBRING			; KEY.MAC  -- type-ahead ring
+	PUBLIC	WRTYP, SECBUF		; PAGE.MAC -- saved type, sector stage
+	PUBLIC	UNDREC			; BUF.MAC  -- the captured change
+	PUBLIC	MKTAB			; CMD.MAC  -- the marks 'm' sets
+	PUBLIC	RSVTOP			; BUF.MAC  -- PBEGMEM, the arena base
+
+;--- Sizes ------------------------------------------------------------------
+;UNDREC is URSIZE*URMAX in BUF.MAC, which does not include VI.INC.  The CHECK
+;line is read by build_vi.py, which evaluates the expression against BUF.MAC's
+;own equates and fails the build if the two ever drift apart.
+;CHECK BUF.MAC URSIZE*URMAX = 168
+RVUNDN	EQU	168		; UNDREC:  BUF.MAC URSIZE*URMAX
+RVSTKN	EQU	128		; VISTK:   64 was enough until '.' replayed a
+				;          command through CMDDIS from inside
+				;          a handler
+RVFNMN	EQU	12		; FNAME:   drive, name, type
+RVZTPN	EQU	3		; ZTOP:    a 3-byte file position
+RVPLSN	EQU	6		; PLUSB:   '+{n}' digits, 0-terminated
+RVWRTN	EQU	3		; WRTYP:   an FCB type field
+RVSECN	EQU	128		; SECBUF:  one CP/M sector
+
+;--- Layout, as offsets from the image top ----------------------------------
+;Plain constants, so no relocatable symbol is ever used to build another.
+;DOTBUF must follow DOTSCR: the '.' overflow test walks one into the other.
+RVSTK	EQU	0
+RVDOTS	EQU	RVSTK+RVSTKN
+RVDOTB	EQU	RVDOTS+DOTMAX
+RVFNM	EQU	RVDOTB+DOTMAX
+RVZTP	EQU	RVFNM+RVFNMN
+RVPLS	EQU	RVZTP+RVZTPN
+RVEXB	EQU	RVPLS+RVPLSN
+RVKBR	EQU	RVEXB+EXMAX+1
+RVWRT	EQU	RVKBR+KBRSIZ
+RVSEC	EQU	RVWRT+RVWRTN+1	; +1: STAGSEC's guard byte at SECBUF-1
+RVUND	EQU	RVSEC+RVSECN+1	; +1: ... and its guard at SECBUF+128
+RVMKT	EQU	RVUND+RVUNDN
+RVSIZE	EQU	RVMKT+MKMAX*MKSIZ
+
+	CSEG
+RSVBAS:				; the top of the linked image -- no bytes here
+
+VISTK	EQU	RSVBAS+RVSTK+RVSTKN	; the stack GROWS DOWN from its top
+DOTSCR	EQU	RSVBAS+RVDOTS
+DOTBUF	EQU	RSVBAS+RVDOTB
+FNAME	EQU	RSVBAS+RVFNM
+ZTOP	EQU	RSVBAS+RVZTP
+PLUSB	EQU	RSVBAS+RVPLS
+EXBUF	EQU	RSVBAS+RVEXB
+KBRING	EQU	RSVBAS+RVKBR
+WRTYP	EQU	RSVBAS+RVWRT
+SECBUF	EQU	RSVBAS+RVSEC
+UNDREC	EQU	RSVBAS+RVUND
+MKTAB	EQU	RSVBAS+RVMKT
+RSVTOP	EQU	RSVBAS+RVSIZE		; BUF.MAC's PBEGMEM: the arena base
+
+	END

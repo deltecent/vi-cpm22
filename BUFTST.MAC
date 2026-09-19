@@ -1,0 +1,303 @@
+;============================================================
+; FILE:    BUFTST.MAC
+; PROJECT: VI
+; MODULE:  Buffer exerciser (test harness -- NOT editor code).
+;
+; Drives WordMaster's gap buffer (BUF.MAC, transcribed verbatim; the text fits
+; in RAM, so nothing pages) through a deterministic BATTERY of operations
+; using ONLY WM's own primitive names -- BINIT / INSBLK / PUTCUR / DELTO --
+; and, after EACH op, records an order-sensitive checksum + length of the
+; logical text into a results array.  buftst.py replays the identical script
+; in a Python model and compares every checkpoint, the final window invariant,
+; and the error flag.
+;
+; The only non-WM code here is the harness glue: the op sequencer (macros
+; below), the checkpoint recorder (CHECK) and the checksum walk (TMEASURE /
+; SUMBC).  That glue is inherent to any test harness -- WM's own "caller" is
+; the whole editor.  All cursor/delete TARGETS are built purely from the
+; buffer's own anchor cells (TXTBEG/TXTEND/GAPBEG/GAPEND) plus a constant, so
+; the harness makes no assumption about the gap's internals.
+;
+; Contracts exercised (from BUF.MAC, verbatim WM):
+;   INSBLK  DE=source, BC=count -> splice at the cursor (GAPBEG).
+;   PUTCUR  target buffer address in HL -> slide the gap to the cursor.
+;   DELTO   target in HL; S flag SET = backward (swallow [HL..cursor)),
+;           S flag CLEAR = forward (swallow [cursor..HL)).
+;
+; What the battery covers:
+;   * insert > 256 bytes in one INSBLK  -> multi-chunk CKLEN/MKGAP/CPYGAP
+;   * single-byte cursor walk both ways -> GAPRT / GAPLF one-byte slides
+;   * forward AND backward delete spans -> DELTO both flag states
+;   * mid-text insert then delete       -> gap relocation (MOVGAP/PUTHOLE)
+;   * insert of high-bit bytes          -> CPYGAP's ANI 7FH masking
+;============================================================
+
+WBOOT	EQU	0
+
+	EXTRN	BINIT
+	EXTRN	INSBLK, PUTCUR, DELTO
+	EXTRN	TXTBEG, GAPBEG, GAPEND, TXTEND
+
+	PUBLIC	NRES, RESLTS
+	PUBLIC	CNTTST			; BUF.MAC's PAGESTP count-test (CMD.MAC owns
+	PUBLIC	CMDCNT, KBPOLL		; BUF.MAC line-move EXTRNs (stubbed)
+					; the real one; this battery is resident)
+
+NMAX	EQU	32		; result slots (each 4 bytes: cksum, len)
+
+;------------------------------------------------------------
+; Op macros -- each performs one buffer op with WM primitives, then CHECK
+; records a checkpoint.  The op list in START reads 1:1 against buftst.py's
+; SCRIPT, so the assembly battery and the Python model cannot drift.
+;------------------------------------------------------------
+
+; INS SRC,LEN -- insert LEN bytes from SRC at the cursor.
+INS	MACRO	SRC,LEN
+	LXI	D,SRC
+	LXI	B,LEN
+	CALL	INSBLK
+	CALL	CHECK
+	ENDM
+
+; HOME -- move the cursor to the start of text (TXTBEG).
+HOME	MACRO
+	LHLD	TXTBEG
+	CALL	PUTCUR
+	CALL	CHECK
+	ENDM
+
+; TEND -- move the cursor to the end of text (TXTEND).
+TEND	MACRO
+	LHLD	TXTEND
+	CALL	PUTCUR
+	CALL	CHECK
+	ENDM
+
+; RIGHT N -- move the cursor N chars right (target = GAPEND + N).
+RIGHT	MACRO	N
+	LHLD	GAPEND
+	LXI	D,N
+	DAD	D
+	CALL	PUTCUR
+	CALL	CHECK
+	ENDM
+
+; LEFT N -- move the cursor N chars left (target = GAPBEG - N).
+LEFT	MACRO	N
+	LHLD	GAPBEG
+	LXI	D,0-N
+	DAD	D
+	CALL	PUTCUR
+	CALL	CHECK
+	ENDM
+
+; DELF N -- delete N chars forward (target = GAPEND + N, S clear).
+DELF	MACRO	N
+	LHLD	GAPEND
+	LXI	D,N
+	DAD	D
+	XRA	A		; S clear -> forward delete
+	CALL	DELTO
+	CALL	CHECK
+	ENDM
+
+; DELB N -- delete N chars backward (target = GAPBEG - N, S set).
+DELB	MACRO	N
+	LHLD	GAPBEG
+	LXI	D,0-N
+	DAD	D
+	MVI	A,80H
+	ORA	A		; S set -> backward delete (HL preserved)
+	CALL	DELTO
+	CALL	CHECK
+	ENDM
+
+	CSEG
+
+;============================================================
+; The battery.  Every op is followed (inside its macro) by a CHECK checkpoint.
+; This list is mirrored exactly by SCRIPT in buftst.py.
+;============================================================
+START:	LXI	SP,STACK
+	LXI	H,0
+	SHLD	NRES		; no checkpoints recorded yet
+	CALL	BINIT
+
+	INS	S1,S1LEN	;  1  "Hello, World!",CR,LF
+	HOME			;  2  cursor -> start
+	INS	S2,S2LEN	;  3  "// header",CR,LF  (prepend)
+	TEND			;  4  cursor -> end
+	INS	BIG,BIGLEN	;  5  260 bytes -> multi-chunk insert
+	HOME			;  6  cursor -> start
+	RIGHT	1		;  7  \  single-byte
+	RIGHT	1		;  8   > gap slides right
+	RIGHT	1		;  9  /
+	LEFT	1		; 10  \  single-byte
+	LEFT	1		; 11   > gap slides left (text unchanged)
+	LEFT	1		; 12  /  back at start
+	RIGHT	5		; 13  cursor -> offset 5
+	INS	S3,S3LEN	; 14  "XYZ" mid-text
+	DELB	3		; 15  delete "XYZ" backward
+	DELF	4		; 16  delete 4 forward
+	TEND			; 17  cursor -> end
+	DELB	10		; 18  delete last 10
+	HOME			; 19  cursor -> start
+	INS	S4,S4LEN	; 20  high-bit bytes -> masked to "Hello"
+	TEND			; 21  cursor -> end
+
+	JMP	WBOOT		; back to CP/M; buftst.py reads NRES/RESLTS
+
+;------------------------------------------------------------
+; CHECK -- measure the logical text, store (cksum,len) at RESLTS[NRES], NRES++.
+;------------------------------------------------------------
+CHECK:
+	PUSH	PSW
+	PUSH	B
+	PUSH	D
+	PUSH	H
+	CALL	TMEASURE	; -> CKSUM, TLEN for the current logical text
+	LHLD	NRES
+	DAD	H
+	DAD	H		; HL = NRES*4
+	LXI	D,RESLTS
+	DAD	D		; HL -> &RESLTS[NRES]
+	XCHG			; DE -> slot
+	LHLD	CKSUM
+	MOV	A,L
+	STAX	D
+	INX	D
+	MOV	A,H
+	STAX	D
+	INX	D
+	LHLD	TLEN
+	MOV	A,L
+	STAX	D
+	INX	D
+	MOV	A,H
+	STAX	D
+	LHLD	NRES
+	INX	H
+	SHLD	NRES
+	POP	H
+	POP	D
+	POP	B
+	POP	PSW
+	RET
+
+;------------------------------------------------------------
+; CNTTST -- stub for BUF.MAC's PAGESTP (DELTO's tail).  The real CNTTST lives in
+; CMD.MAC and returns Z when the command count is exhausted, so PAGESTP stops
+; (RZ) instead of paging.  This battery is fully resident (no CMD layer, no
+; command count), so "always exhausted" is the correct, non-paging behavior --
+; and it stops PAGESTP's CALL to an unresolved-to-0000 (WBOOT) symbol.
+;------------------------------------------------------------
+CNTTST:
+	XRA	A		; Z set -> count exhausted -> PAGESTP returns
+	RET
+;CMDCNT / KBPOLL -- stubs for BUF.MAC's line move (GOLINE/SCRLST): no command
+; count and no keyboard in this batch battery.
+KBPOLL:
+	RET
+CMDCNT: DW	0
+
+;------------------------------------------------------------
+; TMEASURE -- order-sensitive checksum + length of the logical text.
+; Logical text = [TXTBEG..GAPBEG) ++ [GAPEND..TXTEND); CKSUM carries across
+; both spans so it reflects byte order.
+;------------------------------------------------------------
+TMEASURE:
+	LXI	H,0
+	SHLD	CKSUM
+	SHLD	TLEN
+
+	LHLD	TXTBEG
+	XCHG			; DE = TXTBEG
+	LHLD	GAPBEG		; HL = GAPBEG
+	CALL	SPANBC		; BC = GAPBEG - TXTBEG
+	LHLD	TXTBEG
+	CALL	SUMBC
+
+	LHLD	GAPEND
+	XCHG			; DE = GAPEND
+	LHLD	TXTEND		; HL = TXTEND
+	CALL	SPANBC		; BC = TXTEND - GAPEND
+	LHLD	GAPEND
+	CALL	SUMBC
+	RET
+
+;------------------------------------------------------------
+; SUMBC -- fold BC bytes at [HL] into CKSUM (rotate-left-1 then add), and add
+; BC into TLEN.  The rotate makes the checksum order-sensitive.
+;------------------------------------------------------------
+SUMBC:
+	MOV	A,B
+	ORA	C
+	RZ			; empty region
+	PUSH	H
+	PUSH	B
+	LHLD	TLEN
+	DAD	B
+	SHLD	TLEN		; TLEN += BC
+	POP	B
+	POP	H
+SBLP:
+	MOV	A,B
+	ORA	C
+	RZ
+	MOV	A,M		; next byte
+	PUSH	H
+	PUSH	B
+	LHLD	CKSUM
+	DAD	H		; CKSUM <<= 1, CY = old bit 15
+	JNC	SB1
+	INX	H		; fold the carry back in (rotate left 1)
+SB1:
+	MVI	D,0
+	MOV	E,A
+	DAD	D		; CKSUM += byte
+	SHLD	CKSUM
+	POP	B
+	POP	H
+	INX	H
+	DCX	B
+	JMP	SBLP
+
+;------------------------------------------------------------
+; SPANBC -- BC := HL - DE (HL kept).  Local copy so the harness needs no BUF
+; export beyond the primitives and anchor cells it drives.
+;------------------------------------------------------------
+SPANBC:
+	MOV	A,L
+	SUB	E
+	MOV	C,A
+	MOV	A,H
+	SBB	D
+	MOV	B,A
+	RET
+
+;------------------------------------------------------------
+; Data
+;------------------------------------------------------------
+S1:	DB	'Hello, World!',0DH,0AH
+S1LEN	EQU	$-S1
+S2:	DB	'// header',0DH,0AH
+S2LEN	EQU	$-S2
+S3:	DB	'XYZ'
+S3LEN	EQU	$-S3
+S4:	DB	0C8H,0E9H,0ECH,0ECH,0EFH	; masks (ANI 7FH) to 'Hello'
+S4LEN	EQU	$-S4
+
+BIG:	REPT	10
+	DB	'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+	ENDM
+BIGLEN	EQU	$-BIG		; 260 bytes -> forces INSBLK's multi-chunk path
+
+CKSUM:	DW	0		; scratch: checksum of the current logical text
+TLEN:	DW	0		; scratch: length of the current logical text
+NRES:	DW	0		; number of checkpoints recorded
+RESLTS: DS     4*NMAX	       ; NMAX slots of (cksum word, len word)
+
+	DS	64
+STACK:
+
+	END	START

@@ -1,0 +1,5791 @@
+;============================================================
+; FILE:    CMD.MAC
+; PROJECT: VI
+; MODULE:  Command-mode dispatch + the vi core.
+;------------------------------------------------------------
+; The vi layer.  Most verbs work in the buffer's gap-agnostic LOGICAL-OFFSET
+; space -- a byte index into the resident text as if the gap were not there --
+; through the API BUF.MAC appends (CUROFF/LOGLEN/CHARAT/GOTO + the DELFWD/DELPRV
+; deletes).  Anything that has to reach past the resident window drives
+; WordMaster's own routines instead -- the line moves (MVLMAX/MVLIND/SETBWD),
+; RGET, the matchers swept by SCRLST, the line kill and the Q-buffer -- which
+; page as they go.  A few places read the pointer row directly (the char under
+; the cursor, the end-of-file test).
+;
+; The cursor sits on the byte at GAPEND (first byte after the gap).  Because
+; PUTCUR slides the gap so the cursor lands on whatever byte lives at the target
+; PHYSICAL address, a motion is just: scan logical space for a target offset,
+; map it to a physical address (L2PHYS), PUTCUR there.
+;
+; Every key goes through CMDDIS, the one chokepoint the main loop, the
+; headless harnesses and '.' (which replays keys) all share.  The command set,
+; and where each command deviates from vim, is COMMANDS.md.
+;============================================================
+	INCLUDE VI.INC
+
+	PUBLIC	CMDRUN, CMDDIS, QSNAP
+	PUBLIC	EDMODE, QUITF, MODF, CMDCNT
+	PUBLIC	MSGPST				; the message this key left
+	PUBLIC	TOFFV, TLINEV, TCOLV
+	PUBLIC	RINTENT				; render intent (read by SCRN.MAC)
+	PUBLIC	ILN				; ... and the lines an R_ILIN opens
+	PUBLIC	ICHAPP				; ... 1 = an R_ICH needs no ICH
+	PUBLIC	ILABOV				; ... 1 = an R_ILIN's row above is stale
+	PUBLIC	CNTTST				; count-test (BUF.MAC PAGESTP reads)
+	PUBLIC	CURRW				; cursor's screen row (SCRN.MAC reads)
+	PUBLIC	FOPEN				; open the command-line file
+	PUBLIC	ARGSCN, ARGGO			; the rest of the command line
+
+	EXTRN	GETKEY				; KEY.MAC
+	EXTRN	OPENZ				; PAGE.MAC -- open + load (cold)
+	EXTRN	TFCB, WRTO, TEXIST, DISCRD, CNTLF ; PAGE.MAC -- :w name, :e
+	EXTRN	REOPEN, SEEKTO			; PAGE.MAC -- :w keeps editing
+	EXTRN	POLLBRK				; PAGE.MAC -- break poll (CNTTST tail)
+	EXTRN	PUTGAP, PUTCUR, PEEKL		; BUF.MAC gap insert / cursor move
+	EXTRN	CUROFF, LOGLEN, CHARAT, GOTO	; BUF.MAC logical-offset API
+	EXTRN	PGTOPM				; PAGE.MAC -- the window signature
+	EXTRN	MKTAB				; RSV.MAC  -- the marks, above the image
+	EXTRN	DELFWD, DELPRV, UNDELF			; BUF.MAC deletes
+	EXTRN	CMP16, SUBHD, MEMCPY		; BUF.MAC 16-bit helpers
+	EXTRN	UNDBEG, UNDO, UNDRPL, UNDWHY	; BUF.MAC single-level undo
+	EXTRN	UNDBAD				; ... and 'too big to capture'
+	EXTRN	UNDHER				; ... where this change starts
+	EXTRN	UNDCUR				; ... the cursor it restores
+	EXTRN	BCONOU				; SCRN.MAC -- console out (miss bell)
+	EXTRN	EXPRM, EXRUB, OUTCH		; SCRN.MAC -- ':' / '/' line echo
+	EXTRN	EXMSG, OUTSTR			; SCRN.MAC -- ex message
+	EXTRN	SCURS				; SCRN.MAC -- cursor back on the text
+	EXTRN	CBOL, CURDCL			; SCRN.MAC -- cursor column ('^G')
+	EXTRN	NEWFIL				; PAGE.MAC -- the file was not there
+	EXTRN	NEDIT, WINROW			; SCRN.MAC -- edit rows / cursor line's row
+	EXTRN	SCBOT, SCEOF, SCBOF, WFILL	; SCRN.MAC -- last layout (H/M/L, scrolls)
+	EXTRN	AUXCNT				; PAGE.MAC -- WM L271E (follows NEWFIL)
+	EXTRN	MVLMAX, MVLIND, SETBWD		; BUF.MAC -- WM line move (pages)
+	EXTRN	CLRCNT				; BUF.MAC -- WM count/direction reset
+	EXTRN	DELLN, SETC0			; BUF.MAC -- WM line kill (dd)
+	EXTRN	QPUTLN, QGET, QKILL		; BUF.MAC -- the yank register
+	EXTRN	QBEG, QEND			; BUF.MAC -- ... and whether it is empty
+	EXTRN	LFCNT				; BUF.MAC -- LFs in a span (p/P row)
+	EXTRN	INSSTR				; BUF.MAC -- splice WM's string
+	EXTRN	RGET0, RGET			; ... and WM's paged line reader
+	EXTRN	MATCHF, MATCHB, FWDCNT, SUBLEN	; BUF.MAC -- WM's string matchers
+	EXTRN	SRCHBF, SRCHST, SRCMAX		; BUF.MAC -- ... and the pattern
+	EXTRN	SCRLST				; BUF.MAC -- WM 4307 (sweep + page)
+	EXTRN	GAPBEG, TXTBEG			; BUF.MAC -- EOF last-line test (G)
+	EXTRN	RGET0, RDGET, LNDLT		; BUF.MAC -- WM read-ahead / lines moved
+	EXTRN	LINPSB, DIRFLG			; BUF.MAC / PAGE.MAC -- G/gg placement
+	EXTRN	GAPEND, TXTEND			; BUF.MAC -- the char under the cursor (goal)
+	EXTRN	OUTPOS, REWIND			; PAGE.MAC -- records before the window / page back
+
+;DOTMAX, and the buffers it sizes, are in VI.INC / RSV.MAC: see RSV.MAC for
+;why storage that starts life unread is held above the image, not inside it.
+	EXTRN	DOTSCR, DOTBUF			; RSV.MAC -- '.' scratch + last change
+	EXTRN	FNAME, ZTOP, PLUSB, EXBUF	; RSV.MAC -- name / G top / '+{n}' / ':'
+
+	CSEG
+
+;============================================================
+; MAIN LOOP -- read a key, dispatch by mode, until QUITF.
+; The headless harnesses (CMDTST/MOTTST) drive CMDRUN; the on-screen editor
+; (VI.MAC) reads the key and repaints itself, calling CMDDIS per key.  Both share
+; the one mode-dispatch chokepoint, CMDDIS.
+;============================================================
+CMDRUN:
+	CALL	GETKEY		; B = KT_xxx, C = char / action
+	CALL	CMDDIS
+	LDA	QUITF
+	ORA	A
+	JZ	CMDRUN
+	RET
+
+;CMDDIS -- dispatch one already-read key (B = KT type, C = char/action) by mode.
+;The key passes through the '.' recorder on the way in and the way out: DOTPRE
+;adds it to the recording of the command being typed, DOTPOST notices when that
+;command has finished and, if it changed the text, makes its keys the ones '.'
+;replays.  Both are no-ops while '.' is itself replaying.  CDMODE is the mode
+;dispatch proper.
+CMDDIS:
+	CALL	DOTPRE
+	CALL	CDMODE
+	JMP	DOTPOST
+CDMODE:
+	LDA	EDMODE
+	CPI	EM_INS
+	JZ	CD_INS
+	CPI	EM_REP
+	JZ	CD_REP
+	JMP	VICMD		; tail: VICMD RETs to CDMODE's caller
+CD_INS:
+	JMP	VIINS
+CD_REP:
+	JMP	VIREP
+
+;============================================================
+; VICMD -- command-mode key.  B = KT type, C = char / action.
+; Count prefix accumulates into CMDCNT; a leading '0' is the BOL motion, a '0'
+; after a count is a digit.  Pending 'g' (for gg) and pending 'd' (for dd) are
+; cleared on every dispatched command except the one that re-arms them.
+;============================================================
+VICMD:
+	MOV	A,B
+	CPI	KT_NONE
+	RZ			; discarded key
+	CPI	KT_ACT
+	JZ	VIC_ACT
+	LDA	GPEND		; 'r' pending: this char is the replacement, a
+	CPI	PR		;   count digit included (vim's 'r3' stores '3')
+	JZ	VR_DO
+	;--- KT_CHAR: maybe a count digit ---
+	MOV	A,C
+	CPI	'1'
+	JC	VIC_NOTD	; < '1'
+	CPI	'9'+1
+	JNC	VIC_NOTD	; > '9'
+	JMP	VICDIG	       ; '1'..'9' -> accumulate
+VIC_NOTD:
+	MOV	A,C
+	CPI	'0'
+	JNZ	VICDSP
+	LHLD	CMDCNT
+	MOV	A,H
+	ORA	L
+	JZ	VICDSP	      ; bare '0' -> BOL motion
+	MVI	C,'0'		; '0' after a count -> digit
+VICDIG:
+	LHLD	CMDCNT		; CMDCNT = CMDCNT*10 + (C-'0'), held at FFFFH
+	MOV	D,H		;   rather than wrapping (vim's counts do not
+	MOV	E,L		;   wrap: 99999w runs to the end of the file)
+	DAD	H		; *2
+	JC	VIC_SAT
+	DAD	H		; *4
+	JC	VIC_SAT
+	DAD	D		; *5
+	JC	VIC_SAT
+	DAD	H		; *10
+	JC	VIC_SAT
+	MOV	A,C
+	SUI	'0'
+	MOV	E,A
+	MVI	D,0
+	DAD	D
+	JNC	VIC_CNT
+VIC_SAT:
+	LXI	H,0FFFFH
+VIC_CNT:
+	SHLD	CMDCNT
+	JMP	SETMOV		; a count digit draws nothing -> cursor-only, not full
+VICDSP:
+	LDA	GPEND		; snapshot + clear the pending-g / pending-d state
+	STA	GSAVE
+	XRA	A
+	STA	GPEND
+	LDA	PENDOP
+	STA	PSAVE
+	XRA	A
+	STA	PENDOP
+	LDA	PSAVE		; operator pending? -> this key is its motion/double
+	ORA	A
+	JNZ	OPPEND
+	LDA	GSAVE		; 'Z' pending: only a second 'Z' runs -- vim beeps
+	CPI	PZ		;   on any other key and drops both, count included
+	JNZ	VIC_TB
+	MOV	A,C
+	CPI	'Z'
+	JNZ	VIC_SW
+VIC_TB:
+	LXI	H,CMDTAB
+	JMP	VSCANQ		; tail: handler RETs to CMDRUN (miss -> no-op)
+VIC_SW:
+	CALL	SETMOV		; dropped: nothing drawn, nothing moved
+	JMP	GETCNT		; the count goes with it (tail: GETCNT RETs)
+VIC_ACT:
+	XRA	A		; action key clears all pending state
+	STA	GPEND
+	STA	GSAVE
+	STA	PENDOP
+	STA	PSAVE
+	LXI	H,ACTTAB
+	JMP	VSCANQ
+
+;------------------------------------------------------------
+; VSCAN -- table dispatch.  C = key, HL -> {DB ch, DW addr}
+; table ending DB 0.  Match -> JMP handler (handler RETs to VICMD's caller).
+; Miss -> RET.  Preserves B,C.
+;
+; VSCANQ is the same dispatch for the two TOP-LEVEL key tables, where a miss
+; means the key is not a command at all: no handler ran, so nothing was drawn
+; and nothing moved, and the frame is a reposition rather than a 24-row
+; repaint (a repaint costs seconds at 9600 baud, for a key that did
+; nothing).  It is NOT used for the operator's
+; motion lookup: the delete that follows relies on the R_FULL default.
+; VSCLK is the walk alone -- HL = the handler, NZ; Z on a miss.
+;------------------------------------------------------------
+VSCANQ:
+	CALL	VSCLK
+	JZ	VIC_SW		; not a command: drawn nothing, count dropped
+	PCHL
+VSCAN:
+	CALL	VSCLK
+	RZ			; miss
+	PCHL
+VSCLK:
+VSCAN1: MOV	A,M
+	ORA	A
+	RZ			; miss: Z, and A = the terminating 0
+	INX	H
+	CMP	C
+	MOV	E,M
+	INX	H
+	MOV	D,M
+	INX	H
+	JNZ	VSCAN1
+	XCHG			; HL = the handler
+	ORA	A		; A is the key that matched -- never 0, so NZ
+	RET
+
+;============================================================
+; '.' -- REPEAT THE LAST CHANGE.
+; The repeat IS the keystrokes, not a description of them.  Every key the editor
+; dispatches passes through DOTPRE on its way into CMDDIS, which appends it to
+; the recording of the command currently being typed, and through DOTPOST on the
+; way out, which notices when that command has finished and, if it changed the
+; text, makes its keys THE recording.  '.' feeds those keys back through CMDDIS
+; one at a time, so the repeat runs the same handlers the original keys ran --
+; there is no second implementation of any command to keep in step, an insert
+; repeats with its typed text because the text is part of the recording, and a
+; command written later is repeatable the day it is written.
+;
+; A command is still being TYPED while insert or replace mode is up, while
+; 'g' / 'Z' / 'r' or an operator is pending, and while a count is accumulating;
+; DOTPOST tests exactly those four.  DOTCHG is what says "this one changed the
+; text": MARKMOD sets it beside MODF, so every edit that marks the buffer
+; modified is recorded and nothing else is.  'yy' puts DOTCHG back the way it
+; puts MODF back -- a yank takes its lines out and returns them, and must not
+; become the repeat.
+;
+; LIMIT (deviation from vim, which has no such limit): a recording is DOTMAX
+; bytes.  A change longer than that -- an insert of more than DOTMAX-2
+; characters -- is not repeatable at all, and '.' after one rings the bell
+; rather than repeating a truncated version of it.
+;============================================================
+
+;DOTPRE -- record the key in B (type) / C (char), starting a new recording when
+; the previous key finished a command.  B and C are preserved: CMDDIS dispatches
+; them the moment this returns.
+DOTPRE:
+	LDA	DOTRPL
+	ORA	A
+	RNZ			; the replay's own keys are not recorded
+	PUSH	B
+	PUSH	D
+	PUSH	H
+	LDA	DOTSTA
+	ORA	A
+	JZ	DOTP1
+	XRA	A		; a new command: the recording starts over
+	STA	DOTSTA
+	STA	DOTOVF
+	LXI	H,DOTSCR
+	SHLD	DOTSP
+	CALL	UNDBEG		; ... and 'u' hears that boundary too
+DOTP1:
+	MOV	A,B
+	CPI	KT_NONE
+	JZ	DOTPX		; a discarded key is not a keystroke
+	CPI	KT_ACT
+	MOV	A,C
+	JZ	DOTP2
+	ANI	7FH		; a char stands for itself (CPYGAP masks inserts
+	JMP	DOTP3		;   the same way), bit 7 marks an action key
+DOTP2:
+	ORI	80H		; an action key (an arrow) rides in bit 7
+DOTP3:
+	STA	DOTLK		; the last key recorded (DOTPOST reads it)
+	MOV	B,A
+	LHLD	DOTSP
+	XCHG
+	LXI	H,DOTSCR+DOTMAX
+	CALL	CMP16		; CY iff the write pointer is still inside it
+	JNC	DOTPOV
+	LHLD	DOTSP
+	MOV	M,B
+	INX	H
+	SHLD	DOTSP
+DOTPX:
+	POP	H
+	POP	D
+	POP	B
+	RET
+DOTPOV:
+	MVI	A,1
+	STA	DOTOVF		; too long to record: give this recording up
+	JMP	DOTPX
+
+;DOTPOST -- the dispatch has returned.  When it finished a command, arm the
+; reset for the next key; and when that command changed the text, make its
+; recording the one '.' replays.
+DOTPOST:
+	LDA	DOTRPL
+	ORA	A
+	RNZ
+	LDA	EDMODE
+	ORA	A
+	RNZ			; EM_CMD is 0: any other mode is mid-command
+	LDA	GPEND
+	ORA	A
+	RNZ			; 'g' / 'Z' / 'r' still pending
+	LDA	PENDOP
+	ORA	A
+	RNZ			; an operator still waiting for its motion
+	LHLD	CMDCNT
+	MOV	A,H
+	ORA	L
+	JZ	DOTQ1
+	LDA	DOTLK		; a digit with the count still up: the command
+	CPI	'0'		;   itself has not been typed yet
+	JC	DOTQ1
+	CPI	'9'+1
+	RC
+DOTQ1:
+	MVI	A,1
+	STA	DOTSTA		; the next key starts a new recording
+	LDA	DOTCHG
+	ORA	A
+	RZ			; changed nothing: not a repeatable command
+	XRA	A
+	STA	DOTCHG
+	STA	DOTLEN
+	LDA	DOTOVF
+	ORA	A
+	RNZ			; outgrew the scratch: DOTLEN stays 0
+	LHLD	DOTSP
+	LXI	D,DOTSCR
+	CALL	SUBHD		; HL = the recording's length
+	MOV	A,L
+	STA	DOTLEN
+	ORA	A
+	RZ
+	MOV	C,A
+	MVI	B,0
+	LXI	H,DOTSCR
+	LXI	D,DOTBUF
+	JMP	MEMCPY		; the change '.' will replay
+
+;MARKMOD -- the text has changed: mark the buffer modified, and mark the command
+; being typed as a change so '.' records it.
+MARKMOD:
+	CALL	MKDROP		; any mark this edit leaves pointing wrong
+	MVI	A,1
+	STA	MODF
+	STA	DOTCHG
+	RET
+
+;VC_DOT -- '.': replay the recorded change.  A count typed on the '.' REPLACES
+; the recorded one, as vim's does ('3x' then '2.' deletes two), which is why the
+; recorded count's digits are skipped when one is given.  With nothing recorded
+; the bell rings and nothing moves.  '.' never becomes the last change itself:
+; DOTCHG is cleared on the way out, so a second '.' repeats the same change.
+VC_DOT:
+	LHLD	CMDCNT		; the count typed on the '.' (0 = none given)
+	SHLD	DOTNCT
+	LXI	H,0
+	SHLD	CMDCNT
+	LDA	DOTLEN
+	ORA	A
+	JZ	DOTBEL		; nothing recorded: nothing to repeat
+	XRA	A
+	STA	DOTIX
+	LHLD	DOTNCT
+	MOV	A,H
+	ORA	L
+	JZ	DOTGO
+	SHLD	CMDCNT		; the new count takes the recorded one's place
+DOTSKP:
+	CALL	DOTGET		; ... so step past the digits it recorded
+	JC	DOTGO
+	CPI	'0'
+	JC	DOTGO
+	CPI	'9'+1
+	JNC	DOTGO
+	LDA	DOTIX
+	INR	A
+	STA	DOTIX
+	JMP	DOTSKP
+DOTGO:
+	MVI	A,1
+	STA	DOTRPL
+DOTLP:
+	CALL	DOTGET
+	JC	DOTDN
+	MOV	C,A
+	MVI	B,KT_CHAR
+	ORA	A
+	JP	DOTLP2
+	ANI	7FH		; bit 7: the key was an action, not a char
+	MOV	C,A
+	MVI	B,KT_ACT
+DOTLP2:
+	LDA	DOTIX
+	INR	A
+	STA	DOTIX
+	CALL	CMDDIS		; the recorded key, dispatched as if typed
+	JMP	DOTLP
+DOTDN:
+	XRA	A
+	STA	DOTRPL
+	STA	DOTCHG		; the '.' is not itself the new last change
+	JMP	SETFUL		; whole handlers ran: repaint rather than guess
+DOTBEL:
+	MVI	C,BEL
+	CALL	BCONOU
+	JMP	SETMOV
+
+;============================================================
+; MARKS -- 'm{a-c}' sets one, '`{a-c}' goes back to the exact spot, and
+; '''{a-c}' to that line's first non-blank.  Three of them, which is all
+; COMMANDS.md asks for.
+;
+; A mark is a logical offset plus the PGTOPM the window carried when it was
+; set.  It is DROPPED, never shifted, the moment it could no longer point at
+; the same text: MKDROP clears it when an edit happens at or before it, and a
+; jump refuses when the window has paged since.  That is the decided
+; behaviour -- a mark that survived an edit above it would point somewhere
+; plausible and wrong, which is worse than one that admits it is gone.
+;
+; DEVIATION from vim, deliberate and in COMMANDS.md: vim shifts a mark to
+; follow the text.  A consequence worth knowing is that '.' after a 'd''a'
+; refuses, because the delete drops the very mark the replay would need.
+;
+; The three keys arm a pending code in GPEND exactly as 'r' does, and VICMD
+; hands the NEXT key to MKOP instead of dispatching it: a mark letter is an
+; operand, not a command.
+;============================================================
+
+;MKVAD -- HL -> MKVAL[C], the live flag for the mark C names.  Clobbers DE.
+MKVAD:
+	MVI	D,0
+	MOV	E,C
+	LXI	H,MKVAL
+	DAD	D
+	RET
+
+;MKCLR -- every mark goes: the buffer they named has been replaced (':e').
+MKCLR:
+	LXI	H,MKVAL
+	MVI	B,MKMAX
+	XRA	A
+MKC_LP:
+	MOV	M,A
+	INX	H
+	DCR	B
+	JNZ	MKC_LP
+	RET
+
+;MKGETK -- C = this command's next key.  During a '.' replay it has to come
+;from the recording: calling GETKEY there would stop dead waiting for a key
+;nobody is going to press.  CY = there is no key, or it was not a character.
+MKGETK:
+	LDA	DOTRPL
+	ORA	A
+	JZ	MKG_KB
+	CALL	DOTGET		; the recording's next key
+	RC
+	MOV	C,A
+	LDA	DOTIX		; ... stepped past, exactly as DOTLP does
+	INR	A
+	STA	DOTIX
+	ORA	A		; CY clear
+	RET
+MKG_KB:
+	CALL	GETKEY
+	MOV	A,B
+	CPI	KT_CHAR
+	STC
+	RNZ			; an action key (ESC) cancels the command
+	ORA	A		; CY clear
+	RET
+
+;VC_MK / VC_BQ / VC_AQ -- 'm', '`' and '''.  Each reads the key that names its
+;mark ITSELF, the way RDLINE reads a '/' pattern, instead of leaving a pending
+;code for the next dispatch: under an operator the whole of "d'a" has to
+;happen inside one VSCAN, because OPPEND measures the span the moment the
+;motion returns to it.
+VC_MK:
+	MVI	A,PM
+	JMP	MKGO
+VC_BQ:
+	MVI	A,PJ
+	JMP	MKGO
+VC_AQ:
+	MVI	A,PJL
+MKGO:
+	STA	MKWHAT
+	CALL	MOVCNT		; a count means nothing on any of the three
+	CALL	MKGETK		; the key that names the mark
+	JC	MKBAD		; no key: ESC cancelled it, or a '.' replay
+				;   ran out -- the letter is read here and so
+				;   was never recorded, which is why a '.'
+				;   after "d'a" refuses (COMMANDS.md).  It must
+				;   CANCEL, not just return: an empty linewise
+				;   span still takes a whole line
+				; ... otherwise fall into MKOP
+
+;MKOP -- C names the mark.  Only 'a' to 'c' exist; any other key drops the
+;whole thing, as vim's 'Z{other}' does.
+MKOP:
+	MOV	A,C
+	SUI	'a'
+	CPI	MKMAX
+	JNC	MKBAD		; not a mark letter: nothing happens
+	MOV	C,A		; C = the mark's index
+	ADD	A
+	ADD	A		; ... and MKSIZ bytes to each slot
+	MOV	E,A
+	MVI	D,0
+	LXI	H,MKTAB
+	DAD	D		; HL -> this mark's slot
+	LDA	MKWHAT
+	CPI	PM
+	JZ	MKSET
+				; ... otherwise fall into MKJMP
+
+;MKJMP -- go back to the mark.  It refuses, with the bell, when the mark was
+;never set or when the window has paged away from under it.
+MKJMP:
+	PUSH	H
+	CALL	MKVAD
+	MOV	A,M
+	POP	H
+	ORA	A
+	JZ	MKBAD		; never set
+	MOV	E,M
+	INX	H
+	MOV	D,M		; DE = the offset it holds
+	INX	H
+	MOV	A,M
+	INX	H
+	MOV	H,M
+	MOV	L,A		; HL = the window signature it was set under
+	PUSH	D
+	XCHG			; DE = that signature
+	LHLD	PGTOPM
+	MOV	A,L
+	CMP	E
+	JNZ	MKSTAL
+	MOV	A,H
+	CMP	D
+	JNZ	MKSTAL
+	LDA	MKWHAT		; decided BEFORE the GOTO, so no register of
+	CPI	PJL		;   ours has to survive a BUF primitive
+	JZ	MKJ_GO		; ''': GPKEEP is 0, so GPLACE finds the first
+	MVI	A,1		;   non-blank
+	STA	GPKEEP		; '`': land on the column it was set at
+MKJ_GO:
+	POP	H		; HL = the offset
+	CALL	GOTO
+	JMP	GPLACE		; (which sets LNDLT itself)
+MKSTAL:
+	POP	H		; the window paged: the mark is gone for good
+	CALL	MKVAD
+	MVI	M,0
+				; ... and fall into MKBAD
+
+;MKBAD -- this mark will not answer.  An operator running the motion is
+;cancelled whole: PSAVE is what OPPEND's tail reads to decide whether to open
+;an insert, so clearing it stops a "c`z" opening one over a span of nothing.
+MKBAD:
+	XRA	A
+	STA	PSAVE
+	JMP	DOTBEL
+
+;MKSET -- remember where the cursor is, and which window it is in.
+MKSET:
+	PUSH	H
+	CALL	CUROFF		; HL = the cursor's logical offset
+	XCHG
+	LHLD	PGTOPM
+	XTHL			; HL = the slot, (SP) = the signature
+	MOV	M,E
+	INX	H
+	MOV	M,D
+	INX	H
+	POP	D
+	MOV	M,E
+	INX	H
+	MOV	M,D
+	CALL	MKVAD
+	MVI	M,1		; ... and the mark is live
+	JMP	SETMOV		; 'm' draws nothing and moves nothing
+
+;MKDROP -- an edit is happening at the cursor: drop every mark it could have
+;left pointing at different text.  A mark BEFORE the edit still names what it
+;named; one at or after it does not, because the text moved under it.  Called
+;from MARKMOD, so it must come back with every register as it found it.
+MKDROP:
+	PUSH	PSW
+	LDA	MKHOLD		; a yank takes its lines out and puts them back
+	ORA	A		;   unchanged (VY_YY): the text every mark points
+	JNZ	MKD_HL		;   into is still there, so none of them goes
+	PUSH	B
+	PUSH	D
+	PUSH	H
+	CALL	CUROFF		; HL = where the edit is (CUROFF clobbers DE)
+	SHLD	MKEDIT
+	LXI	H,MKVAL
+	LXI	D,MKTAB
+	MVI	B,MKMAX
+MKD_LP:
+	MOV	A,M
+	ORA	A
+	JZ	MKD_NX		; that mark is not set: nothing to drop
+	PUSH	H
+	LHLD	MKEDIT
+	LDAX	D		; the mark's offset, low
+	SUB	L
+	INX	D
+	LDAX	D		; ... and high (neither INX nor LDAX touch CY)
+	DCX	D
+	SBB	H		; CY iff the mark is BEFORE the edit
+	POP	H
+	JC	MKD_NX
+	MVI	M,0		; at it or after it: the mark is dropped
+MKD_NX:
+	INX	H
+	INX	D
+	INX	D
+	INX	D
+	INX	D
+	DCR	B
+	JNZ	MKD_LP
+	POP	H
+	POP	D
+	POP	B
+MKD_HL:
+	POP	PSW
+	RET
+
+
+;============================================================
+; UNDO -- 'u'.  One level, as real vi has it: 'u' undoes the last change and a
+; second 'u' puts it back.  The capture, the record format and everything that
+; puts undo out of reach are BUF.MAC's UNDO section; all that belongs up here is
+; the key, the repaint and what to say when it will not run.
+;
+; 'u' is not itself a change: it calls neither MARKMOD nor anything else that
+; sets DOTCHG, so a '.' after a 'u' still repeats the command the undo took
+; back -- which is what vim does.  It does set MODF, because a buffer that has
+; been undone past a ':w' no longer matches the file on disk.
+;============================================================
+
+;VC_UNDO -- 'u'.  A count is meaningless with a single level, so it is
+;swallowed rather than obeyed (as the counts on i a A I r R o O J ~ are -- see
+;COMMANDS.md).
+VC_UNDO:
+	LXI	H,0
+	SHLD	CMDCNT
+	CALL	UNDO
+	JC	UNDNO
+	LHLD	UNDCUR
+	CALL	UCLAMP		; vi never sits on a line terminator
+	CALL	GOTO		; ... and this keeps LNDLT, as the replay did
+	CALL	MKDROP		; the undo moved text back under any mark past it
+	MVI	A,1
+	STA	MODF		; undone past a ':w' still differs from the file
+	CALL	GLSTAL		; the cursor jumped to the change: no goal column
+	JMP	SETFUL		; whole spans moved: repaint rather than guess
+
+;UCLAMP -- HL(off) -> HL, held inside its line: vi never sits on a terminator,
+;so an offset at or past the line's content end comes back onto the last char.
+;An empty line keeps the offset at its start, there being nothing to sit on.
+UCLAMP:
+	PUSH	H
+	CALL	CEND		; HL = the line's content end
+	POP	D		; DE = the offset wanted
+	CALL	CMP16		; CY iff it is inside the line
+	JNC	UCL_BK
+	XCHG
+	RET
+UCL_BK:
+	PUSH	H		; the content end
+	XCHG			; HL = the offset wanted
+	CALL	BOL
+	POP	D		; DE = the content end, HL = the line's start
+	CALL	CMP16		; Z iff the line is empty
+	XCHG			; HL = the content end
+	RZ
+	DCX	H		; ... its last character
+	RET
+UNDNO:
+	LDA	UNDWHY
+	ORA	A
+	JZ	UNDBEL
+	LXI	H,SUNDW		; the change has paged away: say so
+	CPI	1
+	JZ	EXERR
+	LXI	H,SUNDB		; ... or it never fitted the undo region
+	JMP	EXERR
+UNDBEL:
+	MVI	C,BEL
+	CALL	BCONOU
+	JMP	SETMOV
+
+;DOTGET -- A = the recorded key at DOTIX; CY when the recording is spent.
+DOTGET:
+	LDA	DOTIX
+	MOV	E,A
+	LDA	DOTLEN
+	CMP	E
+	JZ	DOTGEF
+	MVI	D,0
+	LXI	H,DOTBUF
+	DAD	D
+	MOV	A,M
+	ORA	A		; CY clear: a key was returned
+	RET
+DOTGEF:
+	STC
+	RET
+
+;============================================================
+; GOAL-COLUMN + LINE STRUCTURE (vi semantics; logical-offset space).
+; The gap-agnostic offset<->pointer mapping (CUROFF/LOGLEN/CHARAT/GOTO, plus the
+; private L2PHYS/CLAMPL helpers and the DELFWD/DELPRV deletes) now lives in
+; BUF.MAC and is EXTRN'd above; this module works purely in logical offsets.
+;============================================================
+
+;GOSET -- HL(off): GOTO then refresh GOALCOL from the landing column.
+GOSET:
+	CALL	GOTO
+;SETGL -- GOALCOL = the cursor's screen column, as vim's curswant: a TAB under
+; the cursor counts at its last column.  The line's start is found with WM's
+; LINPSB, so a line begun before the window is paged back.
+SETGL:
+	CALL	ZSAVE
+	LXI	H,0
+	CALL	LINPSB		; HL = the cursor line's start
+	PUSH	H
+	CALL	ZREST
+	POP	H
+	PUSH	H
+	CALL	GBSUB		; HL = bytes to the cursor
+	MOV	B,H
+	MOV	C,L
+	POP	H		; HL = the line's start
+	LXI	D,0		; DE = screen column
+SG_LP:
+	MOV	A,B
+	ORA	C
+	JZ	SG_CUR
+	MOV	A,M
+	INX	H
+	DCX	B
+	PUSH	H
+	MOV	L,E
+	CALL	CWID
+	POP	H
+	ADD	E
+	MOV	E,A
+	JNC	SG_LP
+	INR	D
+	JMP	SG_LP
+SG_CUR:
+	LHLD	TXTEND
+	PUSH	D
+	XCHG
+	LHLD	GAPEND
+	CALL	CMP16		; Z iff no char under the cursor
+	POP	D
+	JZ	SG_SET
+	MOV	A,M
+	CPI	TAB
+	JNZ	SG_SET
+	MOV	L,E
+	CALL	CWID
+	DCR	A		; the TAB's last column
+	ADD	E
+	MOV	E,A
+	JNC	SG_SET
+	INR	D
+SG_SET:
+	XCHG
+	SHLD	GOALCOL
+	RET
+
+;CWID -- A = a char, L = its screen column (low byte) -> A = its width: a TAB
+; runs to the next multiple of TABWID, a CR takes none (as LAYOUT draws them).
+CWID:
+	CPI	CR
+	JZ	CW_0
+	CPI	TAB
+	MVI	A,1
+	RNZ
+	MOV	A,L
+	ANI	TABWID-1
+	CMA
+	ADI	TABWID+1	; TABWID - (column MOD TABWID)
+	RET
+CW_0:
+	XRA	A
+	RET
+
+;============================================================
+; LINE-STRUCTURE HELPERS (all in logical-offset space).
+; A line ends at its LF; a CR immediately before that LF is part of the break.
+;============================================================
+
+;BOL -- HL(off) -> HL = start-of-line offset (just past the previous LF, or 0).
+BOL:
+BOL_LP:
+	MOV	A,H
+	ORA	L
+	RZ			; at 0
+	DCX	H		; look at off-1
+	PUSH	H
+	CALL	CHARAT
+	POP	H		; HL = off-1
+	CPI	LF
+	JZ	BOL_DN
+	JMP	BOL_LP
+BOL_DN:
+	INX	H		; line starts just after the LF
+	RET
+
+;EOLNL -- HL(off) -> HL = offset of the LF ending this line, or LOGLEN if none.
+EOLNL:
+	PUSH	H
+	CALL	LOGLEN
+	SHLD	WKN
+	POP	H
+ENL_LP:
+	XCHG			; DE = i
+	LHLD	WKN
+	CALL	CMP16		; DE=i vs HL=n: CY iff i < n
+	XCHG			; HL = i, DE = n
+	JNC	ENL_DN		; i >= n
+	PUSH	H
+	CALL	CHARAT
+	POP	H
+	CPI	LF
+	JZ	ENL_DN
+	INX	H
+	JMP	ENL_LP
+ENL_DN:
+	RET
+
+;NLSTART -- HL(off) -> HL = start of next line (EOLNL+1), or LOGLEN if last.
+NLSTART:
+	CALL	EOLNL
+	PUSH	H
+	CALL	LOGLEN
+	POP	D		; DE = eol result
+	CALL	CMP16		; DE=eol vs HL=LOGLEN: Z iff equal
+	JZ	NLS_DN		; no next line
+	XCHG			; HL = eol
+	INX	H
+	RET
+NLS_DN:
+	RET			; HL = LOGLEN
+
+;EOLC -- HL(off) -> HL = last content-char offset of the line (>= BOL).
+EOLC:
+	PUSH	H
+	CALL	EOLNL
+	SHLD	WKTERM
+	POP	H
+	CALL	BOL
+	SHLD	WKBOL
+	LHLD	WKTERM
+	XCHG			; DE = term
+	LHLD	WKBOL
+	CALL	CMP16		; DE=term vs HL=bol: Z iff empty line
+	JZ	EOLC_MT
+	XCHG			; HL = term
+	DCX	H		; term-1
+	PUSH	H
+	CALL	CHARAT
+	POP	H		; HL = term-1
+	CPI	CR
+	JZ	EOLC_CR		; content ends at term-1
+	JMP	EOLC_LS		; content ends at term; last = term-1 = HL
+EOLC_CR:
+	DCX	H		; last = (term-1) - 1
+EOLC_LS:
+	XCHG			; DE = last
+	LHLD	WKBOL
+	CALL	CMP16		; DE=last vs HL=bol: CY iff last < bol
+	JC	EOLC_MT
+	XCHG			; HL = last
+	RET
+EOLC_MT:
+	LHLD	WKBOL
+	RET
+
+;COL -- HL(off) -> HL = off - BOL(off).
+COL:
+	PUSH	H
+	CALL	BOL
+	POP	D		; DE = off
+	XCHG			; HL = off, DE = bol
+	JMP	SUBHD
+
+;--- the idioms this module repeats, each written once ---------------------
+; Every one of these is the sequence it replaces, tail-called so the last
+; routine's registers and flags reach the caller untouched.
+;
+;ATENDQ -- Z iff the cursor is at the end of the text.  Leaves what the
+; sequence left: HL = LOGLEN, DE = the cursor's offset, CMP16's flags.
+ATENDQ:
+	CALL	CUROFF
+	PUSH	H
+	CALL	LOGLEN
+	POP	D		; DE = cur
+	JMP	CMP16		; DE=cur vs HL=LOGLEN: Z iff at the very end
+;CURCHR -- A = the char under the cursor.
+CURCHR:
+	CALL	CUROFF
+	JMP	CHARAT
+;MOVCNT -- a pure cursor motion, and its count in HL.
+MOVCNT:
+	CALL	SETMOV
+	JMP	GETCNT
+;CNTOFF -- spend the count, then HL = the cursor's offset.
+CNTOFF:
+	CALL	GETCNT
+	JMP	CUROFF
+;GBSUB -- HL(a pointer into the text) -> HL = GAPBEG - it.
+GBSUB:
+	XCHG
+	LHLD	GAPBEG
+	JMP	SUBHD
+
+;GETCNT -- HL = count (>=1); clears CMDCNT.
+GETCNT:
+	LHLD	CMDCNT
+	MOV	A,H
+	ORA	L
+	JNZ	GC_HAVE
+	LXI	H,1
+	RET
+GC_HAVE:
+	PUSH	H
+	LXI	H,0
+	SHLD	CMDCNT
+	POP	H
+	RET
+
+;CNTTST -- WM 1175: Z iff the command count is exhausted -- both CMDCNT and the
+;auxiliary counter AUXCNT are zero -- then poll for a ^C break.  BUF.MAC's PAGESTP
+;(reached from DELTO) and the count loops (the line moves, dd, the search
+;sweep) test it to decide whether to stop or page one more step.  POLLBRK is tail-called (JMP) and
+;preserves the ORA-set Z flag (PAGE.MAC POLLBRK, as WM, brackets its body in
+;PUSH/POP PSW), so the caller sees the count's Z.
+CNTTST:				; WM 1175
+	PUSH	H
+	LHLD	CMDCNT
+	LDA	AUXCNT		; low byte of the auxiliary count (WM's L271E)
+	ORA	H
+	ORA	L
+	POP	H
+	JMP	POLLBRK
+
+;CLASSF -- A(byte) -> A = char class.  0 = whitespace, 1 = word, 2 = other.
+; WBIG=1 collapses word/other into class 1 (big-word: non-ws is one class).
+CLASSF:
+	MOV	B,A
+	CPI	' '
+	JZ	CLS0
+	CPI	TAB
+	JZ	CLS0
+	CPI	LF
+	JZ	CLS0
+	CPI	CR
+	JZ	CLS0
+	LDA	WBIG
+	ORA	A
+	JNZ	CLS1
+	MOV	A,B
+	CPI	'_'
+	JZ	CLS1
+	CPI	'0'
+	JC	CLS2
+	CPI	'9'+1
+	JC	CLS1
+	CPI	'A'
+	JC	CLS2
+	CPI	'Z'+1
+	JC	CLS1
+	CPI	'a'
+	JC	CLS2
+	CPI	'z'+1
+	JC	CLS1
+	JMP	CLS2
+CLS0:	XRA	A
+	RET
+CLS1:	MVI	A,1
+	RET
+CLS2:	MVI	A,2
+	RET
+
+;============================================================
+; MOTIONS -- horizontal
+;============================================================
+
+;SETMOV -- mark the current command a pure cursor motion (R_MOVE) so SCRN.MAC
+; repositions the cursor without a full repaint.  Clobbers A only.  Every motion
+; handler CALLs this at entry; NEVER call it from a shared step (e.g. HSTEP),
+; which insert-exit reuses and which must keep the R_FULL default.
+SETMOV:
+	MVI	A,R_MOVE
+	STA	RINTENT
+	RET
+
+;SETLIN -- mark the current command an in-line edit (R_LINE): it changed only
+; bytes within the cursor's line (no LF added/removed, so the line count and
+; every other row are unchanged), and SCRN.MAC redraws just that one row.  Call
+; it ONLY from a handler that cannot alter the line structure -- never from a
+; path that may insert/delete an LF (that must keep the R_FULL default so the
+; renderer repaints in full).  Clobbers A only.
+SETLIN:
+	MVI	A,R_LINE
+	STA	RINTENT
+	RET
+
+;SETILN -- mark the current command an opened line (R_ILIN): exactly ONE line
+; break went in at the cursor, so the terminal can open a row (IL) and only the
+; opened rows need drawing.  Call it ONLY where a single break was added --
+; never from OPNBRK itself, which the put ('p') also calls before inserting a
+; whole register's worth of lines.  Clobbers A only.
+; ILABOV is cleared here because that is the common case: 'o', 'O' and a put
+; leave the line ABOVE the opened rows exactly as it was, so re-sending that
+; row is a whole row of wire for nothing.  Only a command that takes text OFF
+; that line -- a mid-line <CR>, 'r<CR>' -- sets it afterwards.
+SETILN:
+	MVI	A,1
+	STA	ILN		; one line, unless a put overwrites it below
+	MVI	A,R_ILIN
+	STA	RINTENT
+	XRA	A
+	STA	ILABOV		; the row above the opened ones is untouched
+	RET
+
+;SETJON -- mark the current command a join (R_JOIN): the line below came up
+; onto the cursor's, so that row and the row under it are what changed.
+SETJON:
+	MVI	A,R_JOIN
+	STA	RINTENT
+	RET
+
+;SETFUL -- put the render intent back to R_FULL (the main loop's own default),
+; for a handler that lowered it and then found it had more to change than the
+; cheap paint can carry.  Clobbers A only.
+SETFUL:
+	MVI	A,R_FULL
+	STA	RINTENT
+	RET
+
+;TAILTAB -- A = 1 if a TAB occurs from the cursor to the end of its line, else 0.
+; Scans forward from the cursor via CHARAT until LF or end of text (no gap move).
+; Gates the ICH insert fast path: a tab after the cursor would re-expand.
+TAILTAB:
+	CALL	CUROFF
+	SHLD	TTI
+TT_LP:
+	LHLD	TTI
+	XCHG			; DE = TTI
+	CALL	LOGLEN		; HL = LOGLEN
+	CALL	CMP16		; CY iff TTI < LOGLEN
+	JNC	TT_NO		; reached end of text -> no tab
+	LHLD	TTI
+	CALL	CHARAT
+	CPI	LF
+	JZ	TT_NO		; end of line -> no tab
+	CPI	TAB
+	JZ	TT_YES
+	LHLD	TTI
+	INX	H
+	SHLD	TTI
+	JMP	TT_LP
+TT_YES:
+	MVI	A,1
+	RET
+TT_NO:
+	XRA	A
+	RET
+
+;VC_H -- left, count times, stopping at BOL.
+VC_H:
+	CALL	MOVCNT		; a cursor motion, and its count
+	SHLD	CNTV
+VCH_LP:
+	LHLD	CNTV
+	MOV	A,H
+	ORA	L
+	RZ
+	DCX	H
+	SHLD	CNTV
+	CALL	HSTEP
+	JMP	VCH_LP
+HSTEP:
+	CALL	CUROFF		; HL = cur
+	MOV	A,H
+	ORA	L
+	RZ			; at 0
+	PUSH	H
+	CALL	BOL		; HL = bol
+	POP	D		; DE = cur
+	CALL	CMP16		; DE=cur vs HL=bol: Z iff cur==bol
+	RZ			; at BOL, cannot go left
+	XCHG			; HL = cur
+	DCX	H
+	JMP	GOSET
+
+;VC_L -- right, count times, stopping at last content char.
+VC_L:
+	CALL	MOVCNT		; a cursor motion, and its count
+	SHLD	CNTV
+VCL_LP:
+	LHLD	CNTV
+	MOV	A,H
+	ORA	L
+	RZ
+	DCX	H
+	SHLD	CNTV
+	CALL	LSTEP
+	JMP	VCL_LP
+LSTEP:
+	CALL	CUROFF		; HL = cur
+	PUSH	H
+	CALL	EOLC		; HL = eolc
+	POP	D		; DE = cur
+	CALL	CMP16		; DE=cur vs HL=eolc: CY iff cur < eolc
+	RNC			; cur >= eolc, cannot go right
+	XCHG			; HL = cur
+	INX	H
+	JMP	GOSET
+
+;VC_0 -- start of line (WM ^B: GOALCOL = 0; the start is found with WM's
+; LINPOSB, so a line begun before the window is paged back).
+VC_0:
+	CALL	MOVCNT		; a cursor motion, and its count
+	CALL	LNSTRT
+	LXI	H,0
+	SHLD	GOALCOL
+	RET
+
+;LNSTRT -- the cursor to the start of its line (WM LINPOSB + PUTCUR).
+LNSTRT:
+	CALL	ZSAVE
+	LXI	H,0
+	CALL	LINPSB		; HL = the cursor line's start
+	PUSH	H
+	CALL	ZREST
+	POP	H
+	JMP	PUTCUR
+
+;VC_CRT -- '^': first non-blank of the line (the count is ignored, as vim's).
+VC_CRT:
+	CALL	MOVCNT		; a cursor motion, and its count
+	JMP	FNBLNK
+
+;FNBLNK -- the cursor to the first non-blank of its line, as vim's beginline
+; (BL_WHITE | BL_FIX): skip spaces/TABs, but stay on the last one when the line
+; ends after it.  The line is read with WM's RGET (paged in as it goes), then
+; the goal column is taken from the landing.  Shared by '^', <CR>, G/gg, the
+; scrolls, H/M/L and dd.
+FNBLNK:
+	CALL	LNSTRT
+	CALL	RGET0
+	LXI	D,0		; DE = blanks skipped
+FN_LP:
+	CALL	RDGET
+	JC	FN_GO		; the end of the file
+	CPI	' '
+	JZ	FN_WH
+	CPI	TAB
+	JNZ	FN_GO		; a non-blank, or the line's end
+FN_WH:
+	CALL	RDGET		; a blank: stay on it when the line ends next
+	JC	FN_GO
+	CPI	CR
+	JZ	FN_GO
+	CPI	LF
+	JZ	FN_GO
+	DCX	H		; not yet: read that char again
+	INX	B
+	INX	D
+	JMP	FN_LP
+FN_GO:
+	PUSH	D
+	CALL	CUROFF
+	POP	D
+	DAD	D
+	JMP	GOSET
+
+;VC_EOL -- '$': the last char of the line, count-1 lines down first (vim's
+; cursor_down + coladvance(MAXCOL)): the goal becomes the line end, and on the
+; last line a count > 1 moves nothing.
+VC_EOL:
+	CALL	SETMOV
+	LXI	H,0FFFFH
+	SHLD	GOALCOL
+	CALL	GETCNT
+	DCX	H		; count-1
+	MOV	A,H
+	ORA	L
+	JZ	VEOL_0
+	PUSH	H
+	CALL	ONLAST
+	POP	H
+	RC			; the last line: no move (vim)
+	CALL	JCORE
+	JMP	JKLAND
+VEOL_0:
+	CALL	LNSTRT
+	JMP	JKLAND
+
+;VC_CR -- <CR>: count lines down to the first non-blank (vim's nv_down with
+; beginline); on the last line nothing moves.
+VC_CR:
+	CALL	MOVCNT		; a cursor motion, and its count
+	PUSH	H
+	CALL	ONLAST
+	POP	H
+	RC
+	CALL	JCORE
+	JMP	FNBLNK
+
+;ONLAST -- CY iff no line follows the cursor's (read ahead with WM's RGET).
+ONLAST:
+	CALL	RGET0
+OL_LP:
+	CALL	RDGET
+	RC			; the file ends on this line
+	CPI	LF
+	JNZ	OL_LP
+	JMP	RDGET		; CY iff nothing follows its LF
+
+;============================================================
+; MOTIONS -- vertical (j/k keep the goal column)
+;
+; A line move is ONE WM paging line move (MVLIND / SETBWD), as WM's nL moves
+; lines: the window pages with the cursor.  The screen needs to know how many
+; lines the cursor went (LNDLT), so JCORE/KCORE first count them over a short
+; scan -- at most two screens; past that the exact number does not matter to
+; the screen (the cursor lands on the bottom/top row and it repaints).
+;============================================================
+
+;VC_J -- down count lines, clamped at the last line.
+VC_J:
+	CALL	SETMOV
+	CALL	GLCHK		; the goal column, from the cursor if stale
+	CALL	GETCNT		; HL = count
+	CALL	JCORE
+	JMP	JKLAND
+
+;VC_K -- up count lines, clamped at the first line.
+VC_K:
+	CALL	SETMOV
+	CALL	GLCHK
+	CALL	GETCNT
+	CALL	KCORE
+	JMP	JKLAND
+
+;GLCHK -- GOALCOL 0FFFEH (stale: the file was just opened, or an edit moved
+; the cursor) -> take it from the cursor now, as vim's w_set_curswant does.
+GLCHK:
+	LHLD	GOALCOL
+	MOV	A,H
+	INR	A
+	RNZ
+	MOV	A,L
+	CPI	0FEH
+	RNZ
+	JMP	SETGL
+
+;GLSTAL -- mark the goal column stale (see GLCHK).  Keeps BC, DE.
+GLSTAL:
+	PUSH	H
+	LXI	H,0FFFEH
+	SHLD	GOALCOL
+	POP	H
+	RET
+
+;JCORE -- HL = count: cursor to the start of the line count below (of the last
+; line when the file ends first); LNDLT += the lines moved.
+JCORE:
+	MOV	A,H
+	ORA	L
+	RZ
+	SHLD	JKCNT
+	CALL	CURRW		; limit = rows under the cursor's + NEDIT
+	MOV	B,A
+	LDA	NEDIT
+	DCR	A
+	SUB	B
+	MOV	E,A
+	MVI	D,0
+	LDA	NEDIT
+	MOV	L,A
+	MVI	H,0
+	DAD	D
+	XCHG			; DE = limit
+	LHLD	JKCNT
+	CALL	CMP16		; CY iff limit < count
+	JNC	JC_N
+	XCHG			; HL = limit
+JC_N:
+	SHLD	JKN		; N = min(count, limit)
+	XCHG			; DE = LFs to find
+	CALL	RGET0
+JC_SC:
+	CALL	RDGET		; (pages in on demand; keeps DE)
+	JC	JC_EOF
+	STA	JKLST
+	CPI	LF
+	JNZ	JC_SC
+	DCX	D
+	MOV	A,D
+	ORA	E
+	JNZ	JC_SC
+	LHLD	JKCNT		; N lines follow: the move is count lines, less
+	SHLD	JKMOV		;   one if the last LF found ends the file
+	MVI	A,1
+	STA	JKPHN
+	JMP	JC_MV
+JC_EOF:
+	LHLD	JKN		; the file ends first: LFs found, less a final LF
+	CALL	SUBHD		; HL = N - LFs still wanted
+	MOV	A,H
+	ORA	L
+	JZ	JC_AV
+	LDA	JKLST
+	CPI	LF
+	JNZ	JC_AV
+	DCX	H
+JC_AV:
+	SHLD	JKMOV
+	XRA	A
+	STA	JKPHN
+JC_MV:
+	LHLD	JKCNT
+	XRA	A
+	CALL	MVLIND		; WM line move: start of the line count below
+	CALL	ATEOF
+	JNC	JC_DN
+	CALL	LASTLN		; ran past the last line: back onto it
+	LDA	JKPHN
+	ORA	A
+	JZ	JC_DN
+	LHLD	JKMOV
+	DCX	H
+	SHLD	JKMOV
+JC_DN:
+	LHLD	JKN		; LNDLT += min(moved, N)
+	XCHG
+	LHLD	JKMOV
+	CALL	CMP16		; CY iff N < moved
+	JNC	JC_AD
+	XCHG
+JC_AD:
+	XCHG			; DE = lines moved
+	LHLD	LNDLT
+	DAD	D
+	SHLD	LNDLT
+	RET
+
+;KCORE -- HL = count: cursor to the start of the line count above (of the first
+; line when the file starts first); LNDLT -= the lines moved.
+KCORE:
+	MOV	A,H
+	ORA	L
+	RZ
+	SHLD	JKCNT
+	CALL	CURRW		; limit = row + NEDIT
+	MOV	E,A
+	MVI	D,0
+	LDA	NEDIT
+	MOV	L,A
+	MVI	H,0
+	DAD	D
+	XCHG			; DE = limit
+	LHLD	JKCNT
+	CALL	CMP16		; CY iff limit < count
+	JNC	KC_N
+	XCHG			; HL = limit
+KC_N:
+	SHLD	JKN		; N = min(count, limit)
+	XCHG			; DE = LFs to find
+	LXI	H,0
+	SHLD	JKBK		; scan position, as bytes back from GAPBEG
+KC_ED:
+	PUSH	D		; HL = the scan position, BC = bytes to TXTBEG
+	LHLD	JKBK
+	CALL	GBSUB		; HL = GAPBEG - that pointer
+	PUSH	H
+	XCHG
+	LHLD	TXTBEG
+	XCHG
+	CALL	SUBHD
+	MOV	B,H
+	MOV	C,L
+	POP	H
+	POP	D
+KC_SC:
+	MOV	A,B
+	ORA	C
+	JZ	KC_TB
+	DCX	H
+	DCX	B
+	MOV	A,M
+	CPI	LF
+	JNZ	KC_SC
+	DCX	D
+	MOV	A,D
+	ORA	E
+	JNZ	KC_SC
+	LHLD	JKCNT		; N lines above: the move is count lines
+	JMP	KC_MV
+KC_TB:
+	PUSH	D		; at TXTBEG: page back, or the file starts here
+	CALL	GBSUB		; HL = GAPBEG - that pointer
+	SHLD	JKBK
+	LHLD	OUTPOS		; records before TXTBEG?
+	MOV	A,H
+	ORA	L
+	JZ	KC_B0
+	CALL	REWIND		; read them back (the text may move; JKBK holds)
+	POP	D
+	JC	KC_BOF
+	JMP	KC_ED
+KC_B0:
+	POP	D
+KC_BOF:
+	LHLD	JKN		; moved = LFs found
+	CALL	SUBHD
+KC_MV:
+	PUSH	H
+	LHLD	JKCNT
+	CALL	SETBWD		; WM line move: start of the line count above
+	POP	D		; DE = moved
+	LHLD	JKN
+	CALL	CMP16		; CY iff moved < N
+	JC	KC_AD
+	XCHG			; DE = N
+KC_AD:
+	LHLD	LNDLT		; LNDLT -= min(moved, N)
+	CALL	SUBHD
+	SHLD	LNDLT
+	RET
+
+;ATEOF -- CY iff nothing follows the cursor (end of the file).  RGET pages in
+; what is still on disk; RDGET also catches the stale-INRDY empty refill.
+ATEOF:
+	CALL	RGET0
+	JMP	RDGET
+
+;LASTLN -- cursor at end of file -> start of the last line: back 1 line when
+; the file ends in LF (the cursor sits past it), else back 0 (this line).
+LASTLN:
+	LHLD	GAPBEG
+	XCHG
+	LHLD	TXTBEG
+	CALL	CMP16
+	LXI	H,0
+	JZ	SETBWD		; nothing before the cursor
+	DCX	D
+	LDAX	D
+	CPI	LF
+	JNZ	SETBWD
+	INX	H
+	JMP	SETBWD
+
+;JKLAND -- cursor at a line start: step onto the char whose screen columns hold
+; GOALCOL, or the line's last content char when the line is shorter (as vim's
+; coladvance; GOALCOL 0FFFFH = the last char).  A CR takes no column, so it is
+; never landed on.  The line is read with RGET, so a line running off the end
+; of the window is paged in, and only up to the goal.
+JKLAND:
+	LXI	H,0
+	SHLD	JKVC		; screen column
+	DCX	H
+	SHLD	JKLS		; last content char: none yet
+	CALL	RGET0
+	LXI	D,0		; DE = chars read
+JL_RD:
+	CALL	RDGET
+	JC	JL_END
+	CPI	LF
+	JZ	JL_END
+	PUSH	H
+	PUSH	B
+	LHLD	JKVC
+	CALL	CWID
+	ORA	A
+	JZ	JL_NX		; a CR
+	XCHG
+	SHLD	JKLS		; the last content char so far
+	XCHG
+	MOV	C,A
+	MVI	B,0
+	DAD	B		; HL = the column after this char
+	SHLD	JKVC
+	PUSH	D
+	XCHG
+	LHLD	GOALCOL
+	CALL	CMP16		; CY iff after < goal, Z iff after == goal
+	POP	D
+	JC	JL_NX
+	JZ	JL_NX
+	POP	B		; this char holds the goal column
+	POP	H
+	JMP	JL_GO
+JL_NX:
+	POP	B
+	POP	H
+	INX	D
+	JMP	JL_RD
+JL_END:
+	LHLD	JKLS		; past the line's end: its last content char
+	MOV	A,H
+	ANA	L
+	INR	A
+	JNZ	JL_LS
+	INX	H		; no content: the line's start
+JL_LS:
+	XCHG
+JL_GO:
+	PUSH	D		; DE = step from the line start
+	CALL	CUROFF
+	POP	D
+	DAD	D
+	JMP	GOTO
+
+;============================================================
+; MOTIONS -- word (w b W B; e E below)
+;
+; vim, NOT WordMaster: vim 9.1's fwd_word / bck_word, which step the cursor one
+; position at a time (inc_cursor / dec_cursor) over vim's classes (CLASSF:
+; blanks; letters, digits and '_'; other chars; W/B make every non-blank one
+; class) and stop on an empty line.  WM's ^F / ^A only skip letters and digits.
+; The steps are WM's: forward reads with RGET (paged in) and back with PEEKL
+; (paged back), and PUTCUR moves the cursor each step, so a count runs through
+; the whole file.  A line's end (its CR,LF, or the end of the file) is vim's
+; NUL position; the cursor is left there only on an empty line.
+;============================================================
+VC_W:	XRA	A
+	STA	WBIG
+	JMP	WDO
+VCBGW:	MVI	A,1
+	STA	WBIG
+WDO:	CALL	SETMOV
+	XRA	A
+	STA	WPULL		; see OPA_EX: did this w/W end off a line's end?
+	CALL	GETCNT
+	SHLD	CNTV
+WDO_LP: LHLD	CNTV
+	MOV	A,H
+	ORA	L
+	JZ	WDO_DN
+	DCX	H
+	SHLD	CNTV
+	CALL	FWD1
+	JNC	WDO_LP
+WDO_DN:
+	CALL	ATEOF		; not left on a line's end (vim adjust_cursor)
+	JC	WDO_NL
+	CPI	CR
+	JZ	WDO_NL
+	CPI	LF
+	JNZ	SETGL
+WDO_NL:
+	CALL	PEEKL
+	JC	SETGL
+	CPI	LF
+	JZ	SETGL		; an empty line is a word: the cursor stays on it
+	MVI	A,1		; the landing is pulled back off the line's end,
+	STA	WPULL		;   which an operator span must NOT be (OPA_EX)
+	CALL	DECC		; back onto its last char
+	JMP	SETGL
+
+VC_B:	XRA	A
+	STA	WBIG
+	JMP	BDO
+VCBGB:	MVI	A,1
+	STA	WBIG
+BDO:	CALL	SETMOV
+	CALL	GETCNT
+	SHLD	CNTV
+BDO_LP: LHLD	CNTV
+	MOV	A,H
+	ORA	L
+	JZ	SETGL
+	DCX	H
+	SHLD	CNTV
+	CALL	BCK1
+	JNC	BDO_LP
+	JMP	SETGL
+
+;FWD1 -- vim fwd_word, once.  CY = failed: the cursor was on the file's last
+; char (it is left there).
+FWD1:
+	CALL	CCLS
+	STA	WKCLS		; the starting class
+	CALL	INCC
+	ORA	A
+	JZ	FW_WD
+	STC
+	RM			; -1: already at the end
+	CPI	2
+	JNZ	FW_WD		; 1: a next line was reached
+	CALL	ATEOF		; 2: on the line's end -- the last line?
+	CNC	NXLN
+	JNC	FW_WD
+	CALL	DECC		; yes: back onto its last char, failed
+	STC
+	RET
+FW_WD:
+	LDA	WKCLS		; go past the rest of this word
+	ORA	A
+	JZ	FW_WS
+FW_WLP:
+	CALL	CCLS
+	LXI	H,WKCLS
+	CMP	M
+	JNZ	FW_WS
+	CALL	INCC
+	ORA	A
+	RM			; the end of the file (NC)
+	JMP	FW_WLP
+FW_WS:
+	CALL	CCLS		; then over blanks to the next word
+	ORA	A
+	RNZ
+	CALL	EMPTY
+	RZ			; an empty line is a word
+	CALL	INCC
+	ORA	A
+	RM
+	JMP	FW_WS
+
+;BCK1 -- vim bck_word, once.  CY = failed: the cursor was at the file's start.
+BCK1:
+	CALL	DECC
+	ORA	A
+	STC
+	RM
+BK_WS:
+	CALL	CCLS		; back over blanks
+	ORA	A
+	JNZ	BK_WD
+	CALL	EMPTY
+	RZ			; an empty line is a word
+	CALL	DECC
+	ORA	A
+	JP	BK_WS
+	XRA	A		; the start of the file (NC)
+	RET
+BK_WD:
+	STA	WKCLS		; back to the start of this word
+BK_WLP:
+	CALL	DECC
+	ORA	A
+	JM	BK_OK		; the start of the file
+	CALL	CCLS
+	LXI	H,WKCLS
+	CMP	M
+	JZ	BK_WLP
+	CALL	INCC		; overshot: forward one
+BK_OK:
+	XRA	A
+	RET
+
+;CCLS -- A = the class of the char under the cursor (a line's end is blank).
+CCLS:
+	CALL	ATEOF
+	JNC	CLASSF
+	XRA	A
+	RET
+
+;EMPTY -- Z iff the cursor is on an empty line (on a line's end at its start).
+EMPTY:
+	CALL	ATEOF
+	JC	EM_ST
+	CPI	CR
+	JZ	EM_ST
+	CPI	LF
+	RNZ
+EM_ST:
+	CALL	PEEKL
+	JC	EM_Y
+	CPI	LF
+	RET
+EM_Y:
+	XRA	A
+	RET
+
+;NXLN -- cursor on a line's end (A = its CR or LF; HL, BC as RGET left them):
+; HL = the next line's start, A = 1; CY if there is none.  A CR not before a LF
+; is not a line's end: HL = the char after it, A = 0.
+NXLN:
+	CPI	LF
+	JZ	NX_LF
+	CALL	RDGET		; a CR: its LF
+	RC
+	CPI	LF
+	JZ	NX_LF
+	DCX	H		; a lone CR
+	XRA	A
+	RET
+NX_LF:
+	CALL	RDGET		; CY iff nothing follows the LF
+	RC
+	DCX	H
+	MVI	A,1
+	RET
+
+;INCC -- vim inc_cursor: A = 0 (the cursor went a char right, onto a char),
+; 2 (onto its line's end), 1 (to the next line's start) or FFH (at the end of
+; the file: no move).
+INCC:
+	CALL	ATEOF
+	JC	IC_END
+	CPI	CR
+	JZ	IC_NL
+	CPI	LF
+	JZ	IC_NL
+	CALL	PUTCUR		; HL = past the char
+IC_CH:
+	CALL	ATEOF
+	JC	IC_2
+	CPI	CR
+	JZ	IC_2
+	CPI	LF
+	JZ	IC_2
+	XRA	A
+	RET
+IC_2:
+	MVI	A,2
+	ORA	A
+	RET
+IC_NL:
+	CALL	NXLN
+	JC	IC_END
+	PUSH	PSW
+	CALL	PUTCUR
+	POP	PSW
+	ORA	A
+	JZ	IC_CH		; a lone CR: stepped over as a char
+	CALL	LNINC
+	MVI	A,1
+	RET
+IC_END:
+	MVI	A,0FFH
+	ORA	A
+	RET
+
+;DECC -- vim dec_cursor: A = 0 (a char left), 1 (back to the previous line's
+; end) or FFH (at the start of the file: no move).  WM ^A's step: PEEKL, PUTCUR.
+DECC:
+	CALL	PEEKL
+	JC	IC_END
+	PUSH	PSW
+	CALL	PUTCUR
+	POP	PSW
+	CPI	LF
+	MVI	A,0
+	RNZ
+	CALL	LNDEC
+	CALL	PEEKL		; onto its CR
+	JC	DC_1
+	CPI	CR
+	CZ	PUTCUR
+DC_1:
+	MVI	A,1
+	ORA	A
+	RET
+
+;LNINC / LNDEC -- the cursor crossed a LF: LNDLT +/- 1, held short of the sign
+; (a count through a file of empty lines).  Keep all but A.
+LNINC:
+	PUSH	H
+	LHLD	LNDLT
+	MOV	A,H
+	CPI	40H
+	JZ	LN_X
+	INX	H
+	JMP	LN_ST
+LNDEC:
+	PUSH	H
+	LHLD	LNDLT
+	MOV	A,H
+	CPI	0C0H
+	JZ	LN_X
+	DCX	H
+LN_ST:
+	SHLD	LNDLT
+LN_X:
+	POP	H
+	RET
+
+VC_E:	XRA	A
+	STA	WBIG
+	JMP	EDO
+VCBGE:	MVI	A,1
+	STA	WBIG
+EDO:	CALL	SETMOV
+	CALL	GETCNT
+	SHLD	CNTV
+EDO_LP: LHLD	CNTV
+	MOV	A,H
+	ORA	L
+	RZ
+	DCX	H
+	SHLD	CNTV
+	CALL	ESTEP
+	JMP	EDO_LP
+
+;ESTEP -- forward to the end of the next word.
+ESTEP:
+	CALL	CUROFF
+	SHLD	WKI
+	CALL	LOGLEN
+	SHLD	WKN
+	LHLD	WKI
+	INX	H
+	SHLD	WKI
+ES_WS:
+	LHLD	WKI
+	XCHG
+	LHLD	WKN
+	CALL	CMP16
+	JNC	ES_LND
+	LHLD	WKI
+	CALL	CHARAT
+	CALL	CLASSF
+	ORA	A
+	JNZ	ES_WD
+	LHLD	WKI
+	INX	H
+	SHLD	WKI
+	JMP	ES_WS
+ES_WD:
+	LHLD	WKI
+	CALL	CHARAT
+	CALL	CLASSF
+	STA	WKCLS
+ES_RUN:
+	LHLD	WKI
+	INX	H
+	XCHG			; DE = i+1
+	LHLD	WKN
+	CALL	CMP16		; DE=(i+1) vs HL=n: CY iff (i+1) < n
+	JNC	ES_LND
+	LHLD	WKI
+	INX	H
+	PUSH	H		; i+1
+	CALL	CHARAT
+	CALL	CLASSF
+	POP	H		; HL = i+1
+	MOV	B,A
+	LDA	WKCLS
+	CMP	B
+	JNZ	ES_LND
+	SHLD	WKI
+	JMP	ES_RUN
+ES_LND:
+	LHLD	WKN
+	XCHG
+	LHLD	WKI
+	CALL	CMP16		; DE=n vs HL=i: CY iff n < i
+	JC	ES_CL
+	JZ	ES_CL
+	LHLD	WKI
+	JMP	GOSET
+ES_CL:
+	LHLD	WKN
+	MOV	A,H
+	ORA	L
+	RZ
+	DCX	H
+	JMP	GOSET
+
+;--- e / E stay because OPPEND rewrites a pending "cw"/"cW" to "ce"/"cE"
+; and dispatches it through CMDTAB (vi's one operator+motion special case),
+; so the change operator needs these two rows even though f F t T ; , % went.
+
+;============================================================
+; MOTIONS -- screen-relative (H M L) and scrolls (^F ^B ^D ^U ^L)
+;
+; These work on the cursor's screen row (CURRW) and the last layout's facts
+; from SCRN.MAC: SCBOT (last text row), SCEOF / SCBOF (the file's end / start
+; is on the screen).  H/M/L move the cursor to a row.  The scrolls move it and
+; name the row it should appear on (SETRWT), so the text scrolls around it;
+; WFILL keeps ^D (and G) from running past the end of the file.  ^L just leaves
+; RINTENT at its R_FULL default so the next SCDRAW repaints in full.
+;============================================================
+
+;CURRW -- A = the cursor line's screen row now: WINROW + LNDLT, clamped to the
+; edit rows.  Keeps BC.
+CURRW:
+	LHLD	WINROW
+	XCHG
+	LHLD	LNDLT
+	DAD	D		; HL = row (signed)
+	MOV	A,H
+	ORA	A
+	JM	CRW_0		; above the screen -> top row
+	JNZ	CRW_BT		; far below -> bottom row
+	LDA	NEDIT
+	DCR	A		; A = bottom row
+	CMP	L		; CY iff bottom < row
+	RC
+	MOV	A,L
+	RET
+CRW_BT:
+	LDA	NEDIT
+	DCR	A
+	RET
+CRW_0:
+	XRA	A
+	RET
+
+;SETRWT -- A = row: the next layout puts the cursor's line on that row.
+SETRWT:
+	LHLD	LNDLT
+	XCHG
+	MOV	L,A
+	MVI	H,0
+	CALL	SUBHD		; HL = row - LNDLT
+	SHLD	WINROW
+	RET
+
+;MVROW -- A = row: cursor to the start of the line on that row (the cursor's
+; own row: unmoved -- FNBLNK follows).
+MVROW:
+	MOV	B,A
+	CALL	CURRW
+	SUB	B		; A = row now - target
+	RZ
+	JC	MR_DN
+	MOV	L,A
+	MVI	H,0
+	JMP	KCORE
+MR_DN:
+	CMA
+	INR	A		; A = target - row now
+	MOV	L,A
+	MVI	H,0
+	JMP	JCORE
+
+;VC_HIGH -- 'H': count'th row from the top (1 = top), not below the last text
+; row, then first non-blank.
+VC_HIGH:
+	CALL	MOVCNT		; a cursor motion, and its count
+	DCX	H		; row = count - 1
+	MOV	A,H
+	ORA	A
+	LDA	SCBOT
+	JNZ	VH_GO		; >= 256 -> the last text row
+	CMP	L		; CY iff SCBOT < row
+	JC	VH_GO
+	MOV	A,L
+VH_GO:
+	CALL	MVROW
+	JMP	FNBLNK
+
+;VC_MIDL -- 'M': middle of the text rows; count ignored.
+VC_MIDL:
+	CALL	MOVCNT		; a cursor motion; the count is discarded
+	LDA	SCBOT
+	ORA	A		; clear CY for the shift
+	RAR			; A = SCBOT / 2
+	CALL	MVROW
+	JMP	FNBLNK
+
+;VC_LOWL -- 'L': count'th row up from the last text row (1 = that row), not
+; above the top row, then first non-blank.
+VC_LOWL:
+	CALL	MOVCNT		; a cursor motion, and its count
+	DCX	H		; count - 1
+	LDA	SCBOT
+	MOV	E,A
+	MVI	D,0
+	XCHG			; HL = SCBOT, DE = count-1
+	CALL	CMP16		; CY iff count-1 < SCBOT
+	MVI	A,0
+	JNC	VL_GO		; at or past the top -> row 0
+	CALL	SUBHD		; HL = SCBOT - (count-1)
+	MOV	A,L
+VL_GO:
+	CALL	MVROW
+	JMP	FNBLNK
+
+;VC_PGDN -- '^F': the window forward count pages, the cursor on the new top
+; line's first non-blank.  vim's pagescroll (NOT WordMaster): a page is NEDIT-2
+; lines (2-line overlap), NEDIT once the last line is on the screen; the top
+; line stops at the last line ('~' rows below); no-op when it is already there.
+VC_PGDN:
+	CALL	MOVCNT		; a cursor motion, and its count
+	LDA	SCEOF
+	ORA	A
+	JZ	VPD_N
+	LDA	SCBOT		; the last line is on the screen: count*NEDIT
+	ORA	A		;   lines pass it, so it becomes the top line
+	RZ			; it already is
+	CALL	MVROW
+	JMP	VPD_TP
+VPD_N:
+	LDA	NEDIT
+	SUI	2
+	CALL	MULSAT		; HL = count * (NEDIT-2)
+	PUSH	H
+	XRA	A
+	CALL	MVROW		; the top line
+	POP	H
+	CALL	JCORE		; the new top line (the last, if the file ends)
+VPD_TP:
+	XRA	A
+	CALL	SETRWT		; to the top row
+	JMP	FNBLNK
+
+;VC_PGUP -- '^B': the window back count pages, not above the first line, the
+; cursor on the bottom row's line (or the last line), first non-blank.  vim's
+; pagescroll (NOT WordMaster): a page is NEDIT-2 lines, NEDIT when the top line
+; is the last line, NEDIT-1 when it is the one before (vim's overlap stops at
+; the end of the file).  No-op when the first line is already at the top.
+VC_PGUP:
+	CALL	MOVCNT		; a cursor motion, and its count
+	LDA	SCBOF
+	ORA	A
+	RNZ
+	LDA	NEDIT
+	MOV	B,A
+	LDA	SCEOF
+	ORA	A
+	JZ	VPU_2
+	LDA	SCBOT		; the last line's row: 0 -> NEDIT, 1 -> NEDIT-1
+	CPI	2
+	JNC	VPU_2
+	CMA
+	INR	A
+	ADD	B
+	JMP	VPU_P
+VPU_2:
+	MOV	A,B
+	SUI	2
+VPU_P:
+	CALL	MULSAT		; HL = count * page
+	PUSH	H
+	XRA	A
+	CALL	MVROW		; the top line
+	POP	H
+	CALL	KCORE		; the new top line
+	XRA	A
+	CALL	SETRWT		; on the top row
+	LDA	NEDIT
+	DCR	A
+	MOV	L,A
+	MVI	H,0
+	CALL	JCORE		; the bottom row's line
+	JMP	FNBLNK
+
+;MULSAT -- HL = HL * A, saturated at 0FFFFH (more lines than any file has).
+MULSAT:
+	XCHG
+	LXI	H,0
+	ORA	A
+	RZ
+MS_LP:
+	DAD	D
+	JC	MS_SAT
+	DCR	A
+	JNZ	MS_LP
+	RET
+MS_SAT:
+	LXI	H,0FFFFH
+	RET
+
+;VC_HFDN -- '^D': cursor and text down HFAMT lines (HFCNT), the cursor
+; keeping its row, then its first non-blank; the text stops once the last line
+; is on the bottom row, the cursor goes on.  vim's pagescroll (NOT WordMaster).
+; On the last line nothing moves, the column included.
+VC_HFDN:
+	CALL	SETMOV
+	CALL	CURRW
+	STA	HFROW
+	CALL	HFCNT		; HL = lines
+	LDA	HFROW
+	MOV	B,A
+	LDA	SCEOF
+	ORA	A
+	JZ	VHD_GO
+	LDA	SCBOT		; the last line's row
+	CMP	B
+	RZ			; the cursor is on it
+VHD_GO:
+	CALL	JCORE
+	LDA	SCEOF
+	ORA	A
+	JNZ	FNBLNK		; the end is on the screen: only the cursor moves
+	LDA	HFROW
+	CALL	SETRWT
+	MVI	A,1
+	STA	WFILL		; not past the end of the file
+	JMP	FNBLNK
+
+;VC_HFUP -- '^U': cursor and text up HFAMT lines (HFCNT), the cursor keeping
+; its row, then its first non-blank; the text stops at the first line, the
+; cursor goes on.  vim's pagescroll (NOT WordMaster).  On the first line
+; nothing moves, the column included.
+VC_HFUP:
+	CALL	SETMOV
+	CALL	CURRW
+	STA	HFROW
+	CALL	HFCNT		; HL = lines
+	CALL	ONFST
+	RZ			; the cursor is on the first line
+	CALL	KCORE
+	LDA	SCBOF
+	ORA	A
+	JNZ	FNBLNK		; the start is on the screen: only the cursor moves
+	LDA	HFROW
+	CALL	SETRWT
+	JMP	FNBLNK
+
+;ONFST -- Z iff the cursor is on the file's first line: nothing is paged out
+; before the text and no LF precedes the cursor (scans back to its line start).
+; Keeps HL.
+ONFST:
+	PUSH	H
+	LHLD	OUTPOS
+	MOV	A,H
+	ORA	L
+	JNZ	OF_RET
+	LHLD	TXTBEG
+	XCHG			; DE = TXTBEG
+	LHLD	GAPBEG
+OF_LP:
+	CALL	CMP16		; Z iff at the start of the text
+	JZ	OF_RET
+	DCX	H
+	MOV	A,M
+	CPI	LF
+	JNZ	OF_LP
+	ORA	A		; NZ
+OF_RET:
+	POP	H
+	RET
+
+;HFCNT -- HL = the ^D/^U line count.  As vim's 'scroll': a count (at most
+; NEDIT) becomes the amount from now on; until one does, it is NEDIT/2.
+HFCNT:
+	LHLD	CMDCNT
+	MOV	A,H
+	ORA	L
+	JZ	HFC_AM
+	CALL	GETCNT		; HL = count; clears it
+	LDA	NEDIT
+	MOV	E,A
+	MVI	D,0
+	CALL	CMP16		; CY iff NEDIT < count
+	JNC	HFC_ST
+	XCHG			; HL = NEDIT
+HFC_ST:
+	MOV	A,L
+	STA	HFAMT
+HFC_AM:
+	LDA	HFAMT
+	ORA	A
+	JNZ	HFC_HL
+	LDA	NEDIT
+	ORA	A
+	RAR
+	ORA	A
+	JNZ	HFC_HL
+	INR	A		; at least one line
+HFC_HL:
+	MOV	L,A
+	MVI	H,0
+	RET
+
+;VC_REDR -- '^L': force a full repaint.  The main loop defaults RINTENT to R_FULL
+; before each key, so leaving it untouched (never calling SETMOV) repaints in
+; full; just clear any pending count.
+VC_REDR:
+	JMP	GETCNT
+
+;============================================================
+; MOTIONS -- goto line (G, gg)
+;
+; The move is WM's paging line move (MVLMAX / MVLIND), so it reaches the true
+; line of the whole file, not the resident edge.  Where the line lands on the
+; screen is vim's rule (NOT WordMaster), measured on vim 9.1 with a 23-row
+; window: a line already on the screen keeps the window; one up to NEDIT/2+1
+; lines below it goes on the bottom row, one up to NEDIT/2-2 lines above it on
+; the top row; anything farther goes on the middle row, the rows filled from
+; above at the end of the file (WFILL) and clamped at its start (LAYOUT).
+; GZONE notes the screen's top line before the move, GPLACE measures the
+; target against it after.  Both count lines with WM's LINPSB / RGET.
+;============================================================
+
+;VC_G -- 'G': count -> that line (1-based); no count -> last line.
+VC_G:
+	CALL	SETMOV
+	CALL	GZONE		; the screen's top line, before the move
+	LHLD	CMDCNT
+	MOV	A,H
+	ORA	L
+	JNZ	VG_N
+	XRA	A		; forward
+	CALL	MVLMAX		; whole file: cursor to EOF
+	CALL	LASTLN		; vi G lands on the start of the LAST line
+	JMP	GPLACE
+VG_N:
+	CALL	GETCNT		; HL = target line (1-based)
+VG_LN:
+	CALL	GOLN
+	JMP	GPLACE
+
+;GOLN -- to the start of line HL (1-based), without G's window placement: the
+;substitute walks a range from here and places the screen once, at the end.
+GOLN:
+	DCX	H		; lines to move from line 1
+	PUSH	H
+	MVI	A,0FFH
+	CALL	MVLMAX		; to BOF
+	POP	H
+	XRA	A
+	CALL	MVLIND		; forward count-1 lines
+	CALL	ATEOF
+	CC	LASTLN		; past the last line: onto it
+	RET
+
+;VC_LG -- 'g': pending; second 'g' (gg) goes to line count (no count: 1),
+; placed as G places it.
+VC_LG:
+	CALL	SETMOV
+	LDA	GSAVE
+	ORA	A
+	JNZ	VLG_GG		; (never PZ: VICDSP drops every key but 'Z')
+	MVI	A,PG
+	STA	GPEND
+	RET
+VLG_GG:
+	CALL	GZONE
+	CALL	GETCNT		; HL = target line (no count: 1)
+	JMP	VG_LN
+
+;FPOS -- HL = a pointer into the text before the gap -> A:HL = its file
+; position (OUTPOS * 128 + HL - TXTBEG).  Keeps BC, DE.
+FPOS:
+	PUSH	B
+	PUSH	D
+	XCHG
+	LHLD	TXTBEG
+	XCHG
+	CALL	SUBHD		; HL = bytes from TXTBEG
+	XCHG			; DE = that
+	LHLD	OUTPOS
+	MOV	A,H
+	ORA	A		; CY = 0
+	RAR
+	MOV	B,A
+	MOV	A,L
+	RAR
+	MOV	H,A
+	MVI	A,0
+	RAR
+	MOV	L,A		; B:HL = OUTPOS * 128
+	DAD	D
+	MOV	A,B
+	ACI	0		; A:HL = the position
+	POP	D
+	POP	B
+	RET
+
+;ZSAVE / ZREST -- LINPSB runs WM's SETCNT: keep the count and the line-move
+; state (CMDCNT, AUXCNT, DIRFLG) around it, as LAYOUT does.
+ZSAVE:
+	LHLD	CMDCNT
+	SHLD	ZSVCNT
+	LHLD	AUXCNT
+	SHLD	ZSVAUX
+	LDA	DIRFLG
+	STA	ZSVDIR
+	RET
+ZREST:
+	LHLD	ZSVCNT
+	SHLD	CMDCNT
+	LHLD	ZSVAUX
+	SHLD	AUXCNT
+	LDA	ZSVDIR
+	STA	DIRFLG
+	RET
+
+;GZONE -- ZTOP = the file position of the screen's top line (the cursor's
+; row, lines back from its line).
+GZONE:
+	CALL	ZSAVE
+	CALL	CURRW
+	MOV	L,A
+	MVI	H,0
+	CALL	LINPSB		; HL = the top line's start
+	CALL	FPOS
+	SHLD	ZTOP
+	STA	ZTOP+2
+	JMP	ZREST
+
+;GPLACE -- cursor at the start of the G/gg target line: set its row (the
+; rule above), ask for a full repaint, and land on the first non-blank.
+GPLACE:
+	CALL	ZSAVE
+	LHLD	GAPBEG
+	CALL	FPOS
+	XCHG
+	MOV	C,A		; C:DE = the target's position
+	LHLD	ZTOP
+	MOV	A,E
+	SUB	L
+	MOV	L,A
+	MOV	A,D
+	SBB	H
+	MOV	H,A
+	SHLD	ZDIF
+	LDA	ZTOP+2
+	MOV	B,A
+	MOV	A,C
+	SBB	B		; A:ZDIF = target - top; CY iff above the top
+	JC	GP_UP
+	ORA	A
+	JNZ	GP_MID		; 64K bytes or more below
+	;--- below the top: are there at most NEDIT+NEDIT/2 lines between? ---
+	LDA	NEDIT
+	MOV	E,A
+	MVI	D,0
+	ORA	A
+	RAR
+	MOV	L,A
+	MVI	H,0
+	DAD	D		; HL = NEDIT + NEDIT/2
+	CALL	LINPSB		; HL = the line that many lines up
+	CALL	GBSUB		; HL = bytes from there to the target
+	XCHG
+	LHLD	ZDIF		; HL = bytes from the top to the target
+	CALL	CMP16		; CY iff the top is farther up
+	JC	GP_MID
+	CALL	GBSUB		; HL = the top line's start (resident)
+	LXI	B,0		; BC = lines from the top
+GP_CNT:
+	MOV	A,D
+	ORA	E
+	JZ	GP_DN
+	MOV	A,M
+	INX	H
+	DCX	D
+	CPI	LF
+	JNZ	GP_CNT
+	INX	B
+	JMP	GP_CNT
+GP_DN:
+	LDA	NEDIT
+	DCR	A
+	MOV	E,A
+	MVI	D,0		; DE = the bottom row
+	MOV	H,B
+	MOV	L,C
+	CALL	CMP16		; CY iff below the screen
+	JC	GP_SET		; A = the bottom row
+	MOV	A,L		; on the screen: its row
+	JMP	GP_ONS
+	;--- above the top: at most NEDIT/2-2 lines? (read down to the top) ---
+GP_UP:
+	INR	A
+	JNZ	GP_MID		; 64K bytes or more above
+	LHLD	ZDIF
+	XCHG
+	LXI	H,0
+	CALL	SUBHD		; HL = bytes from the target to the top
+	MOV	A,H
+	ORA	L
+	JZ	GP_MID		; exactly 64K
+	XCHG			; DE = bytes to read
+	XRA	A
+	STA	ZLF
+	CALL	RGET0
+GP_RD:
+	CALL	RDGET		; (keeps DE)
+	JC	GP_MID
+	CPI	LF
+	JNZ	GP_RN
+	LDA	NEDIT
+	ORA	A
+	RAR
+	SUI	2		; A = NEDIT/2 - 2
+	PUSH	H
+	LXI	H,ZLF
+	INR	M
+	CMP	M		; CY iff more lines than that
+	POP	H
+	JC	GP_MID
+GP_RN:
+	DCX	D
+	MOV	A,D
+	ORA	E
+	JNZ	GP_RD
+	XRA	A		; the top row
+	JMP	GP_SET
+GP_MID:				; NOTE: falls through to GP_SET -- keep it
+				;   adjacent, the A it computes is the row
+	MVI	A,1
+	STA	WFILL		; not past the end of the file
+	LDA	NEDIT
+	ORA	A
+	RAR			; the middle row
+GP_SET:
+	MOV	L,A		; the cursor's row, lines counted from here
+	MVI	H,0
+	SHLD	WINROW
+	LXI	H,0
+	SHLD	LNDLT
+	CALL	SETFUL		; the window may have paged: full repaint
+GP_FIN:
+	CALL	ZREST
+	LDA	GPKEEP
+	ORA	A
+	JZ	FNBLNK		; the first non-blank (and its goal column)
+	XRA	A
+	STA	GPKEEP
+	JMP	SETGL		; ... except a search, which keeps the column
+				;   it matched at
+
+;GP_ONS -- the target is on the screen the reader is already looking at, so
+; the top line does not move and NOTHING on it changes: this is a cursor
+; motion, not a jump.  LAYOUT works out how far the text scrolled as
+; LNDLT - (the row change), so telling it the truth -- the cursor moved
+; exactly as many lines as its row did -- makes that come out zero, and
+; R_MOVE then repositions the cursor and draws nothing.  WINROW is left
+; alone: CURRW adds LNDLT to it and arrives at the same row.
+GP_ONS:
+	MOV	L,A
+	MVI	H,0		; HL = the row it lands on
+	XCHG
+	LHLD	WINROW		; (still the row it started on: SCPRE's OLDWR)
+	XCHG
+	CALL	SUBHD		; HL = the lines the cursor moved
+	SHLD	LNDLT
+	MVI	A,R_MOVE
+	STA	RINTENT
+	JMP	GP_FIN
+
+;============================================================
+; OPERATORS  (d c y + motion, dd, D)
+;
+; An operator key (VC_D) arms PENDOP.  On the NEXT key, VICDSP snapshots PENDOP
+; into PSAVE, clears it, and -- because PSAVE is now set -- routes here instead of
+; the plain motion dispatch.  If that key repeats the operator (dd) it is the
+; doubled linewise form (OPLINE); otherwise it is a motion whose span the operator
+; consumes: OPPEND classifies the motion (OPCLS), records the start offset, runs
+; the motion through the normal table (so f/F/t/T read their own target char, %
+; matches, counts apply), reads the landing offset, and deletes the span.
+;
+; Motion class governs the span:  charwise-exclusive (w b h l 0 ^) deletes up to
+; but not the endpoint; charwise-inclusive (e $ f t ; , %) includes it on a
+; forward motion; linewise (j k G H M L) deletes whole lines start-line..end-line.
+;============================================================
+
+;OPPEND -- PSAVE = pending operator, C = the following key (always KT_CHAR here;
+; action keys cleared PENDOP in VIC_ACT).  Apply the operator to this key.
+OPPEND:
+	XRA	A
+	STA	CWEOL		; set only by the 'cw' -> 'ce' rewrite below
+	;--- 'cw' / 'cW' change to the WORD'S END, like 'ce' / 'cE': vi's one
+	;    operator+motion special case.  Only with an ordinary char under
+	;    the cursor, though -- on a blank or a line's end vim's 'cw' is a
+	;    plain 'w' (recorded: 'cw' on a blank-only line changes just the
+	;    blanks, and on an empty line it changes nothing at all). ---
+	LDA	PSAVE
+	CPI	'c'
+	JNZ	OPP_ND
+	MOV	A,C
+	CPI	'w'
+	JZ	OPP_W
+	CPI	'W'
+	JNZ	OPP_ND
+OPP_W:
+	CALL	ONWHIT		; CY iff there is no ordinary char there
+	JC	OPP_ND
+	MOV	A,C
+	SUI	'w'-'e'		; 'w'->'e' and 'W'->'E' (both 18 apart)
+	MOV	C,A
+	MVI	A,1		; ... but it is still a 'w' where the line ends:
+	STA	CWEOL		;   see the clamp in OPA_F
+OPP_ND:
+	MOV	A,C		; doubled operator (dd / cc)?
+	LXI	H,PSAVE
+	CMP	M
+	JZ	OPLINE
+	MOV	A,C		; (OPCLS classifies the key)
+	CALL	OPCLS		; classify the motion: CY = not a motion (cancel)
+	JC	OPABRT		;   -- and not a mark, so nothing is owed below
+	STA	OPCLSV
+	MOV	B,A		; B = the class
+	LDA	PSAVE
+	CPI	'c'		; 'c' takes charwise motions only: a linewise one
+	JNZ	OPP_NC		;   (cj cG cH ...) would have to keep an empty
+	MOV	A,B		;   line to insert on, which is not built here,
+	CPI	2		;   so it is dropped rather than got wrong
+	JNZ	OPP_GO
+	JMP	OPP_NO
+OPP_NC:
+	CPI	'y'		; 'y' is the other way about: it takes LINEWISE
+	JNZ	OPP_GO		;   motions only ('y''a' 'yj' 'yG' 'yH'), because
+	MOV	A,B		;   a charwise register would need a type flag
+	CPI	2		;   beside the Q-buffer and a 'p' that puts
+	JZ	OPP_GO		;   within a line -- neither of which is built
+OPP_NO:
+	MOV	A,C		; dropped -- but ''' and '`' still owe us their
+	CPI	27H		;   mark letter, and an orphan would be dispatched
+	JZ	OPP_SW		;   as a command ('a' opens an insert and types
+	CPI	60H		;   into the buffer), so swallow it before
+	JNZ	OPABRT		;   dropping the command
+OPP_SW:
+	CALL	MKGETK
+	JMP	OPABRT
+OPP_GO:
+	XRA	A
+	STA	WPULL		; only this motion's own answer counts (OPA_EX)
+	CALL	CUROFF		; span start = cursor before the motion
+	SHLD	OPSTA
+	LXI	H,CMDTAB
+	CALL	VSCAN		; run the motion (moves the cursor; miss -> no move)
+	LDA	PSAVE		; the motion may have cancelled the operator -- a
+	ORA	A		;   mark that would not answer clears PSAVE.  The
+	JZ	SETMOV		;   span is empty then, and an empty LINEWISE span
+				;   still takes a whole line, so stop here instead
+	CALL	CUROFF		; span end = cursor after the motion
+	SHLD	OPEND2
+	LDA	PSAVE
+	CPI	'y'
+	JZ	OPYANK		; a yank takes the span without losing it
+	CALL	OPAPPL		; delete the span
+	;--- 'c' -> insert at the deletion point (OPAPPL left the cursor there,
+	;    unclamped: on 'cw' at a line's end the text goes past its last
+	;    char, where a clamped cursor would put it one char to the left) ---
+	LDA	PSAVE
+	CPI	'c'
+	RNZ
+	JMP	SETINS
+OPABRT:
+	JMP	SETMOV		; not a motion -> operator cancelled, nothing drew
+
+;ONWHIT -- CY iff there is no ordinary char under the cursor to change: a blank
+; (a space or a TAB), a line's end -- the CR,LF, so an empty line too -- or the
+; end of the text.  vim's 'cw'-is-'ce' test is exactly that (gchar_cursor() is
+; not NUL and not white), so on an empty line 'cw' stays a plain 'w': it must
+; not run 'e' off to the next line's word and swallow the line break.
+ONWHIT:
+	CALL	ATENDQ		; Z iff the cursor is at the end of the text
+	JZ	OW_YES
+	CALL	CURCHR		; A = the char under the cursor
+	CPI	' '
+	JZ	OW_YES
+	CPI	TAB
+	JZ	OW_YES
+	CPI	CR
+	JZ	OW_YES
+	CPI	LF
+	JZ	OW_YES
+	ORA	A		; a char to change: CY clear
+	RET
+OW_YES:
+	STC
+	RET
+
+;OPLINE -- doubled operator: 'dd' deletes count whole lines.  'cc' is NOT built
+; (it would have to keep one empty line to insert on): it does nothing at all,
+; rather than deleting the lines the way 'dd' does.
+OPLINE:
+	LDA	PSAVE
+	CPI	'c'
+	JZ	SETMOV
+	CPI	'y'
+	JZ	VY_YY
+	JMP	VD_DD
+
+;OPCLS -- A(key) -> A = motion class (0 excl, 1 incl, 2 linewise); CY if the key
+; is not an operator-usable motion (scan OPCTAB).
+OPCLS:
+	MOV	B,A
+	LXI	H,OPCTAB
+OPC_LP:
+	MOV	A,M
+	ORA	A
+	JZ	OPC_MS		; end of table -> not a motion
+	CMP	B
+	JZ	OPC_HT
+	INX	H
+	INX	H
+	JMP	OPC_LP
+OPC_HT:
+	INX	H
+	MOV	A,M		; class byte
+	ORA	A		; clear CY
+	RET
+OPC_MS:
+	STC
+	RET
+
+;OPAPPL -- apply the operator over [OPSTA,OPEND2] using class OPCLSV.
+OPAPPL:
+	LDA	OPCLSV
+	CPI	2
+	JZ	OPALIN		; linewise
+	;--- charwise: order the endpoints, adjust for inclusive ---
+	LHLD	OPSTA
+	XCHG			; DE = start
+	LHLD	OPEND2		; HL = end
+	CALL	CMP16		; DE=start vs HL=end: CY iff start<end, Z iff ==
+	JC	OPA_F
+	JZ	OPA_F		; forward or empty
+	;--- backward: lo = end (HL), hi = start (DE) ---
+	SHLD	OPLO
+	XCHG
+	SHLD	OPHI
+	JMP	OPA_DO
+OPA_F:
+	XCHG			; HL = start, DE = end
+	SHLD	OPLO
+	XCHG			; HL = end
+	LDA	OPCLSV
+	CPI	3		; a JUMP ('`'): its end is exactly where it landed.
+	JZ	OPA_HI		;   OPA_EX below cuts an exclusive forward span back
+				;   to the line's content end because that is what
+				;   vim's 'w' does under an operator -- but a jump
+				;   crosses line breaks, which is the whole point
+				;   of it, so it must not be cut back
+	CPI	1
+	JNZ	OPA_EX
+	INX	H		; inclusive endpoint -> hi = end+1
+	;--- 'cw' stops at the line's content end, where a plain 'ce' (and 'de')
+	;    runs on into the next line's word and 'd%' crosses to its mate --
+	;    all four recorded from vim 9.1.  vim's 'cw' is not simply 'ce': the
+	;    rewrite keeps 'w's own end-of-line stop, so the clamp hangs off
+	;    CWEOL (the rewrite) and not off the inclusive class. ---
+	LDA	CWEOL
+	ORA	A
+	JZ	OPA_HI
+	SHLD	OPHI		; park the motion's own end: CEND clobbers DE
+	LHLD	OPLO
+	CALL	CEND		; HL = the start line's content end
+	XCHG			; DE = that content end
+	LHLD	OPHI		; HL = hi
+	CALL	CMP16		; CY iff the content end is below hi
+	JNC	OPA_HI		; hi is inside the line: keep it
+	XCHG			; HL = the content end: 'cw' stops there
+	JMP	OPA_HI
+OPA_EX:
+	;--- exclusive and forward: vim's 'w' under an operator stops at the end
+	;    of the line (fwd_word's 'eol'), so the span is cut back to the
+	;    cursor line's content end -- 'dw' on the last word of a line
+	;    deletes to the line's end and does NOT join the next line up.
+	;    The end goes to OPHI first: CEND does not preserve DE. ---
+	SHLD	OPHI		; the motion's own end, for now
+	LHLD	OPLO
+	CALL	CEND		; HL = the start line's content end
+	XCHG			; DE = that content end
+	LDA	WPULL		; the motion landed on a line's end and was
+	ORA	A		;   pulled back onto its last char (the command
+	JNZ	OPA_CE		;   cursor may not sit past it): under an
+	LHLD	OPHI		;   operator vim's own w stops AT that end, so
+	CALL	CMP16		;   the span runs to the line's content end --
+	JNC	OPA_DO		;   'dw' on the last word of the last line
+OPA_CE:				;   deletes the word, not all but its last char
+	LHLD	OPLO
+	CALL	CMP16		; DE = the content end vs HL = lo: Z iff equal
+	JZ	OPA_LN
+	XCHG			; HL = the content end
+OPA_HI:
+	SHLD	OPHI
+;OPA_DO -- delete the charwise span, then place the cursor: a delete never
+; leaves it past the line's last char, a change leaves it at the deletion point
+; (where the typed text goes).
+OPA_DO:
+	CALL	OPDSPN
+	LDA	PSAVE
+	CPI	'c'
+	RZ
+	JMP	CLAMPE
+;SPNBRK -- CY iff the span [OPLO,OPHI) takes a line break with it.  The first
+; LF at or after OPLO ends the span's own line; the span reaches a break only
+; if it runs past that one.  A span ending exactly ON it (OPHI = the LF's
+; offset) stops short of it, and takes none.
+SPNBRK:
+	LHLD	OPLO
+	CALL	EOLNL		; HL = that LF's offset, or LOGLEN on a last line
+	XCHG			; DE = it
+	LHLD	OPHI
+	JMP	CMP16		; CY iff the break lies inside the span
+
+;OPDSPN -- delete the logical span [OPLO,OPHI) (charwise).
+OPDSPN:
+	CALL	SPNBRK		; asked BEFORE the delete, while the text is there
+	PUSH	PSW
+	LHLD	OPLO
+	CALL	GOTO
+	LHLD	OPHI
+	XCHG			; DE = hi
+	LHLD	OPLO
+	XCHG			; HL = hi, DE = lo
+	CALL	SUBHD		; HL = hi - lo
+	CALL	DELFWD
+	CALL	MARKMOD
+	POP	PSW
+	JC	SETFUL		; a break went: every row below it moved up
+	JMP	SETLIN		; no break: 'dw' 'cw' 'D' changed one row, and
+				;   only that row is stale -- 1.6 s of repaint
+				;   for a word was the whole cost of these
+
+;OPA_LN -- the span came out empty because the line holds nothing at all (the
+; cursor is on an empty line): vim's do_pending_operator promotes such a span to
+; LINEWISE there ('inindent'), so 'dw' takes the line away, exactly as a 'J' on
+; the line above would.  A change has nothing to delete: it just opens its
+; insert on the empty line (vim's 'cw' there is a linewise change, same effect).
+OPA_LN:
+	LDA	PSAVE
+	CPI	'c'
+	JNZ	OPA_LD
+	LHLD	OPLO		; nothing to delete, and the motion has moved
+	JMP	GOTO		;   on: back to the empty line to insert there
+OPA_LD:
+	LHLD	OPLO
+	SHLD	OPSTA
+	SHLD	OPEND2
+	JMP	OPALIN
+
+;OPALSP -- the linewise span [OPSTA,OPEND2] as whole lines: OPLO = the start of
+; the LOW endpoint's line, OPHI = the start of the line past the HIGH one.
+OPALSP:
+	LHLD	OPSTA
+	XCHG
+	LHLD	OPEND2
+	CALL	CMP16		; DE=start vs HL=end: CY iff start<end
+	JC	OPAL_F
+	SHLD	OPLO		; end <= start: lo-src = end (HL)
+	XCHG
+	SHLD	OPHI		; hi-src = start
+	JMP	OPAL_R
+OPAL_F:
+	XCHG			; HL = start
+	SHLD	OPLO		; lo-src = start
+	LHLD	OPEND2
+	SHLD	OPHI		; hi-src = end
+OPAL_R:
+	LHLD	OPLO
+	CALL	BOL
+	SHLD	OPLO		; lo = BOL(low line)
+	LHLD	OPHI
+	CALL	NLSTART
+	SHLD	OPHI		; hi = start of line past the high line
+	RET
+
+;OPALIN -- linewise operator over a motion span: delete whole lines from the low
+; endpoint's line through the high endpoint's line.  A yank wants the same span
+; measured but NOT deleted, so it calls OPALSP on its own (OPYANK).
+OPALIN:
+	CALL	OPALSP
+;OPDLIN -- delete the whole-line span [OPLO,OPHI); if the cursor ends past the
+; text, drop it to the last line's start.  Either way it ends on the line's
+; first NON-BLANK, as 'dd' does -- a linewise delete is a linewise delete,
+; whether the span was linewise to begin with ('dj') or was promoted there for
+; being empty ('dw' on an empty line).  Landing on the line START instead was
+; invisible for as long as the only test case had an unindented line after the
+; empty one.
+OPDLIN:
+	CALL	OPDSPN
+	CALL	ATENDQ		; CY iff the cursor is short of the end
+	JC	OPDL_NB
+	CALL	LOGLEN
+	MOV	A,H
+	ORA	L
+	RZ			; empty buffer
+	DCX	H
+	CALL	BOL
+	CALL	GOTO
+OPDL_NB:
+	JMP	FNBLNK
+
+;OPCTAB -- operator motion classes: DB key, class.  0 = charwise exclusive,
+; 1 = charwise inclusive, 2 = linewise, 3 = charwise exclusive but a JUMP.
+; 'c' takes everything but class 2, 'y' takes class 2 alone.  Ends with a 0 key.
+; Every key here MUST also be a row in CMDTAB.  A key classified here but not
+; dispatchable there is worse than useless: OPPEND takes the class, VSCAN finds
+; nothing and the cursor does not move, and OPAPPL is then handed a span of
+; length zero -- which class 1 turns into a span of ONE by the inclusive INX H.
+; 'f F t T ; , %' once stayed classed here after their handlers were cut, and
+; for that reason 'df' deleted the character under the cursor and 'cf' deleted
+; it and opened an insert: 'x' and 's' under another name.
+OPCTAB:
+	DB	'w',0, 'W',0, 'b',0, 'B',0, 'h',0, 'l',0, '0',0, '^',0
+	DB	60H,3		; `{a-c} -- charwise exclusive, but a JUMP: class 3
+				;   so OPA_EX's end-of-line clamp does not apply
+	DB	'e',1, 'E',1, '$',1
+	DB	'j',2, 'k',2, 'G',2, 'H',2, 'M',2, 'L',2
+	DB	27H,2		; '{a-c} -- linewise, as j and G are
+	DB	0
+
+;VCB_C -- 'C' = change to the line's end: vi's 'c$'.  It takes exactly the span
+; 'D' takes and then opens an insert at the deletion point, instead of pulling
+; the cursor back onto the new last char -- that is the whole difference, which
+; is why the span is shared below.
+;
+; 'C' is NOT 'D' then 'a', though the text they leave is identical (measured in
+; vim 9.1, and here).  'C' is ONE change: '.' repeats the delete and the typed
+; text together, and 'u' takes the whole thing back.  'D' then 'a' is TWO, so
+; '.' repeats only the append, and since undo here is single-level and 'u'
+; undoes 'u', one 'u' gets back to the truncated line and the next one just
+; puts the insert back -- the text 'D' removed is gone.  That asymmetry is the
+; reason this is its own command and not an idiom.
+VCB_C:
+	CALL	VCB_CD
+	JMP	SETINS		; the cursor is at the deletion point already
+;VCB_D -- 'D' = delete to end of line (content only, not the newline).
+VCB_D:
+	CALL	VCB_CD
+	JMP	CLAMPE		; pull the cursor onto the new last content char
+;VCB_CD -- the span 'C' and 'D' share: [cursor, the line's content end).  Leaves
+; the cursor at the deletion point, which is where OPDSPN's GOTO puts it.
+VCB_CD:
+	CALL	CNTOFF		; the count is spent; HL = the cursor
+	SHLD	OPLO
+	CALL	CUROFF
+	CALL	CEND		; to the line's content end, the CR,LF left
+	SHLD	OPHI
+	JMP	OPDSPN
+
+;============================================================
+; EDITS
+;============================================================
+
+;VC_X -- delete count chars at the cursor, not past the line's content end.
+; The delete is clamped to the line's content end, so it never removes the LF:
+; the line count is unchanged and only this row is stale -> R_LINE.
+VC_X:
+	CALL	GLSTAL
+	CALL	SETLIN
+	CALL	GETCNT
+	SHLD	CNTV
+	CALL	CUROFF
+	SHLD	WKI		; cur
+	CALL	CEND		; HL = the line's content end (HL = cur on entry)
+	;--- available = contentend - cur ---
+	XCHG			; DE = contentend
+	LHLD	WKI		; HL = cur
+	XCHG			; HL = contentend, DE = cur
+	CALL	SUBHD		; HL = contentend - cur
+	MOV	A,H
+	ORA	L
+	RZ			; nothing to delete (empty line / at end)
+	;--- del = min(available, count) ---
+	XCHG			; DE = available
+	LHLD	CNTV		; HL = count
+	CALL	CMP16		; DE=available vs HL=count: CY iff available < count
+	JC	VX_USEA
+	JMP	VX_DEL		; count <= available -> HL = count = del
+VX_USEA:
+	XCHG			; HL = available
+VX_DEL:
+	CALL	DELFWD		; HL = del bytes, forward-delete from cursor
+	CALL	MARKMOD
+	JMP	CLAMPE		; pull the cursor back to the line's content end
+
+;CEND -- HL(off) -> HL = the line's CONTENT end: its terminator offset (EOLNL,
+; which is LOGLEN on a last line with no line end), less a CR that immediately
+; precedes the LF.  It is the offset text appended to the line goes at, so it is
+; also where 'o' opens its line and where 'J' joins.  Shared by x, D, o, J and
+; the operator span clamp.
+CEND:
+	CALL	EOLNL		; HL = the LF's offset, or LOGLEN
+	MOV	A,H
+	ORA	L
+	RZ			; the start of the text: nothing before it
+	DCX	H
+	PUSH	H
+	CALL	CHARAT
+	POP	H		; HL = term-1
+	CPI	CR
+	RZ			; a CR before the LF -> the content ends there
+	INX	H
+	RET
+
+;CLAMPE -- if the cursor sits past its line's last content char, pull it back to
+; that char.  Shared by x, D, ~, J and the d{motion} operators (post-delete
+; cursor fix: vim never leaves the cursor past the end of a line).
+CLAMPE:
+	CALL	CUROFF
+	PUSH	H
+	CALL	EOLC
+	POP	D		; DE = cur
+	CALL	CMP16		; DE=cur vs HL=eolc: CY iff cur < eolc
+	RC
+	RZ
+	JMP	GOTO		; cur > eolc -> HL = eolc
+
+;VC_I -- insert before the cursor.
+VC_I:
+	CALL	GETCNT
+	JMP	SETINM
+
+;VC_A -- 'a': append after the cursor char.  On the line's terminator -- the LF,
+; or the CR of the CR,LF an empty line is -- the insert stays in place: stepping
+; over a CR would put the text between the CR and its LF.
+VC_A:
+	CALL	GETCNT
+	CALL	ATENDQ		; Z iff the cursor is at the end of the text
+	JZ	VA_INS
+	XCHG			; HL = cur
+	PUSH	H
+	CALL	CHARAT
+	POP	H
+	CPI	LF
+	JZ	VA_INS		; on the line terminator -> append in place
+	CPI	CR
+	JZ	VA_INS
+	INX	H
+	CALL	GOTO
+VA_INS:
+	JMP	SETINM
+
+;VCB_A -- 'A': insert at the line's content end (vim's A: '$' then 'a', but
+; past the end rather than on the last char, and past all of a blank-only
+; line's blanks).  The insert point is before the CR,LF, or LOGLEN on a last
+; line that has no line end.  A count is ignored -- DEVIATION: vim's '3AX'
+; appends the text three times.
+VCB_A:
+	CALL	CNTOFF		; the count is spent; HL = the cursor
+	CALL	EOLC		; HL = last content char (the start when empty)
+	PUSH	H
+	CALL	CHARAT
+	POP	H
+	CPI	CR
+	JZ	VBA_IN		; an empty line: insert at its start
+	CPI	LF
+	JZ	VBA_IN
+	INX	H		; past the last content char
+VBA_IN:
+	CALL	GOTO
+	JMP	SETINM
+
+;VCB_I -- 'I': insert at the first non-blank (vim's I: '^' then 'i').  NOT
+; '^' itself on a line of blanks only: vim's whitespace skip runs past the last
+; blank, where '^' -- a motion, so it must land on a char -- stays on it, and
+; 'I' inserts after it.  A count is ignored (DEVIATION, as VCB_A).
+VCB_I:
+	CALL	GETCNT
+	CALL	FNBLNK
+	CALL	CUROFF
+	PUSH	H
+	CALL	CHARAT
+	POP	H
+	CPI	' '
+	JZ	VBI_SK
+	CPI	TAB
+	JNZ	SETINM
+VBI_SK:
+	INX	H		; blanks only: past the last of them
+	CALL	GOTO
+;SETINM -- enter insert mode from a COMMAND key ('i' 'a' 'A' 'I').  Those
+; keys change no text and no line count: they move the cursor at most, so the
+; frame is a cursor reposition (R_MOVE), not a repaint.  The mode word on the
+; message row is MODEMS's business and is drawn after the frame either way.
+; SETINS itself must NOT do this: the 'c' operator ends there too, and its
+; span has already said what it changed.
+SETINM:
+	CALL	SETMOV
+SETINS:
+	MVI	A,EM_INS
+	STA	EDMODE
+	RET
+
+;ATCEND -- Z iff the cursor is at its line's CONTENT end: the next char is the
+; line's CR or LF, or there is no next char at all.  Nothing of the line follows
+; the cursor on its row, which is what the cheap paints want to know -- a char
+; typed there shifts nothing along, and a line break taken there carries nothing
+; away from the row it leaves behind.  Clobbers A, HL, DE (CURCHR's).
+ATCEND:
+	CALL	ATENDQ		; Z iff the cursor is at the end of the text
+	RZ
+	CALL	CURCHR		; A = the char under the cursor
+	CPI	CR
+	RZ
+	CPI	LF
+	RET
+
+;OPNBRK -- put a line break (CR,LF) in at the cursor, which ends a line further
+; down.  The insert-mode <CR>, 'r<CR>' and o/O all open a line this way.
+OPNBRK:
+	MVI	A,CR
+	CALL	PUTGAP
+	MVI	A,LF
+	CALL	PUTGAP
+	LHLD	LNDLT		; the cursor is a line further down
+	INX	H
+	SHLD	LNDLT
+	JMP	MARKMOD
+
+;ENDBRK -- call after OPNBRK: give the line it opened a terminator of its own
+; when it has none.  An empty last line IS a line -- vim's buffer holds [abc,
+; ""] whether or not the file ended with a line end (measured: line("$") is 2
+; with 'endofline' off as well as on) -- but here the text IS the file's bytes,
+; so the break just put in only terminates the line the cursor LEFT.  With
+; nothing marking the new one it exists on the screen and nowhere else: the row
+; is painted, no motion can reach it, and ':w' writes it away.  A second break
+; makes it a line like any other, which is exactly the text a line opened at a
+; TERMINATED last line already produces.
+; Not in OPNBRK itself: the put ('p') calls that at the end of the text too,
+; and would gain an empty line of its own.
+; OPNBRK counts the cursor a line lower and the step back over the new break
+; counts it one higher again, so LNDLT keeps the one line this added.
+ENDBRK:
+	CALL	ATENDQ		; NZ: text follows, so the line is terminated
+	RNZ
+	CALL	OPNBRK
+	CALL	CUROFF
+	DCX	H		; back over the LF, then the CR: onto the new
+	DCX	H		;   line, with its own terminator after it
+	JMP	GOTO
+
+;VC_O -- 'o': open a line below the cursor's and insert on it.  The break goes
+; in at the line's CONTENT end -- before its CR,LF, so the new empty line comes
+; after the cursor's own and the typing lands on it.  On a last line with no
+; line end the content end is the end of the text, so the break is appended.
+; A count is ignored -- DEVIATION: vim's '3oX' opens three lines.
+VC_O:
+	CALL	CNTOFF		; the count is spent; HL = the cursor
+	CALL	CEND
+	CALL	GOTO
+	CALL	OPNBRK
+	CALL	ENDBRK		; a last line with no line end: the opened line
+	CALL	SETILN		;   needs a terminator of its own to exist
+	JMP	SETINS
+
+;VCB_O -- 'O': open a line above.  The break goes in at the line's start and
+; the cursor steps back over it (the LF, then the CR) onto the new empty line.
+; The offsets are taken fresh: an insert can page the window out, which moves
+; every logical offset.  A count is ignored, as for 'o'.
+VCB_O:
+	CALL	CNTOFF		; the count is spent; HL = the cursor
+	CALL	BOL
+	CALL	GOTO
+	CALL	OPNBRK
+	CALL	CUROFF
+	DCX	H
+	DCX	H
+	CALL	GOTO
+	CALL	SETILN
+	JMP	SETINS
+
+;VCB_J -- 'J': join the next line onto the cursor's.  vim's rules, recorded from
+; vim 9.1 (accept_vi.py "o O J ~ dw cw D"): the next line's leading blanks go,
+; and ONE space is put in their place -- unless nothing is appended at all (the
+; next line is empty or blank-only), what is appended starts with ')', the line
+; already ends in a blank, or the line is empty.  The cursor lands on the join
+; point, pulled back onto the last char when nothing was appended.  On the last
+; line nothing happens (vim beeps there).  A count is ignored -- DEVIATION:
+; vim's '3J' joins three lines.
+VCB_J:
+	CALL	CNTOFF		; the count is spent; HL = the cursor
+	CALL	CEND		; the join point: this line's content end
+	SHLD	OPLO
+	CALL	CUROFF
+	CALL	NLSTART		; HL = the next line's start, or LOGLEN
+	PUSH	H
+	CALL	LOGLEN
+	POP	D		; DE = that start
+	CALL	CMP16		; Z iff there is no line after this one
+	JZ	SETMOV
+	XCHG			; HL = the next line's start
+;--- skip that line's leading blanks: they go with the break ---
+VJ_WS:
+	PUSH	H
+	CALL	LOGLEN
+	POP	D		; DE = the scan
+	CALL	CMP16		; Z iff the text ends here
+	JZ	VJ_DEL
+	XCHG			; HL = the scan
+	PUSH	H
+	CALL	CHARAT
+	POP	H
+	CPI	' '
+	JZ	VJ_SKIP
+	CPI	TAB
+	JNZ	VJ_DEL
+VJ_SKIP:
+	INX	H
+	JMP	VJ_WS
+VJ_DEL:
+	SHLD	OPHI
+	CALL	OPDSPN		; the break and those blanks go; MODF + R_FULL
+	CALL	SETJON		; ... and a join is a join: two rows, not a screen
+;--- the one space, unless one of vim's four exceptions applies ---
+	CALL	ATENDQ		; Z iff the text ends here: nothing was appended
+	JZ	CLAMPE
+	CALL	CURCHR		; the first char of what was appended
+	CPI	CR
+	JZ	CLAMPE		; nothing was: an empty or blank-only line
+	CPI	LF
+	JZ	CLAMPE
+	CPI	')'
+	JZ	CLAMPE		; vim puts no space before a ')'
+	CALL	CUROFF
+	MOV	A,H
+	ORA	L
+	JZ	VJ_SP		; the very start of the text: nothing behind it
+	DCX	H
+	CALL	CHARAT		; the char the line already ends with
+	CPI	' '
+	JZ	CLAMPE
+	CPI	TAB
+	JZ	CLAMPE
+	CPI	LF
+	JZ	CLAMPE		; the line is empty: its own LF is right behind
+VJ_SP:
+	MVI	A,' '
+	CALL	PUTGAP
+	CALL	CUROFF		; fresh: the insert may have paged the window
+	DCX	H
+	JMP	GOTO		; onto the space, where vim leaves the cursor
+
+;VC_TILD -- '~': toggle the case of the char under the cursor, then step right.
+; Recorded from vim: on a line's last char the cursor stays on it (CLAMPE), a
+; char with no case still steps over, and where there is no char at all -- an
+; empty line, a line's terminator, the end of the text -- nothing happens.
+; A count is ignored -- DEVIATION: vim's '3~' toggles three chars.
+VC_TILD:
+	CALL	GETCNT
+	CALL	SETLIN		; only this row changes
+	CALL	GLSTAL		; the goal column comes fresh from the cursor
+	CALL	ATENDQ		; Z iff the cursor is at the end of the text
+	JZ	SETMOV
+	CALL	CURCHR		; A = the char under the cursor
+	CPI	CR
+	JZ	SETMOV		; the line's end: nothing to toggle
+	CPI	LF
+	JZ	SETMOV
+	MOV	B,A
+	ANI	0DFH		; fold to the upper-case letter, if it is one
+	CPI	'A'
+	JC	VT_PUT		; below 'A': no case
+	CPI	'Z'+1
+	JNC	VT_PUT		; above 'Z': no case
+	MOV	A,B
+	XRI	20H		; a letter: flip the case bit
+	MOV	B,A
+VT_PUT:
+	MOV	A,B
+	STA	VRCH		; the calls below do not preserve B
+	CALL	MARKMOD
+	LXI	H,1
+	CALL	DELFWD		; the old char goes first: a delete never pages
+	LDA	VRCH
+	CALL	PUTGAP		; the new one in its place; the cursor steps past
+	JMP	CLAMPE		; ... unless that was the line's last char
+
+;VC_R -- 'r': pending; the next char replaces the one under the cursor.  VICMD
+; routes that char to VR_DO before the count digits, so 'r3' stores '3' as vim
+; does.  An ESC drops it (an action key: VIC_ACT clears the pending state).
+; DEVIATION: a count is ignored -- vim's '3rx' replaces three chars, or refuses
+; when the line is shorter; and an arrow key clears the pending 'r' and moves,
+; where vim drops it.
+VC_R:
+	CALL	MOVCNT		; a cursor motion, and its count
+	MVI	A,PR
+	STA	GPEND
+	RET
+
+;VR_DO -- the char in C replaces the one under the cursor.  Where there is no
+; char -- an empty line, the end of the file -- nothing happens at all, as in
+; vim.  A <CR> makes the char a line break instead (vim's 'r<CR>' splits the
+; line there), which changes the line count, so that case repaints in full.
+VR_DO:
+	XRA	A
+	STA	GPEND
+	MOV	A,C
+	STA	VRCH		; the calls below do not preserve C
+	CALL	SETLIN		; only this row changed
+	CALL	GLSTAL		; the goal column comes fresh from the cursor
+	CALL	ATENDQ		; Z iff the cursor is at the end of the text
+	JZ	SETMOV		; the end of the text: vim does nothing
+	CALL	CURCHR		; A = the char under the cursor
+	CPI	CR
+	JZ	SETMOV		; the line's end: nothing to replace
+	CPI	LF
+	JZ	SETMOV
+	CALL	MARKMOD
+	LXI	H,1
+	CALL	DELFWD		; the old char goes first: a delete never pages
+	LDA	VRCH
+	CPI	CR
+	JZ	VR_CR
+	CALL	PUTGAP		; the replacement in its place
+	CALL	CUROFF		; fresh: the insert may have paged the window
+	DCX	H		;   out, which moves every logical offset
+	JMP	GOTO		; back onto the replacement (tail)
+VR_CR:
+	CALL	OPNBRK		; 'r<CR>': the char becomes a line break -- the
+	CALL	ENDBRK		;   replaced char may have been the text's last
+	CALL	SETILN		;   row above it lost the char that was replaced,
+	MVI	A,1		;   so unlike 'o' and 'O' that row IS stale
+	STA	ILABOV
+	RET
+
+;VCB_R -- 'R': replace mode.  A count is ignored (DEVIATION, as VCB_A).
+VCB_R:
+	CALL	GETCNT
+	CALL	SETMOV		; as SETINM: 'R' moves nothing and draws nothing
+	LXI	H,0
+	SHLD	RPDEL		; nothing of ours to put back yet
+	SHLD	RPAPP
+	MVI	A,EM_REP
+	STA	EDMODE
+	RET
+
+;VC_D -- 'd': arm the delete operator.  The next key is its motion (d{motion})
+; or a second 'd' (dd); VICDSP routes both to OPPEND on the following key.
+VC_D:
+	MVI	A,'d'
+	STA	PENDOP
+	JMP	SETMOV		; nothing drew -> cursor-only, not a full repaint
+;VC_C -- 'c': arm the change operator.  It shares d's span machinery; OPPEND
+; enters insert at the deletion point afterwards, remaps 'cw'/'cW' to 'ce'/'cE'
+; on a non-blank, and drops a linewise motion.  'cc' does nothing (OPLINE).
+VC_C:
+	MVI	A,'c'
+	STA	PENDOP
+	JMP	SETMOV
+;VD_DD -- 'dd': delete count whole lines (reached from OPLINE) into the yank
+; register.  WM's ^Y (KEYY, WM 3350) goes back to the line start and kills the
+; lines forward; here LNSTRT, then QPUTLN (WM QPUT's body) with the count
+; instead of SETC1.  QPUTLN is repeated while CNTTST says the count is not
+; spent (DELTO's PAGESTP has paged a step), as MVLLOOP repeats GOLINE, so a
+; count runs past the window.  WM's MRKCURE and
+; screen marks are left out (SCRN.MAC repaints).  vim, NOT WordMaster: a count
+; over 1 on the last line does nothing (vim's cursor_down fails there), a count
+; past the end deletes to it and lands on the new last line, and the cursor
+; goes to the first non-blank.
+VD_DD:
+	CALL	GLSTAL
+	CALL	GETCNT
+	SHLD	CNTV
+	MVI	A,0		; DDSNG = (count == 1) -> the DL fast-paint case
+	STA	DDSNG
+	DCX	H
+	MOV	A,H
+	ORA	L
+	JNZ	VDD_LS
+	MVI	A,1
+	STA	DDSNG
+	JMP	VDD_GO
+VDD_LS:
+	CALL	RGET0		; vim: is this the last line?  (pages in)
+VDD_LL:
+	CALL	RDGET
+	JC	SETMOV		; the file ends on this line: nothing to do
+	CPI	LF
+	JNZ	VDD_LL
+	CALL	RDGET
+	JC	SETMOV		; nothing after its LF: the last line
+VDD_GO:
+	CALL	QKILL		; these lines become the register, not the last
+	CALL	LNSTRT		; the WHOLE line is yanked, so start at its start.
+				;   WM deleted BACKWARD to here instead (KEYU, WM
+				;   3333), and a backward delete cannot reach the
+				;   Q-buffer -- QCOPY's source is always GAPEND --
+				;   so the line's head would be left out of it.
+	LHLD	CNTV
+	CALL	SETC0
+VDD_FW:
+	CALL	QPUTLN		; WM 3355 / QPUT: the lines, into the register
+	CALL	CNTTST
+	JNZ	VDD_FW
+	CALL	MARKMOD
+	CALL	ATEOF
+	JNC	VDD_UP		; a line below moved up into the cursor's row
+	MVI	A,0
+	STA	DDSNG		; deleted to the end: full repaint
+	CALL	ONFST
+	JZ	FNBLNK		; nothing left before it
+	LXI	H,1		; onto the new last line
+	CALL	SETBWD
+	LHLD	LNDLT
+	DCX	H
+	SHLD	LNDLT
+VDD_UP:
+	CALL	FNBLNK
+	;--- A single dd (not the last line) is the LNOP delete-line case: one
+	;    DL + a bottom redraw. ---
+	LDA	DDSNG
+	ORA	A
+	RZ			; Ndd -> keep the R_FULL default (full repaint)
+	MVI	A,R_DLIN
+	STA	RINTENT
+	RET
+
+;============================================================
+; YANK REGISTER  (yy Y p P)  -- the register itself is WM's Q-buffer, a second
+; gap buffer inside the arena (see BUF.MAC).  It is not a fixed block, so what
+; can be yanked is bounded by QROOM -- the arena less RESVMEM, with the text
+; paging out from underneath it -- and an overflow raises WM's 'QBUF FULL' with
+; what has already moved safely in the register.
+;
+; Linewise only: 'dd'/'yy' put whole lines in and 'p'/'P' put whole lines back.
+; A charwise register (from x / D / dw) would need a type flag beside it and is
+; NOT built -- which is why 'y' takes LINEWISE motions only ('y''a' 'yj' 'yG'
+; 'yH' 'yM' 'yL') and OPPEND turns every charwise one away.
+;
+; Recorded from vim (VIM_PUT in accept_vi.py): a count CLAMPS at the last line
+; rather than refusing, the cursor lands on the FIRST NON-BLANK of the FIRST
+; line put whatever the count, and 'yy' does not move the cursor at all.
+;============================================================
+
+;QEMPTY -- Z iff nothing has been yanked (the Q-buffer is empty: QEND = QBEG).
+QEMPTY:
+	LHLD	QBEG
+	XCHG
+	LHLD	QEND
+	MOV	A,H
+	CMP	D
+	RNZ
+	MOV	A,L
+	CMP	E
+	RET
+
+;VC_Y -- 'y': arm the yank operator.  A second 'y' is the doubled linewise form
+; (OPPEND sends 'yy' to OPLINE); anything else is a motion, and OPPEND keeps the
+; linewise ones and turns the rest away.
+VC_Y:
+	MVI	A,'y'
+	STA	PENDOP
+	JMP	SETMOV
+
+;VY_YY -- 'yy' / 'Y': count whole lines into the register, the file unchanged.
+; WordMaster has no copy-without-delete -- QCOPY's source is always GAPEND, and
+; a non-deleting chunked copy has no pointer the gap machinery would keep valid
+; across its MKGAP (MOVGAP fixes up the pointer row only, and MKROOM can page
+; the source out entirely) -- so the lines are taken out with dd's own engine
+; and put straight back with QGET.  The file is therefore briefly short, and
+; MODF is put back afterwards: a yank must not mark the file modified.
+; The paint is forced full: the delete and re-insert may have paged.
+VY_YY:
+	CALL	CUROFF
+	SHLD	YOFF		; the cursor, which a yank leaves alone
+	CALL	BOL
+	SHLD	YPT		; where the lines come from, to put them back
+	LXI	H,VD_DD		; the count's worth of them, dd's own engine
+	JMP	YKGO
+
+;OPYANK -- 'y{motion}' with a LINEWISE motion ('y''a', 'yj', 'yG', 'yH'): the
+; motion's whole lines into the register, the file unchanged.  Reached from
+; OPPEND with the span already measured into OPSTA/OPEND2.
+;
+; Recorded from vim: the cursor lands on the LOW endpoint exactly as the motion
+; left it -- 'y''a' takes the marked line's first non-blank because that is
+; where ''' itself lands, while 'yk' keeps the column it had.  So it is that
+; endpoint's offset, not the line's start.
+OPYANK:
+	CALL	OPALSP		; OPLO = the low line's start, OPHI = past the high
+	LHLD	OPSTA
+	XCHG			; DE = start
+	LHLD	OPEND2		; HL = end
+	CALL	CMP16		; CY iff start < end
+	JNC	OPY_LO		; end <= start -> the END is the low endpoint
+	XCHG			; ... otherwise the start is
+OPY_LO:
+	SHLD	YOFF
+	LHLD	OPLO
+	SHLD	YPT		; where the lines come from, to put them back
+	LXI	H,YSPAN
+
+;YKGO -- HL = how this yank takes its lines out.  WordMaster has no copy-without-
+; delete (see the section head), so either way they come out and go straight
+; back, and everything a change would leave behind is put back with them.
+YKGO:
+	SHLD	YACT
+	LDA	MODF
+	STA	YMODF
+	LDA	DOTCHG		; ... and the '.' recorder's own change flag:
+	STA	YDCHG		;   a yank must not become the last change
+	LDA	UNDRPL		; ... and undo's: the lines going out and coming
+	STA	YURPL		;   back are not a change to undo either
+	MVI	A,1
+	STA	UNDRPL
+	STA	MKHOLD		; ... nor a change to drop a mark for: MKDROP
+	LHLD	LNDLT		; GOTO does not maintain this and VD_DD moves it
+	SHLD	YLDLT
+	CALL	LOGLEN
+	SHLD	YWAS		; ... and the text itself, to tell a yank that
+				;   took lines from one that took none
+	LHLD	YACT
+	CALL	YCALL		; the lines out of the file, into the register
+	CALL	LOGLEN
+	XCHG
+	LHLD	YWAS
+	CALL	CMP16		; Z iff the text is the length it was, so nothing
+	JZ	YK_FIN		;   came out and there is nothing to put back --
+				;   VD_DD refuses a count of more than one on the
+				;   last line ('2yy' there), and putting the
+				;   register back after THAT spliced whatever an
+				;   earlier yank had left in it into the file.
+				;   vim refuses it too, register untouched.
+	LHLD	YPT
+	CALL	GOTO
+	CALL	QGET		; and straight back in
+YK_FIN:
+	LHLD	YOFF
+	CALL	GOTO
+	LHLD	YLDLT
+	SHLD	LNDLT		; nothing moved: the cursor is on the row it was
+	LDA	YMODF
+	STA	MODF
+	LDA	YDCHG
+	STA	DOTCHG
+	LDA	YURPL
+	STA	UNDRPL
+	XRA	A
+	STA	MKHOLD
+	CALL	GLSTAL
+	JMP	SETFUL		; the cheap paint cannot carry this
+YCALL:	PCHL
+
+;YSPAN -- the lines of [OPLO,OPHI) out of the file and into the register, one at
+; a time as 'dd' does it.  There is no line COUNT to drive the loop with here --
+; the span is a pair of offsets -- so it runs until the text is exactly the
+; span's length shorter than it was, and asks for ONE line a pass.
+;
+; That one line is not decoration: QPUTLN goes through WM's GOLINE, which takes
+; its count from CMDCNT and its DIRECTION from DIRFLG, and on a count of zero
+; decrements DIRFLG to FFH and walks BACKWARD -- into a QCOPY whose source is
+; always GAPEND.  VD_DD sets both with SETC0 before its own loop; this must too.
+; Asking for one line at a time also costs nothing when the window pages: GOLINE
+; stops short and leaves the rest in CMDCNT, and a short pass is just a pass
+; that moved fewer bytes, which the byte target below already allows for.
+YSPAN:
+	CALL	GLSTAL
+	LHLD	OPHI
+	XCHG
+	LHLD	OPLO
+	XCHG			; HL = hi, DE = lo
+	CALL	SUBHD		; HL = the span's length
+	SHLD	YTGT
+	CALL	LOGLEN		; HL = the text's length
+	XCHG			; DE = it
+	LHLD	YTGT
+	XCHG			; HL = the text's, DE = the span's
+	CALL	SUBHD
+	SHLD	YTGT		; what the text is left at when the span is out
+	LHLD	OPLO
+	CALL	GOTO
+	CALL	QKILL		; these lines become the register, not the last
+YS_LP:
+	LXI	H,1		; CMDCNT = 1 line, DIRFLG = forward (see above)
+	CALL	SETC0
+	CALL	QPUTLN		; WM 3355 / QPUT: that line, into the register
+	CALL	LOGLEN
+	XCHG			; DE = what is left
+	LHLD	YTGT
+	CALL	CMP16		; Z iff it is down to the target
+	JC	YS_END		; below it -- cannot happen over whole lines,
+	JNZ	YS_LP		;   but never spin here if it ever did
+YS_END:
+	JMP	MARKMOD
+
+;VC_P -- 'p': the register's lines in AFTER the cursor's line, count copies.
+;VCB_P -- 'P': the same, in BEFORE the cursor's line.
+; Both land the cursor on the first non-blank of the first line put.
+VC_P:
+	CALL	QEMPTY
+	JZ	VP_BEL
+	CALL	GETCNT
+	SHLD	PCNT
+	CALL	CUROFF
+	CALL	NLSTART		; after the cursor's LINE -- a linewise put
+	JMP	VP_GO
+VCB_P:
+	CALL	QEMPTY
+	JZ	VP_BEL
+	CALL	GETCNT
+	SHLD	PCNT
+	CALL	CUROFF
+	CALL	BOL
+VP_GO:
+	CALL	GOTO
+	;--- appending past a last line that has no terminator on it: vim's put
+	;    still makes a new line, so the missing break goes in first ---
+	CALL	CUROFF
+	XCHG
+	CALL	LOGLEN		; (DE preserved)
+	CALL	CMP16		; CY iff the put point is before the end
+	JC	VP_IN
+	XCHG			; HL = the put point = LOGLEN
+	MOV	A,H
+	ORA	L
+	JZ	VP_BRK		; an EMPTY buffer: vim still has one (empty) line
+				;   there, and the put goes AFTER it
+	DCX	H
+	CALL	CHARAT
+	CPI	LF
+	JZ	VP_IN
+VP_BRK:
+	CALL	OPNBRK		; (which counts the cursor a line lower itself)
+VP_IN:
+	CALL	CUROFF
+	SHLD	PPT		; the first line put: where the cursor ends
+	;--- GOTO maintains LNDLT by counting the line feeds the cursor crosses
+	;    (BUF.MAC), but INSBLK does not: the put leaves the cursor past
+	;    every line it inserted without saying so, and the GOTO back to the
+	;    first line put would then subtract lines LNDLT never gained.  So
+	;    the register's own line count is added for each copy put. ---
+	LHLD	QBEG
+	XCHG
+	LHLD	QEND
+	CALL	LFCNT		; DE = the lines in the register
+	XCHG
+	SHLD	PLFS
+	LHLD	PCNT		; the copies, kept for the paint: the loop below
+	MOV	A,H		;   counts PCNT down to nothing.  A count that
+	ORA	A		;   does not fit a byte leaves PCPY 0, and the
+	MVI	A,0		;   put keeps the full repaint (MVI keeps flags)
+	JNZ	VP_PZ
+	MOV	A,L
+VP_PZ:
+	STA	PCPY
+VP_LP:
+	CALL	QGET		; a count puts the register that many times
+	LHLD	LNDLT
+	XCHG
+	LHLD	PLFS
+	DAD	D
+	SHLD	LNDLT		; the cursor is past the lines this copy put
+	LHLD	PCNT
+	DCX	H
+	SHLD	PCNT
+	MOV	A,H
+	ORA	L
+	JNZ	VP_LP
+	CALL	MARKMOD
+	LHLD	PPT
+	CALL	GOTO		; back to the first line put -- and GOTO's own
+				;   arithmetic now has the lines to subtract
+	CALL	GLSTAL
+	;--- the put opened whole lines at the cursor's row, which is the same
+	;    thing 'o' does, only more of them: ask for that paint with the
+	;    count.  Too many to count in a byte -> the full repaint stands,
+	;    and at that size it is the cheaper frame anyway. ---
+	LDA	PCPY
+	ORA	A
+	JZ	FNBLNK
+	LHLD	PLFS
+	MOV	A,H
+	ORA	A
+	JNZ	FNBLNK
+	LDA	PCPY
+	CALL	MULSAT		; HL = the lines this put put, saturated
+	MOV	A,H
+	ORA	A
+	JNZ	FNBLNK
+	MOV	A,L
+	ORA	A
+	JZ	FNBLNK
+	PUSH	PSW
+	CALL	SETILN		; R_ILIN, and ILN = 1 ...
+	POP	PSW
+	STA	ILN		; ... which the lines put now replace
+	JMP	FNBLNK
+VP_BEL:
+	CALL	GETCNT		; the count is spent either way
+	MVI	C,BEL
+	CALL	BCONOU
+	JMP	SETMOV
+
+;============================================================
+; INSERT MODE
+;============================================================
+; REPLACE MODE ('R') -- vim's Replace mode; WordMaster has no such mode.
+; A typed char overwrites the one under the cursor: PUTGAP puts it in and a
+; one-byte DELFWD takes the old one, which leaves that old char inside the gap,
+; just below GAPEND -- a forward delete only moves the pointer past it.  At the
+; line's end (its CR / LF, or the end of the text) there is nothing to overwrite
+; and the char is appended instead, as vim does.
+; BS walks back over what was typed, in reverse: an appended char is deleted
+; (RPAPP counts those), an overwritten one is deleted and its original put back
+; with BUF.MAC's UNDELF (RPDEL counts those).  RPGE holds GAPEND as it was left
+; by the last overwrite; if it no longer matches, an insert has had to relocate
+; the text and the originals are not where UNDELF would look, so they are given
+; up rather than got wrong.
+; DEVIATIONS: a BS with nothing of ours left stops at the line's start, where
+; vim goes on to the line above; and a line break typed in R ends what BS can
+; put back (vim rejoins it).  Neither loses or corrupts text.
+;============================================================
+
+;VIREP -- one key in replace mode.  B = KT type, C = char/action.
+VIREP:
+	MOV	A,B
+	CPI	KT_ACT
+	JZ	VI_ACT		; ESC: command mode, the cursor steps left
+	CPI	KT_CHAR
+	RNZ			; ignore anything else
+	MOV	A,C
+	CPI	CR
+	JZ	VP_CR
+	CPI	LF		; ^J is a newline too, as in insert
+	JZ	VP_CR
+	CPI	BS
+	JZ	VP_BS
+	CPI	DEL
+	JZ	VP_BS
+	STA	VRCH		; the calls below do not preserve C
+	CALL	SETLIN		; this row changed
+	CALL	MARKMOD
+	CALL	ATCEND		; the line's end: nothing there to overwrite
+	JZ	VP_APP
+	;--- overwrite: the new char in, the old one into the gap ---
+	LDA	VRCH
+	CALL	PUTGAP		; may have had to relocate the text
+	LHLD	RPDEL
+	MOV	A,H
+	ORA	L
+	JZ	VP_OVW		; nothing held yet -> nothing to lose
+	LHLD	GAPEND
+	XCHG
+	LHLD	RPGE
+	CALL	CMP16		; Z iff the gap is where the last overwrite left it
+	JZ	VP_OVW
+	LXI	H,0
+	SHLD	RPDEL		; the text moved: those originals are gone
+VP_OVW:
+	LXI	H,1
+	CALL	DELFWD		; the old char, still in the gap below GAPEND
+	LHLD	GAPEND
+	SHLD	RPGE
+	LHLD	RPDEL
+	INX	H
+	SHLD	RPDEL
+	RET
+VP_APP:
+	LDA	VRCH
+	CALL	PUTGAP		; past the line's end: vim appends
+	LHLD	RPAPP
+	INX	H
+	SHLD	RPAPP
+	RET
+VP_CR:
+	LXI	H,0
+	SHLD	RPDEL		; a line break ends what BS can put back
+	SHLD	RPAPP
+	JMP	VI_CR		; tail: the newline goes in as in insert mode
+VP_BS:
+	LHLD	RPAPP
+	MOV	A,H
+	ORA	L
+	JZ	VP_BSD
+	DCX	H
+	SHLD	RPAPP		; an appended char: it just goes
+	CALL	SETLIN
+	JMP	DELPRV
+VP_BSD:
+	LHLD	RPDEL
+	MOV	A,H
+	ORA	L
+	JZ	VP_BSM		; nothing of ours left
+	LHLD	GAPEND
+	XCHG
+	LHLD	RPGE
+	CALL	CMP16		; the gap moved -> the originals are gone
+	JNZ	VP_BSM
+	LHLD	RPDEL
+	DCX	H
+	SHLD	RPDEL
+	CALL	SETLIN
+	CALL	DELPRV		; the typed char goes
+	CALL	UNDELF		; the original comes back
+	LHLD	GAPEND
+	SHLD	RPGE
+	RET
+VP_BSM:
+	CALL	SETMOV		; nothing changed: back over the text as it is
+	JMP	HSTEP
+
+;============================================================
+
+;VIINS -- one key in insert mode.  B = KT type, C = char/action.
+VIINS:
+	MOV	A,B
+	CPI	KT_ACT
+	JZ	VI_ACT
+	CPI	KT_CHAR
+	RNZ			; ignore anything else
+	MOV	A,C
+	CPI	CR
+	JZ	VI_CR
+	CPI	LF		; ^J is a newline too (a bare LF would break the row paint)
+	JZ	VI_CR
+	CPI	BS
+	JZ	VI_BS
+	CPI	DEL
+	JZ	VI_BS
+	MOV	A,C
+	CALL	PUTGAP		; insert the byte at the cursor
+	CALL	MARKMOD
+	CALL	SETLIN		; base: this row changed -> whole-line redraw
+	;--- can the cheaper ICH be used?  Only a plain printable char whose line
+	;    has no TAB after the cursor (a following tab's expansion would shift,
+	;    so a one-cell ICH would be wrong); else keep the whole-line R_LINE. ---
+	MOV	A,C
+	CPI	' '
+	RC			; control char -> keep R_LINE
+	CPI	DEL
+	RNC			; DEL / high bytes -> keep R_LINE
+	CALL	TAILTAB		; A = 1 if a TAB is in the tail
+	ORA	A
+	RNZ			; tab after cursor -> keep R_LINE
+	MVI	A,R_ICH
+	STA	RINTENT
+	;--- and does the row need a cell opened at all?  ICH (ESC[1@) exists to
+	;    shift the rest of the row right, out of the way; with nothing after
+	;    the cursor there is nothing to shift, and the char typed into the
+	;    blank cell where it already belongs IS the whole update -- one byte
+	;    on the wire instead of a cell-open, an address and a hide/show. ---
+	CALL	ATCEND		; NZ: text follows on the row -> open a cell
+	MVI	A,0
+	JNZ	VI_ICH
+	INR	A
+VI_ICH:
+	STA	ICHAPP
+	RET
+VI_CR:
+	;--- a <CR> ends the row it was typed on.  If text followed the cursor,
+	;    that text goes down to the new row and the row left behind is a
+	;    shorter line -> it must be redrawn; typed at the line's end it keeps
+	;    every char it had and the opened row is all the paint there is. ---
+	CALL	ATCEND
+	MVI	A,0
+	JZ	VI_CRS
+	INR	A
+VI_CRS:
+	PUSH	PSW
+	CALL	OPNBRK		; a verbatim newline: CR,LF, a line further down
+	CALL	ENDBRK		;   -- and its own terminator if it ends the text
+	CALL	SETILN		;   -- one row opens, the rest of the screen stands
+	POP	PSW
+	STA	ILABOV
+	RET
+;VI_BS -- BS / DEL: WM's RUBOUT (DELPRV).  vim, NOT WordMaster's insert ^H
+;(which stops at the line start): BS joins lines and goes back past where the
+;insert began (backspace=indent,eol,start).
+VI_BS:
+	CALL	PEEKL
+	RC			; start of the file: nothing to delete
+	CPI	LF		; a LF behind the cursor: this BS joins the line
+	JZ	VI_BSJ		;   onto the one above, so the line count changes
+	CALL	SETLIN		;   and the screen repaints in full.  Any other
+VI_BSJ:				;   char is inside the row -- redraw just that row
+	CALL	MARKMOD
+	JMP	DELPRV
+;VI_ACT -- ESC: back to command mode.  Nothing is inserted and nothing is
+; deleted -- the cursor steps one left -- so this is a cursor reposition, not
+; a repaint.  (What the row shows does not change: the mode word is MODEMS's,
+; and a cursor sitting on a TAB moves to the tab's last column, which is where
+; SCRN.MAC's own TABCUR puts it for a command-mode frame.)
+VI_ACT:
+	MOV	A,C
+	CPI	ACT_ESC
+	RNZ			; ignore arrows etc. in insert (minimal)
+	MVI	A,EM_CMD
+	STA	EDMODE
+	CALL	SETMOV
+	CALL	HSTEP		; vi: cursor steps left on leaving insert
+	JMP	GLSTAL
+
+;============================================================
+; EX LINE  (:w :q :wq :x :e)
+;============================================================
+
+;RDLINE -- WM RDLINE (WM 5870), cut down for the ':' and '/' lines: read a line
+; into (DE), max B chars, until CR, on the bottom row after the prompt char in C.
+; Each char stored is echoed (WM CONOUTC); BS drops the last one and erases it
+; (WM LINEPOP + BSCHAR).  On return: A = 0 for a completed line (length in
+; RLLEN), A = 0FFH if cancelled.
+; vim, NOT WordMaster: DEL erases like BS (WM echoes the dropped char); BS or DEL
+; on an empty line cancels, as ESC does; a control char is ignored (WM stores it
+; and shows ^X).  WM's ^X ^U ^\ ^R ^E ^C line edits are not kept.
+RDLINE:
+	XCHG			; HL = buffer
+	SHLD	RLPTR
+	MVI	A,0
+	STA	RLLEN
+	MOV	A,B
+	STA	RLMAX
+	MOV	A,C
+	CALL	EXPRM		; bottom row cleared, prompt shown
+RL_LP:
+	CALL	GETKEY
+	MOV	A,B
+	CPI	KT_ACT
+	JZ	RL_ACT
+	CPI	KT_CHAR
+	JNZ	RL_LP		; ignore other keys
+	MOV	A,C
+	CPI	CR
+	JZ	RL_DONE
+	CPI	BS
+	JZ	RL_BS
+	CPI	DEL
+	JZ	RL_BS
+	CPI	' '
+	JC	RL_LP		; control char -> ignore
+	LDA	RLLEN
+	MOV	B,A
+	LDA	RLMAX
+	CMP	B
+	JZ	RL_LP		; full -> ignore
+	LHLD	RLPTR
+	MOV	M,C
+	INX	H
+	SHLD	RLPTR
+	LDA	RLLEN
+	INR	A
+	STA	RLLEN
+	MOV	A,C
+	CALL	OUTCH		; WM CONOUTC: echo it
+	JMP	RL_LP
+RL_BS:				; WM LINEPOP
+	LDA	RLLEN
+	ORA	A
+	JZ	RL_CAN		; vim: BS on an empty line cancels
+	DCR	A
+	STA	RLLEN
+	LHLD	RLPTR
+	DCX	H
+	SHLD	RLPTR
+	CALL	EXRUB		; WM BSCHAR
+	JMP	RL_LP
+RL_ACT:
+	MOV	A,C
+	CPI	ACT_ESC
+	JNZ	RL_LP
+RL_CAN:
+	CALL	SETLIN		; redraw one row; the cancelled line stays, as vim's
+	MVI	A,0FFH		; cancelled
+	RET
+RL_DONE:
+	XRA	A
+	RET
+
+;VC_BZ -- 'Z': pending; ZZ writes a changed text and quits -- vim's ZZ, which
+; is ':x' (so no '!' and no file name: a buffer with none says so).  A count is
+; ignored.  Only a second 'Z' may follow (VICDSP drops any other key, as vim
+; does); 'g' pending drops this one the same way.  DEVIATION: an action key
+; (arrow/PgUp/PgDn -- no vi key of its own) clears the pending 'Z' and runs,
+; where vim would drop it; VIC_ACT clears the pending state before dispatch.
+VC_BZ:
+	CALL	SETMOV
+	LDA	GSAVE
+	CPI	PZ
+	JZ	VZ_ZZ
+	ORA	A
+	RNZ			; 'g' was pending: vim drops both
+	MVI	A,PZ
+	STA	GPEND
+	RET
+VZ_ZZ:
+	MVI	A,EO_X
+	STA	EXOP
+	MVI	A,1
+	STA	EXBANG		; no '!'
+	XRA	A
+	STA	EXARG		; no file name
+	LDA	MODF		; as ':x': a changed text is written first
+	ORA	A
+	JZ	EX_Q
+	JMP	EX_W
+
+;VC_EX -- ':' ex line: a command, an optional '!', an optional file name.
+;   :w [name]   write (the buffer's own file keeps a .BAK, as WM's save does)
+;   :q          quit; a changed text needs '!'
+;   :wq [name]  write, then quit
+;   :x [name]   write only a changed text, then quit
+;   :e [name]   edit that file, or the buffer's own again at the same line;
+;               a changed text needs '!'
+;   :ve         the version, on the bottom row
+; vim, NOT WordMaster: vim's commands and messages (without the Enn number),
+; shown on the bottom row when a command fails.  A buffer without a name (no
+; file on the command line) takes the first name written to (vim's cpo-F);
+; a write to another name leaves the buffer's name and changed flag alone.
+VC_EX:
+	CALL	GETCNT
+	CALL	CLRCNT		; WM KEYESC/CMDSCAN: command line runs forward
+	LXI	D,EXBUF
+	MVI	B,EXMAX
+	MVI	C,':'
+	CALL	RDLINE
+	ORA	A
+	RNZ			; cancelled
+	LDA	RLLEN
+	MOV	E,A
+	MVI	D,0
+	LXI	H,EXBUF
+	DAD	D
+	MVI	M,0		; the line ends with a 0
+	LXI	H,EXBUF
+	CALL	SKIPB
+	RZ			; nothing on it
+	SHLD	EXCMD
+	CALL	EXADDR		; an optional line range first (':%s', ':N,Ms')
+	CALL	SKIPB		; blanks between the range and the command name
+	;--- the command: one or two lower-case letters, looked up in EXTAB ---
+	MOV	D,M
+	INX	H
+	MVI	E,0
+	CALL	ISLOW
+	JC	EX_LK
+	MOV	E,A
+	INX	H
+	CALL	ISLOW
+	JNC	EX_NOT		; a third letter: none of ours
+EX_LK:
+	PUSH	H
+	LXI	H,EXTAB
+EX_TL:
+	MOV	A,M
+	ORA	A
+	JZ	EX_NTP		; not in the table
+	INX	H
+	CMP	D
+	MOV	A,M
+	INX	H
+	JNZ	EX_TN
+	CMP	E
+	JZ	EX_TF
+EX_TN:
+	INX	H
+	JMP	EX_TL
+EX_NTP:
+	POP	H
+EX_NOT:
+	LXI	H,SNOT
+	JMP	EXERT
+EX_TF:
+	MOV	A,M
+	STA	EXOP
+	POP	H
+	CPI	EO_S
+	JZ	EX_S		; ':s' reads the rest of the line itself
+	LDA	SRNGF
+	ORA	A
+	JNZ	EX_NOT		; a range on a command that does not take one
+	;--- '!', then the file name ---
+	MOV	A,M
+	SUI	'!'
+	STA	EXBANG		; 0 = '!'
+	JNZ	EX_NB
+	INX	H
+EX_NB:
+	CALL	SKIPB
+	STA	EXARG		; 0 = no file name
+	JZ	EX_RUN
+	SHLD	EXCMD
+	LDA	EXOP
+	CPI	EO_Q
+	JZ	EX_TRL		; :q takes none
+	CPI	EO_V
+	JZ	EX_TRL		; nor :ve
+	CALL	PARSFN
+	JNZ	EX_INV
+EX_RUN:
+	LDA	EXOP
+	CPI	EO_E
+	JZ	EX_E
+	CPI	EO_Q
+	JZ	EX_Q
+	CPI	EO_V
+	JZ	EX_V
+	CPI	EO_X
+	JNZ	EX_W
+	LDA	MODF		; :x writes only a changed text
+	ORA	A
+	JZ	EX_Q
+EX_W:
+	CALL	WRCHK		; TFCB = the target, A = keep a backup
+	RC			; refused (message shown)
+	STA	EXBAK
+	LDA	EXOP
+	CPI	EO_W
+	JZ	EX_WK
+	LDA	EXBAK
+	ORA	A
+	JNZ	EX_WQ		; the buffer's own file: the quit goes through
+	LDA	EXBANG
+	ORA	A
+	JZ	EX_WQ		; so it does with '!'
+	CALL	EX_WK		; else it may not: keep the text
+	JMP	EX_Q
+;EX_WK -- write, then keep editing where the cursor was.
+EX_WK:
+	CALL	CURRW		; the cursor's row and file position
+	STA	WPROW
+	CALL	CUROFF		; HL = bytes past TXTBEG
+	MOV	A,L
+	ANI	7FH
+	STA	WPBYT
+	MOV	A,L
+	RAL
+	MOV	A,H
+	RAL
+	MOV	E,A
+	MVI	A,0
+	RAL
+	MOV	D,A		; DE = HL / 128
+	LHLD	OUTPOS
+	DAD	D
+	SHLD	WPREC		; its record (OUTPOS = records before TXTBEG)
+	CALL	WRITE
+	CALL	REOPEN		; the file just written, from its start
+	LHLD	WPREC
+	XCHG
+	LDA	WPBYT
+	CALL	SEEKTO		; HL = the old position in the new window
+	CALL	GOTO
+	LXI	H,0
+	SHLD	LNDLT
+	LDA	WPROW
+	MOV	L,A
+	SHLD	WINROW		; the cursor's line back on its row
+	RET
+EX_WQ:
+	CALL	WRITE		; :wq / :x -- nothing to come back to
+EX_Q:
+	LDA	EXBANG
+	ORA	A
+	JZ	EX_QT
+	LDA	MODF
+	ORA	A
+	JNZ	MSGNWR		; changed, no '!': stay
+EX_QT:
+	CALL	DISCRD		; WM EDEND: no work files left behind
+	MVI	A,1
+	STA	QUITF
+	RET
+
+;EX_E -- :e.  The same file comes back at the cursor's line (counted before
+; the text is dropped), another at its first line; either on the middle row,
+; the cursor on the first non-blank, as vim opens a file.
+EX_E:
+	LDA	EXBANG
+	ORA	A
+	JZ	EE_GO
+	LDA	MODF
+	ORA	A
+	JNZ	MSGNWR
+EE_GO:
+	LDA	EXARG
+	ORA	A
+	JNZ	EE_ARG
+	CALL	OWNTF		; no name: the buffer's own
+	RC
+EE_ARG:
+	CALL	ISOWN
+	LXI	H,1
+	JNZ	EE_LD		; another file: its first line
+	CALL	CNTLF		; the line feeds before the cursor
+	INX	H		; HL = the cursor's line
+EE_LD:
+	MVI	A,MW_FIL	; vim names the file ':e' opened, as at startup
+	STA	MSGWHT
+	PUSH	H
+	CALL	DISCRD		; the edit is dropped
+	LXI	H,TFCB
+	LXI	D,FNAME
+	CALL	COPY12		; the buffer's name
+	CALL	SRCTF
+	CALL	REOPEN
+	CALL	MKCLR		; the marks named the buffer that just went
+	XRA	A
+	STA	MODF
+	POP	H
+	DCX	H
+	XRA	A
+	CALL	MVLIND		; down to the line
+	CALL	ATEOF
+	CC	LASTLN		; past the last line: onto it
+	CALL	ZSAVE
+	JMP	GP_MID
+
+;WRCHK -- the target of a write into TFCB: the file name given, else the
+; buffer's own.  A = 1 (keep a backup) when it is the buffer's own file.  CY
+; (message shown) when there is no name, or another file is there and no '!'.
+WRCHK:
+	LDA	EXARG
+	ORA	A
+	JNZ	WC_ARG
+	CALL	OWNTF
+	RC
+	JMP	WC_OWN
+WC_ARG:
+	CALL	ISOWN
+	JZ	WC_OWN
+	LDA	EXBANG
+	ORA	A
+	JZ	WC_OTH
+	CALL	TEXIST
+	JNZ	MSGEXI		; File exists (! to force)
+WC_OTH:
+	XRA	A		; (NC)
+	RET
+WC_OWN:
+	LDA	ROFLAG		; '-R': this is the file it may not write
+	ORA	A
+	JZ	WC_OK
+	LDA	EXBANG
+	ORA	A
+	JNZ	MSGRO		; and no '!' to override it -- vim's E45
+WC_OK:
+	MVI	A,1
+	ORA	A		; (NC)
+	RET
+
+;WRITE -- write the text to TFCB's file (EXBAK: keep a backup).  A buffer
+; without a name takes that one; writing the buffer's own file clears its
+; changed flag.  The file written is where the text is read from next.
+WRITE:
+	LDA	EXBAK
+	CALL	WRTO
+	LDA	FNAME+1
+	CPI	' '
+	JNZ	WR_HAS
+	LXI	H,TFCB
+	LXI	D,FNAME
+	CALL	COPY12
+WR_HAS:
+	MVI	A,MW_WRT	; vim says what it wrote, on the bottom row
+	STA	MSGWHT
+	CALL	ISOWN
+	JNZ	SRCTF
+	XRA	A
+	STA	MODF
+	STA	MSGNEW		; written: the file is not new any more
+;SRCTF -- the source FCB (005CH) = TFCB's name, for REOPEN.
+SRCTF:
+	LXI	H,TFCB
+	LXI	D,DFTFCB
+	CALL	COPY12
+	XRA	A
+	MVI	B,4
+SRC_Z:
+	STAX	D		; extent, s1, s2, record count: 0
+	INX	D
+	DCR	B
+	JNZ	SRC_Z
+	RET
+
+;OWNTF -- TFCB = the buffer's name; CY (No file name shown) if it has none.
+OWNTF:
+	LDA	FNAME+1
+	CPI	' '
+	JZ	MSGNFN
+	CALL	TFCLR
+	LXI	H,FNAME
+	LXI	D,TFCB
+	CALL	COPY12
+	ORA	A		; (NC)
+	RET
+
+;ISOWN -- Z iff TFCB names the buffer's file.
+ISOWN:
+	LXI	H,TFCB
+	LXI	D,FNAME
+	MVI	B,12
+IO_LP:
+	LDAX	D
+	CMP	M
+	RNZ
+	INX	H
+	INX	D
+	DCR	B
+	JNZ	IO_LP
+	RET
+
+;COPY12 -- copy 12 bytes (drive, name, type) from HL to DE.
+COPY12:
+	MVI	B,12
+CP_LP:
+	MOV	A,M
+	STAX	D
+	INX	H
+	INX	D
+	DCR	B
+	JNZ	CP_LP
+	RET
+
+;TFCLR -- zero TFCB.  Keeps HL.
+TFCLR:
+	LXI	D,TFCB
+	MVI	B,36
+	XRA	A
+TC_LP:
+	STAX	D
+	INX	D
+	DCR	B
+	JNZ	TC_LP
+	RET
+
+;FOPEN -- open the file named on the command line: the buffer takes its name
+; (the drive made explicit), then OPENZ.  With no name the buffer is empty
+; and has none, as in vim.
+FOPEN:
+	MVI	A,MW_FIL	; vim names the file it opened, on the bottom row
+	STA	MSGWHT
+	LXI	H,DFTFCB
+	CALL	NRMDRV
+	LXI	D,FNAME
+	CALL	COPY12
+	CALL	OPENZ
+	LDA	FNAME+1		; a buffer with no file at all is not a new file:
+	CPI	' '		;   vim's '"[No Name]"' carries no flag
+	RZ
+	LDA	NEWFIL		; '[New]' is the MESSAGE's flag, taken once here:
+	STA	MSGNEW		;   NEWFIL is the pager's own (SAVEFIL decides
+	RET			;   the .BAK from it), so it is never written to
+
+;============================================================
+; ARGSCN / ARGGO -- the rest of the command line.  The CCP leaves the line at
+; CMDTAIL (a length byte, then the text, upper cased) and its first name parsed
+; into the FCB at 005CH, which is the file FOPEN opens:
+;
+;   VI name +{n}    start on line {n} ('+' alone: the last line)
+;   VI name -R      read only: a write to that file needs ':w!'
+;
+; vim takes both BEFORE the file name; here they come after it, because the CCP
+; parses the first token of the line into the FCB.  '/R' is taken as well, the
+; way CP/M programs are usually given a switch, and the CCP's upper casing
+; makes '-r' the same as '-R'.  Anything else on the line is left alone.
+;
+; ARGSCN must run before any file is read: CMDTAIL is also the default DMA
+; address, so the first sector read would take the line with it.  ARGGO runs
+; after the file is loaded, before the first paint.
+;
+; '+{n}' is not placed by hand: its digits go through the command dispatcher
+; and a 'G' then does the work, so the line lands where vim's own '+{n}' puts
+; it -- the minimum scroll near the top of the file, centred when it is far
+; off, on the line's first non-blank (accept_vi.py's VIM_PLUS records both, on
+; 8 files).  The count machinery's clamp and saturation come with it: '+99999'
+; is the last line, as vim's is.
+;============================================================
+ARGSCN:
+	LDA	CMDTAIL
+	MOV	B,A		; B = what is left of the line
+	ORA	A
+	RZ
+	LXI	H,CMDTAIL+1
+AS_TOK:				; at a token, or the blanks before one
+	MOV	A,M
+	CPI	' '
+	JNZ	AS_OPT
+	INX	H
+	DCR	B
+	JNZ	AS_TOK
+	RET
+AS_OPT:
+	CPI	'+'
+	JZ	AS_PLS
+	CPI	'-'
+	JZ	AS_SW
+	CPI	'/'
+	JZ	AS_SW
+AS_SKP:				; not ours (the file name): on to the next one
+	INX	H
+	DCR	B
+	RZ
+	MOV	A,M
+	CPI	' '
+	JNZ	AS_SKP
+	JMP	AS_TOK
+AS_SW:
+	INX	H
+	DCR	B
+	RZ
+	MOV	A,M
+	ANI	5FH		; 'r' and 'R' alike
+	CPI	'R'
+	JNZ	AS_SKP
+	STA	ROFLAG		; A = 'R': not 0, which is all WC_OWN asks
+	JMP	AS_SKP
+AS_PLS:
+	MVI	A,1
+	STA	PLUSF		; '+' gets the line even with no number on it
+	LXI	D,PLUSB
+	MVI	C,5		; room for 65535; a longer number is past the
+	INX	H		;   line space, so it is taken as '+' alone
+	DCR	B
+	JZ	AS_PE
+	MOV	A,M
+	CPI	'0'
+	JNZ	AS_PD
+AS_PZ:				; leading zeros: '+0' is line 1 (not the '0'
+	INX	H		;   motion the dispatcher would see), '+007' 7
+	DCR	B
+	JZ	AS_P1
+	MOV	A,M
+	CPI	'0'
+	JZ	AS_PZ
+	CPI	'1'
+	JC	AS_P1		; zeros and then no digit at all: line 1
+	CPI	'9'+1
+	JNC	AS_P1
+AS_PD:				; the digits, as typed
+	MOV	A,M
+	CPI	'0'
+	JC	AS_PE
+	CPI	'9'+1
+	JNC	AS_PE
+	MOV	A,C
+	ORA	A
+	JZ	AS_POV
+	DCR	C
+	MOV	A,M
+	STAX	D
+	INX	D
+	INX	H
+	DCR	B
+	JNZ	AS_PD
+AS_PE:
+	XRA	A
+	STAX	D		; the digits end with a 0
+	MOV	A,B
+	ORA	A
+	RZ
+	JMP	AS_TOK		; what stopped the digits is where the next
+				;   token starts -- NOT AS_SKP, which would
+				;   take a '-R' after them for a file name
+AS_P1:
+	MVI	A,'1'
+	STAX	D
+	INX	D
+	JMP	AS_PE
+AS_POV:				; past the 16-bit line space: '+' alone, whose
+	LXI	D,PLUSB		;   last line is the answer vim's clamp gives
+	JMP	AS_PE
+
+;ARGGO -- '+{n}' on the line: its digits through the dispatcher, then a 'G'.
+; The digits leave R_MOVE behind them (a count paints nothing), but every 'G'
+; placement ends at GP_SET, which forces R_FULL -- so the first paint is still
+; the full one it has to be.
+ARGGO:
+	LDA	PLUSF
+	ORA	A
+	RZ
+	LXI	H,PLUSB
+AG_LP:
+	MOV	A,M
+	ORA	A
+	JZ	AG_G
+	MOV	C,A
+	MVI	B,KT_CHAR
+	PUSH	H
+	CALL	VICMD
+	POP	H
+	INX	H
+	JMP	AG_LP
+AG_G:
+	MVI	C,'G'
+	MVI	B,KT_CHAR
+	JMP	VICMD
+
+;NRMDRV -- HL = an FCB: a drive byte of 0 becomes the current drive's, so
+; names compare byte for byte.  Keeps HL.
+NRMDRV:
+	MOV	A,M
+	ORA	A
+	RNZ
+	PUSH	H
+	MVI	C,BF_CURDSK
+	CALL	BDOS
+	POP	H
+	INR	A
+	MOV	M,A
+	RET
+
+;PARSFN -- HL = [d:]name[.typ], then blanks to the end of the line -> TFCB,
+; the drive made explicit.  NZ if it is not a file name.  WM GETFCB (WM 1379):
+; upper case, the name cut to 8 chars and the type to 3.  vim, NOT WordMaster:
+; no default type (WM's is LIB), and the drive must be A-P.
+PARSFN:
+	CALL	TFCLR
+	LXI	D,TFCB
+	INX	H
+	MOV	A,M
+	DCX	H
+	CPI	':'
+	JNZ	PF_NM
+	CALL	GETFNC
+	JZ	PF_NM
+	SUI	40H
+	STAX	D
+	CPI	17
+	JNC	PF_BAD
+	INX	H
+PF_NM:
+	INX	D
+	MVI	C,8
+	CALL	CPYNAM
+	CPI	'.'
+	MVI	C,3
+	CNZ	PADFLD		; no type: blanks
+	CZ	CPYNM0		; '.': the type
+	LDA	TFCB+1
+	CPI	' '
+	JZ	PF_BAD		; no name
+	CALL	SKIPB
+	RNZ			; more after it
+	LXI	H,TFCB
+	CALL	NRMDRV
+	XRA	A
+	RET
+PF_BAD:
+	ORI	1
+	RET
+
+;CPYNAM -- WM CPYNAME (WM 1590): copy up to C name chars from HL to DE, pad
+; with blanks, skip the rest of the field.  CPYNM0 steps over the '.' first.
+CPYNM0:
+	INX	H
+CPYNAM:
+	CALL	GETFNC
+	JZ	PADFLD
+	STAX	D
+	INX	D
+	DCR	C
+	JNZ	CPYNAM
+CN_SKP:
+	CALL	GETFNC
+	JNZ	CN_SKP
+	RET
+PADFLD:
+	PUSH	PSW
+PD_LP:
+	MVI	A,' '
+	STAX	D
+	INX	D
+	DCR	C
+	JNZ	PD_LP
+	POP	PSW
+	RET
+
+;GETFNC -- WM GETFNC: the next name char, upper case, HL past it; Z (HL kept)
+; at a delimiter: . : * ? blank or a control char, and (NOT WordMaster) the
+; CCP's = _ ; < > so no name is made that the CCP cannot type.
+GETFNC:
+	MOV	A,M
+	CPI	'='
+	RZ
+	CPI	'_'
+	RZ
+	CPI	';'
+	RZ
+	CPI	'<'
+	RZ
+	CPI	'>'
+	RZ
+	CPI	'.'
+	RZ
+	CPI	':'
+	RZ
+	CPI	'*'
+	RZ
+	CPI	'?'
+	RZ
+	CPI	' '
+	JC	GF_CTL
+	RZ
+	INX	H
+	CPI	'a'
+	JC	GF_DN
+	CPI	'z'+1
+	JNC	GF_DN
+	ANI	0DFH
+GF_DN:
+	ORA	A
+	RET
+GF_CTL:
+	CMP	A
+	RET
+
+;SKIPB -- HL past blanks; A = the char there, Z at the end of the line.
+SKIPB:
+	MOV	A,M
+	CPI	' '
+	JNZ	SB_DN
+	INX	H
+	JMP	SKIPB
+SB_DN:
+	ORA	A
+	RET
+
+;ISLOW -- A = the char at HL; NC iff a-z.
+ISLOW:
+	MOV	A,M
+	CPI	'a'
+	RC
+	CPI	'z'+1
+	CMC
+	RET
+
+;--- ex messages (vim's, without the Enn number) ---
+MSGNFN:
+	LXI	H,SNFN
+	JMP	EXERR
+MSGEXI:
+	LXI	H,SEXI
+	JMP	EXBNG
+MSGRO:
+	LXI	H,SRO
+	JMP	EXBNG
+MSGNWR:
+	LXI	H,SNWR
+EXBNG:
+	CALL	EXERR
+	LXI	H,SBNG
+	JMP	EXOUT
+EX_INV:
+	LXI	H,SINV
+	JMP	EXERR
+EX_V:				; :ve -- the version, on the bottom row
+	LXI	H,SVER
+	JMP	EXERR
+EX_TRL:
+	LXI	H,STRL
+EXERT:				; the message, then the text at EXCMD
+	CALL	EXERR
+	LHLD	EXCMD
+EXOUT:
+	CALL	OUTSTR
+	STC
+	RET
+;EXERR -- HL = a message for the bottom row; it stays there (only the cursor
+; goes back), CY.
+EXERR:
+	PUSH	H
+	XRA	A		; an error outranks whatever this key meant to
+	STA	MSGWHT		;   say: ':wq NAME' writes, then refuses to quit
+	POP	H
+	CALL	EXMSG
+	MVI	A,R_MOVE
+	STA	RINTENT
+	STC
+	RET
+
+SVER:	DB	'V1.0',0
+SNFN:	DB	'No file name',0
+SNWR:	DB	'File changed',0
+SEXI:	DB	'File exists',0
+SRO:	DB	'''-R'' is set',0
+SBNG:	DB	' (! to force)',0
+SINV:	DB	'Invalid file name',0
+STRL:	DB	'Trailing chars: ',0
+SNOT:	DB	'Invalid command: ',0
+SNOTFD: DB	'Pattern not found: ',0
+SNOPAT: DB	'No previous search pattern',0
+SUNDW:	DB	'Cannot undo: change has paged out',0
+SUNDB:	DB	'Too large to undo',0
+SNONM:	DB	'[No Name]',0
+SMODM:	DB	'[Modified]',0
+SROM:	DB	'[readonly]',0
+SNEWM:	DB	'[New]',0
+SLINE:	DB	' line ',0
+SCOLM:	DB	' col ',0
+SNOLIN: DB	' --Buffer empty--',0
+SWRIT:	DB	' written',0
+
+;EXTAB -- the ex commands: DB first letter, second letter (0: none), EXOP.
+EO_W	EQU	1
+EO_Q	EQU	2
+EO_WQ	EQU	3
+EO_X	EQU	4
+EO_E	EQU	5
+EO_S	EQU	6
+EO_V	EQU	7
+EXTAB:
+	DB	'w',0,EO_W
+	DB	'q',0,EO_Q
+	DB	'w','q',EO_WQ
+	DB	'x',0,EO_X
+	DB	'e',0,EO_E
+	DB	's',0,EO_S
+	DB	'v','e',EO_V
+	DB	0
+
+;============================================================
+; SEARCH  (/ ? n N)
+;
+; vi's search on WordMaster's matcher.  What it is NOT: vim searches with a
+; REGULAR EXPRESSION and this searches for the literal string typed.  An 8080
+; has no room for a regex engine; COMMANDS.md records the deviation.  (WM's own
+; search wildcards -- ^A any, ^S separator, ^O not -- still reach WCMATCH from
+; here, because MATCHF/MATCHB compare through it, but they are WordMaster's
+; syntax, not vim's, and nothing advertises them.)
+;
+; Recorded from vim before any of this was written (VIM_SRCH, accept_vi.py):
+;   - '/' starts one character PAST the cursor and lands ON the match's first
+;     character; '?' finds the last match that ends before the cursor.
+;   - 'wrapscan' is on: a search that runs off one end of the file starts
+;     again at the other, so '/' on the file's ONLY match finds it again.
+;   - 'n' repeats the last search's DIRECTION and 'N' reverses it, so 'n'
+;     after a '?' keeps going backward.
+;   - An empty pattern ('/' then <CR>) repeats the last pattern.
+;   - A count repeats the search: '2/a' is the second match, '15n' fifteen
+;     n's.  Not found leaves the cursor exactly where it was, at any count.
+;   - The window is placed as 'G' places it -- least scroll when the match is
+;     near, centred when it is far -- which is why this ends in GPLACE.
+;
+; This replaces a byte-at-a-time search that ran through CHARAT over logical
+; offsets: it could only see the resident window (so a match further into a
+; paged file did not exist), had no '?' or 'N', and failed silently.
+;============================================================
+
+;============================================================
+; SUBSTITUTE  (:s  :%s  :N,Ms  and the 'g' flag)
+;
+; vi's substitute on WordMaster's matcher, so it finds the same LITERAL string
+; the search does -- not a regular expression.  COMMANDS.md records that
+; deviation for '/' and it is the same one here, which is why nothing below
+; honours '&', '\1' or '~'.  The pattern goes into the SEARCH's own buffer
+; because vim's ':s' also sets the last search pattern, so 'n' afterwards
+; repeats it.
+;
+; Recorded from vim before any of this was written (VIM_SUBST, accept_vi.py):
+;   - ':s' changes the FIRST match on the cursor's line, ':s...g' every match,
+;     and the scan goes on PAST the replacement, so a replacement that
+;     contains the pattern is not substituted again.
+;   - the cursor lands on the first non-blank of the LAST line changed, placed
+;     exactly as 'G' places a line -- which is what GZONE before and GPLACE
+;     after are for, and it is measured: ':12800,12800s' leaves the last line
+;     on row 22 (top 012778) and ':100,105s' leaves line 105 on row 11.
+;   - a pattern that is nowhere in the range changes nothing and moves nothing.
+;
+; A whole substitute is ONE change for 'u': the second UNDBEG, at the first
+; match, is what makes the undo's cursor the first match (where vim leaves it)
+; rather than the line the ':' was typed on.  A substitute of more than about a
+; dozen lines overruns the undo region, which is accepted -- but it SAYS so,
+; both when it happens and when 'u' is then pressed.
+;============================================================
+
+;EXADDR -- the optional line range before an ex command: '%' (the whole file),
+;'N', or 'N,M'.  SRNGF = 0 when there is none, and SRNG2 = 0FFFFH is the last
+;line, whatever it turns out to be.  HL comes back on the command letter.
+;
+; It does NOT consume the blanks after itself: VC_EX's SKIPB does that, so
+; ':2,4 s/a/Z/' reads as ':2,4s/a/Z/' the way ex has always taken it.  The one
+; place a blank is still refused is INSIDE the range, around the comma
+; (':2, 4s'), which ex accepts and this does not -- the comma is read here off
+; DE mid-number and skipping there costs more than the position is worth.
+EXADDR:
+	XRA	A
+	STA	SRNGF
+	MOV	A,M
+	CPI	'%'
+	JZ	EXA_AL
+	XCHG			; DE walks the line, HL takes the number
+	CALL	EXNUM
+	JC	EXA_NO
+	SHLD	SRNG1
+	SHLD	SRNG2		; 'N' alone is the single line 'N,N'
+	LDAX	D
+	CPI	','
+	JNZ	EXA_YS
+	INX	D
+	CALL	EXNUM
+	JC	EXA_NO		; ',' with no number: not a range at all
+	SHLD	SRNG2
+EXA_YS:
+	XCHG
+	MVI	A,1
+	STA	SRNGF
+	RET
+EXA_NO:
+	XCHG
+	RET
+EXA_AL:
+	INX	H
+	PUSH	H
+	LXI	H,1
+	SHLD	SRNG1
+	LXI	H,0FFFFH
+	SHLD	SRNG2
+	POP	H
+	MVI	A,1
+	STA	SRNGF
+	RET
+
+;EXNUM -- a decimal number at DE -> HL, DE left past it.  CY when there is no
+;digit there at all.
+EXNUM:
+	LDAX	D
+	SUI	'0'
+	RC
+	CPI	10
+	CMC
+	RC
+	LXI	H,0
+EXN_LP:
+	LDAX	D
+	SUI	'0'
+	JC	EXN_DN
+	CPI	10
+	JNC	EXN_DN
+	INX	D
+	PUSH	B
+	MOV	C,A
+	MVI	B,0		; BC = the digit
+	PUSH	D
+	MOV	D,H
+	MOV	E,L
+	DAD	H		; *2
+	DAD	H		; *4
+	DAD	D		; *5
+	DAD	H		; *10
+	POP	D
+	DAD	B
+	POP	B
+	JMP	EXN_LP
+EXN_DN:
+	ORA	A		; CY clear: there was a number
+	RET
+
+;EX_S -- ':s': the delimiter, the pattern, the replacement, an optional 'g'.
+EX_S:
+	MOV	A,M
+	ORA	A
+	JZ	SUBNOP		; ':s' alone -- repeating the last one is not
+				;   built (COMMANDS.md)
+	STA	SDELIM
+	INX	H
+	LXI	D,SRCHST
+	LDA	SRCMAX		; the pattern's capacity is BUF.MAC's to state
+	MOV	C,A
+	CALL	SCOPY
+	MOV	A,B
+	ORA	A
+	JZ	SUBNOP		; ':s//x/' -- an empty pattern matches nothing
+	STA	SRCHBF		; WM's RDSTR layout: the length below the string
+	MVI	A,1
+	STA	SHAVE		; 'n' repeats it, as after a '/'
+	LXI	D,SREPL
+	MVI	C,SREPMX
+	CALL	SCOPY
+	MOV	A,B
+	STA	SREPLN
+	XRA	A
+	STA	SGFLAG
+	MOV	A,M
+	CPI	'g'
+	JNZ	EX_SG
+	INX	H
+	MVI	A,1
+	STA	SGFLAG
+EX_SG:
+	MOV	A,M
+	ORA	A
+	JNZ	EX_TRL		; 'Trailing chars: ' -- vim's, shortened
+	JMP	SUBGO
+SUBNOP:
+	LXI	H,SNOPAT
+	JMP	EXERR
+
+;SCOPY -- the text at HL up to SDELIM (or the line's end) into [DE], C its
+;capacity: B = how many were taken, HL past the delimiter, and [DE] is left
+;0-terminated as WM's RDSTR leaves a string.
+SCOPY:
+	MVI	B,0
+SCP_LP:
+	MOV	A,B
+	CMP	C
+	JNC	SCP_DN		; full: what is left stays on the line, and so
+				;   comes back as trailing characters
+	MOV	A,M
+	ORA	A
+	JZ	SCP_DN		; the line ended: no closing delimiter wanted
+	PUSH	H
+	LXI	H,SDELIM
+	CMP	M
+	POP	H
+	JZ	SCP_SK
+	STAX	D
+	INX	D
+	INX	H
+	INR	B
+	JMP	SCP_LP
+SCP_SK:
+	INX	H
+SCP_DN:
+	XRA	A
+	STAX	D
+	RET
+
+;SUBGO -- run the substitute.  GZONE comes first, before anything moves: the
+;landing is placed as 'G' places a line, and GPLACE measures it against the
+;screen's top line as it was when the command was typed.
+SUBGO:
+	CALL	GZONE
+	LHLD	LNDLT
+	SHLD	SLDLTS		; the walk moves the cursor; a substitute that
+	CALL	CUROFF		;   finds nothing puts both back, as the
+	SHLD	SOFFS		;   search's SN_BAD does
+	XRA	A
+	STA	SANY
+	LXI	H,0
+	SHLD	SBACK
+	LDA	SRNGF
+	ORA	A
+	JZ	SUB_1L
+	;--- ':N,Ms' / ':%s': to the range's first line, then walk it ---
+	LHLD	SRNG1
+	MOV	A,H
+	ORA	L
+	JZ	SUBBAD		; ':0s' -- there is no line 0
+	LHLD	SRNG2
+	XCHG
+	LHLD	SRNG1
+	CALL	CMP16		; CY iff SRNG2 < SRNG1
+	JC	SUBBAD		; backwards: vim offers to swap, this refuses
+	XCHG			; HL = the last line, DE = the first
+	CALL	SUBHD
+	INX	H		; HL = the lines in the range
+	SHLD	SLINES
+	LHLD	SRNG1
+	CALL	GOLN
+	JMP	SUBLP
+SUB_1L:
+	LXI	H,1
+	SHLD	SLINES
+SUBLP:
+	CALL	SUBLIN		; A = 1 when this line changed
+	ORA	A
+	JZ	SUB_NX
+	MVI	A,1
+	STA	SANY
+	LXI	H,0
+	SHLD	SBACK		; the cursor is ON the last line changed
+SUB_NX:
+	LHLD	SLINES
+	DCX	H
+	SHLD	SLINES
+	MOV	A,H
+	ORA	L
+	JZ	SUBDON		; the range is spent
+	LXI	H,1
+	XRA	A
+	CALL	MVLIND		; the next line, paging with it
+	LDA	SANY
+	ORA	A
+	JZ	SUB_AE		; nothing changed yet: nothing to count from
+	LHLD	SBACK
+	INX	H
+	SHLD	SBACK		; every step taken after the last change has
+				;   to be walked back at the end -- including
+				;   this one, when it lands past the last line
+SUB_AE:
+	CALL	ATEOF
+	JNC	SUBLP		; ... unless that ran off the end of the file
+SUBDON:
+	CALL	CLRCNT		; the walk left the count and direction set
+	LDA	SANY
+	ORA	A
+	JZ	SUBNFD
+	MVI	A,1
+	STA	MODF		; the text changed, so ':w' has work to do.  NOT
+				;   MARKMOD: that also sets DOTCHG, and '.' does
+				;   not repeat a substitute in vim either (that
+				;   is '&', which is not built)
+	LHLD	SBACK
+	MOV	A,H
+	ORA	L
+	JZ	SUB_PL
+	MVI	A,0FFH
+	CALL	MVLIND		; back to the last line changed
+	CALL	CLRCNT
+SUB_PL:
+	CALL	GPLACE		; the landing: first non-blank, placed as 'G'
+	JMP	SETFUL		; GPLACE asks for R_MOVE when the target is
+				;   which rewrote the line under the cursor.
+				; And that repaint is why a substitute too big
+				;   for the undo does NOT say so here: EXMSG
+				;   draws the bottom row there and then, and
+				;   the full paint this needs takes the status
+				;   row back (SCRN.MAC says so itself).  'u'
+				;   carries the message instead -- UNDWHY = 2,
+				;   at the moment the reader asks for the undo
+				;   and can still act on the answer.
+SUBNFD:
+	LHLD	SOFFS
+	CALL	GOTO
+	LHLD	SLDLTS
+	SHLD	LNDLT		; nothing changed: the row the cursor was on
+	LXI	H,SNOTFD
+	CALL	EXERR
+	LXI	H,SRCHST
+	JMP	EXOUT		; 'Pattern not found: ' and the pattern
+SUBBAD:
+	LXI	H,SNOT
+	JMP	EXERT
+
+;SUBLIN -- the substitute on the cursor's line: the first match, or every match
+;when 'g' was given.  A = 1 when the line changed.  The cursor is left at the
+;line's start either way, so the walk to the next line always starts from one.
+;Every offset is re-derived from the cursor after each change, never held
+;across one: an insert can page (':%s/0/ZZ/' grows a 100 K file by 12800
+;bytes) and paging shifts every logical offset in the window.
+SUBLIN:
+	XRA	A
+	STA	SLCHG
+	CALL	SUBBOL
+	CALL	RGET0		; the line has to be RESIDENT before CEND can
+SUBL_R:				;   find its end: the pager keeps the CURSOR in
+	CALL	RGET		;   the window, not the whole line it sits on,
+	JC	SUBL_L		;   and EOLNL only ever scans resident text --
+	CPI	LF		;   so a line straddling the resident end came
+	JNZ	SUBL_R		;   out short and went unsubstituted (line 179
+				;   of the 66 K indented file, which starts at
+				;   byte 2047).  RGET pages through NEEDIN, as
+				;   every other line reader here does.
+SUBL_L:
+	;--- the scan window: the cursor to the line's content end ---
+	CALL	CUROFF
+	PUSH	H
+	CALL	CEND
+	POP	D
+	CALL	SUBHD		; HL = the bytes left on the line
+	INX	H		; FWDCNT's own arithmetic, inline: the span it
+	CALL	SUBLEN		;   would measure, plus one, less the pattern.
+	MOV	A,H		;   (FWDCNT needs a real pointer pair and this
+	ORA	A		;   span is a line, not a pair.)
+	JM	SUBL_D		; what is left is shorter than the pattern
+	MOV	B,H
+	MOV	C,L		; BC = the start positions a match can take
+	LXI	D,SRCHST
+	LHLD	GAPEND		; with the gap at the cursor, the line runs
+	CALL	MATCHF		;   forward from GAPEND
+	JC	SUBL_D
+	CALL	SUBLEN		; MATCHF ends past the match; back to its start
+	XCHG
+	LHLD	GAPEND
+	XCHG
+	CALL	SUBHD		; HL = how far into the scan the match is
+	XCHG
+	PUSH	D		; CUROFF does NOT keep DE (it reads TXTBEG into
+	CALL	CUROFF		;   it), so the delta goes on the stack
+	POP	D
+	DAD	D		; ... and so the match's logical offset
+	CALL	GOTO
+	;--- the first change of the whole substitute re-arms the undo, so 'u'
+	;    lands on the first match, which is where vim leaves it ---
+	LDA	SANY
+	ORA	A
+	JNZ	SUBL_C
+	LDA	SLCHG
+	ORA	A
+	JNZ	SUBL_C
+	CALL	UNDHER		; the cursor snapshot only: UNDBEG would re-run
+				;   UNDGRW mid-command, and growing the region
+				;   where a primitive can see it corrupts the
+				;   gap ('COPY ERR')
+SUBL_C:
+	LDA	SRCHBF
+	MOV	L,A
+	MVI	H,0
+	CALL	DELFWD		; the match goes
+	LXI	D,SREPLN	; ... and the replacement takes its place, the
+	CALL	INSSTR		;   way WM splices one: the length byte with
+				;   its string above it, 'u' capture included
+SUBL_I:
+	MVI	A,1
+	STA	SLCHG
+	LDA	SGFLAG
+	ORA	A
+	JNZ	SUBL_L		; 'g': on from PAST the replacement
+SUBL_D:
+	CALL	SUBBOL
+	LDA	SLCHG
+	RET
+
+;SUBBOL -- the cursor to the start of the line it is on.
+SUBBOL:
+	CALL	CUROFF
+	CALL	BOL
+	JMP	GOTO
+
+;VC_SRCH -- '/' and '?': read the pattern, then search.  C is the key, which
+; is both the prompt character and the direction.
+VC_SRCH:
+	CALL	SETMOV
+	PUSH	B
+	CALL	GETCNT
+	SHLD	SCNT
+	POP	B
+	MOV	A,C
+	CPI	'/'
+	MVI	A,0
+	JZ	VS_DIR
+	MVI	A,0FFH		; '?' -- backward
+VS_DIR:
+	STA	SDIR
+	LXI	D,SRCHST	; the line is read straight into the pattern
+	LDA	SRCMAX		; its capacity is BUF.MAC's to state
+	MOV	B,A
+	CALL	RDLINE
+	ORA	A
+	RNZ			; cancelled: nothing happens at all
+	LDA	RLLEN
+	ORA	A
+	JZ	VS_OLD		; an empty line repeats the last pattern --
+				;   RDLINE stored nothing, so it is still there
+	MOV	E,A
+	MVI	D,0
+	LXI	H,SRCHST
+	DAD	D
+	MVI	M,0		; 0-terminated, and the length below it:
+	MOV	A,E
+	STA	SRCHBF		;   WM's RDSTR layout, built by hand
+	MVI	A,1
+	STA	SHAVE
+VS_OLD:
+	LDA	SHAVE
+	ORA	A
+	JZ	VS_NOP		; '/' <CR> with nothing ever searched for
+	LDA	SDIR
+	STA	SDIRE
+	JMP	SRCHN
+VS_NOP:
+	LXI	H,SNOPAT
+	JMP	EXERR
+
+;VC_N / VCB_N -- 'n' repeats the last search, 'N' reverses its direction.
+VC_N:
+	CALL	SETMOV
+	LDA	SDIR
+	JMP	VN_GO
+VCB_N:
+	CALL	SETMOV
+	LDA	SDIR
+	CMA			; the other way: 0 <-> FFH
+VN_GO:
+	STA	SDIRE
+	CALL	GETCNT
+	SHLD	SCNT
+	LDA	SHAVE
+	ORA	A
+	JZ	VS_NOP
+	JMP	SRCHN
+
+;SRCHN -- the count, one whole-file search each.  Not found at ANY repeat
+; leaves the cursor where the command started, as vim does, and says so; the
+; message wants the screen left alone, which is what EXERR's R_MOVE is for.
+SRCHN:
+	CALL	GZONE		; the screen's top line, before the cursor moves
+	LHLD	LNDLT
+	SHLD	SLDLT		; the sweep moves the cursor with PUTCUR, which
+				;   does not maintain LNDLT (GOTO does)
+	CALL	CUROFF
+	SHLD	SOFF
+SN_LP:
+	CALL	SRCHGO
+	JC	SN_BAD
+	LHLD	SCNT
+	DCX	H
+	SHLD	SCNT
+	MOV	A,H
+	ORA	L
+	JNZ	SN_LP
+	CALL	CLRCNT		; the sweep left CMDCNT wide open (and DIRFLG
+				;   backward): WM clears both per command
+	MVI	A,1
+	STA	GPKEEP		; land on the match, not the first non-blank
+	JMP	GPLACE		; (which sets LNDLT itself)
+SN_BAD:
+	CALL	CLRCNT
+	LHLD	SOFF
+	CALL	GOTO
+	LHLD	SLDLT
+	SHLD	LNDLT		; nothing moved: the row the cursor was on
+	LXI	H,SNOTFD
+	CALL	EXERR
+	LXI	H,SRCHST
+	JMP	EXOUT		; 'Pattern not found: ' and the pattern
+
+;SRCHGO -- one search of the whole file, wrapping once: from the cursor to the
+; end in SDIRE's direction, then from the other end back to it.  CY = the
+; pattern is nowhere in the file (and the cursor is left at an end of it --
+; SRCHN is what puts it back).
+SRCHGO:
+	MVI	A,1
+	STA	SSKIP		; this pass starts one past the cursor
+	CALL	SRCHW
+	RNC
+	LDA	SDIRE
+	CMA
+	CALL	MVLMAX		; to the end the wrapped pass starts from
+	XRA	A
+	STA	SSKIP		; ... but the wrapped pass starts AT it, or a
+				;   match on the file's very first character
+				;   would be stepped over and never found
+	JMP	SRCHW
+
+;SRCHW -- WM FINDA (WM 1943): the file from the cursor on, one resident
+; window at a time.  A miss moves the cursor to that window's edge and pages
+; one step (SCRLST), so the search runs off the window and through the file;
+; CY when the file runs out.  PAGESTP only pages while the count is unspent,
+; so the sweep opens CMDCNT wide, as MVLMAX does.  WM's FINDA then puts the
+; cursor exactly at the file's end (WM 1949); nothing here needs that -- the
+; caller either wraps to the other end or restores the cursor outright.
+SRCHW:
+	LDA	SDIRE
+	STA	DIRFLG
+	LXI	H,0FFFFH
+	SHLD	CMDCNT
+	XRA	A
+	STA	AUXCNT
+SW_LP:
+	CALL	SRCH1
+	RNC
+	CALL	SCRLST
+	JNC	SW_LP
+	STC
+	RET
+
+;SRCH1 -- WM FINDB (WM 1984) without its RDSTR: one search inside the
+; resident window, DIRFLG picking the direction.  CY = not in this window; on
+; a hit the cursor is ON the match's first character.
+SRCH1:
+	LXI	D,SRCHST
+	LDA	DIRFLG
+	ORA	A
+	JM	SR1_BK
+	LXI	H,GAPEND
+	CALL	FWDCNT
+	LHLD	GAPEND		; WM loads the pointer BEFORE testing the
+	RC			;   carry: a miss still has to leave HL a
+				;   real text address, because SCRLST puts
+				;   the cursor there on the way to paging
+	LDA	SSKIP
+	ORA	A
+	JZ	SR1_FW
+	MOV	A,B
+	ORA	C
+	STC
+	RZ			; no room for a match even before the skip
+	DCX	B		; vim's '/' starts one character PAST the
+	INX	H		;   cursor, so the character under it can
+				;   never be the one that matches
+SR1_FW:
+	CALL	MATCHF
+	RC
+	CALL	SUBLEN		; MATCHF ends PAST the match; vi lands on it
+	JMP	PUTCUR
+SR1_BK:
+	LXI	H,TXTBEG
+	CALL	FWDCNT
+	LHLD	GAPBEG		; (as above: the pointer, then the carry)
+	RC
+	CALL	SUBLEN		; MATCHB already lands on the first character
+	CALL	MATCHB
+	RC
+	JMP	PUTCUR
+
+;============================================================
+; QSNAP -- snapshot cursor state into TOFFV/TLINEV/TCOLV (test hook).
+;============================================================
+QSNAP:
+	CALL	CUROFF
+	SHLD	TOFFV
+	LXI	H,0
+	SHLD	TLINEV
+	LXI	H,0
+	SHLD	WKI
+QS_LP:
+	LHLD	WKI
+	XCHG			; DE = i
+	LHLD	TOFFV
+	CALL	CMP16		; DE=i vs HL=cur: CY iff i < cur
+	JNC	QS_COL
+	LHLD	WKI
+	CALL	CHARAT
+	CPI	LF
+	JNZ	QS_NX
+	LHLD	TLINEV
+	INX	H
+	SHLD	TLINEV
+QS_NX:
+	LHLD	WKI
+	INX	H
+	SHLD	WKI
+	JMP	QS_LP
+QS_COL:
+	LHLD	TOFFV
+	CALL	COL
+	SHLD	TCOLV
+	RET
+
+;============================================================
+; DISPATCH TABLES -- the messages first, then CMDTAB and ACTTAB.
+;============================================================
+;============================================================
+; MESSAGES -- the bottom row is vim's message line: blank unless something has
+; been said on it.  A message is built by successive calls -- EXPRM first, which
+; clears the row, then the pieces straight to the terminal.  There is no
+; concatenation buffer and none is wanted: the pieces are a name, a flag and a
+; number, and each knows how to write itself.
+;
+; Every message is drawn AFTER the frame (MSGPST, from the main loop), because
+; a full repaint blanks the bottom row -- so a message written during the
+; command would be wiped by the repaint that same key causes.
+;============================================================
+
+;MSGNAM -- open the row and write the file name at HL (a 12-byte FCB field:
+; drive, 8 name, 3 type) in quotes, the way vim opens a message: "TEST.TXT".
+; A blank name field is vim's "[No Name]".  vim writes a path relative to the
+; current directory -- a file in it bare, "../x/VI.MAC" otherwise -- and the
+; logged drive is CP/M's current directory, so the drive is written only when
+; it is another one: "B:TEST.TXT".
+MSGNAM:
+	PUSH	H
+	MVI	A,'"'
+	CALL	EXPRM		; clears the row, writes the opening quote
+	POP	H
+	PUSH	H		; keep the base: the type field is 9 past it
+	INX	H
+	MOV	A,M
+	CPI	' '
+	JNZ	MN_HAS
+	LXI	H,SNONM
+	CALL	OUTSTR
+	POP	H
+	JMP	MN_END
+MN_HAS:
+	MVI	C,BF_CURDSK
+	CALL	BDOS		; A = the logged drive, A: = 0
+	POP	H
+	PUSH	H
+	INR	A		; the FCB's drive byte is explicit, A: = 1
+	CMP	M
+	JZ	MN_NAM
+	MOV	A,M
+	ADI	'A'-1
+	CALL	OUTCH
+	MVI	A,':'
+	CALL	OUTCH
+MN_NAM:
+	POP	H
+	PUSH	H
+	INX	H
+	MVI	C,8
+MN_NM:
+	MOV	A,M
+	CPI	' '
+	JZ	MN_EXT
+	CALL	OUTCH
+	INX	H
+	DCR	C
+	JNZ	MN_NM
+MN_EXT:
+	POP	H
+	LXI	D,9
+	DAD	D		; the type field
+	MOV	A,M
+	CPI	' '
+	JZ	MN_END
+	MVI	A,'.'
+	CALL	OUTCH
+	MVI	C,3
+MN_XL:
+	MOV	A,M
+	CPI	' '
+	JZ	MN_END
+	CALL	OUTCH
+	INX	H
+	DCR	C
+	JNZ	MN_XL
+MN_END:
+	MVI	A,'"'
+	JMP	OUTCH
+
+;MSGFLG -- the flags after the name, in vim's order and with vim's spelling:
+; [Modified][readonly][New], run together with ONE space before the first of
+; them (measured from vim 9.1).  A = 0 leaves [Modified] out, which is the load
+; message, where nothing has been changed yet.
+MSGFLG:
+	MVI	B,0		; B: a flag has been written (the space goes once)
+	ORA	A
+	JZ	MF_RO
+	LDA	MODF
+	ORA	A
+	JZ	MF_RO
+	LXI	H,SMODM
+	CALL	MF_PUT
+MF_RO:
+	LDA	ROFLAG
+	ORA	A
+	JZ	MF_NEW
+	LXI	H,SROM
+	CALL	MF_PUT
+MF_NEW:
+	LDA	MSGNEW
+	ORA	A
+	RZ
+	LXI	H,SNEWM
+MF_PUT:
+	MOV	A,B
+	ORA	A
+	JNZ	MF_STR
+	MVI	B,1
+	PUSH	H
+	MVI	A,' '
+	CALL	OUTCH
+	POP	H
+MF_STR:
+	JMP	OUTSTR
+
+;EMITW -- HL as unsigned decimal, no leading zeros (0 still prints one digit).
+; Repeated subtraction of each power of ten, which is all an 8080 has.  B
+; carries 'a digit has been printed' so the leading zeros are skipped.
+EMITW:
+	PUSH	B
+	PUSH	D
+	MVI	B,0
+	LXI	D,10000
+	CALL	EWDIG
+	LXI	D,1000
+	CALL	EWDIG
+	LXI	D,100
+	CALL	EWDIG
+	LXI	D,10
+	CALL	EWDIG
+	MOV	A,L		; the units digit is always printed
+	ADI	'0'
+	CALL	OUTCH
+	POP	D
+	POP	B
+	RET
+EWDIG:
+	MVI	C,0
+EW_LP:
+	MOV	A,L
+	SUB	E
+	MOV	L,A
+	MOV	A,H
+	SBB	D
+	MOV	H,A
+	JC	EW_DN
+	INR	C
+	JMP	EW_LP
+EW_DN:
+	DAD	D		; one subtraction too many: give it back
+	MOV	A,C
+	ORA	A
+	JNZ	EW_PR
+	MOV	A,B
+	ORA	A
+	RZ			; a leading zero: write nothing
+EW_PR:
+	MOV	A,C
+	ADI	'0'
+	CALL	OUTCH
+	MVI	B,1
+	RET
+
+;ISEMPT -- Z iff the buffer holds nothing at all: no resident text, and nothing
+; spilled behind the window either.  vim's '--No lines in buffer--', shortened.
+ISEMPT:
+	LHLD	OUTPOS
+	MOV	A,H
+	ORA	L
+	RNZ
+	CALL	LOGLEN
+	MOV	A,H
+	ORA	L
+	RET
+
+;MSGCTG -- '^G': the file, its flags, and where the cursor is.  DEVIATION: vim
+; also gives the file's line total and a percentage of it; no line total is kept
+; anywhere here, and counting one means a sweep of the whole file out to EOF and
+; a page back -- which would cost the undo region (PGTOPM) as well as the wait.
+MSGCTG:
+	LXI	H,FNAME
+	CALL	MSGNAM
+	MVI	A,1		; '^G' is where vim shows [Modified]
+	CALL	MSGFLG
+	CALL	ISEMPT
+	JNZ	MG_POS
+	LXI	H,SNOLIN
+	JMP	OUTSTR
+MG_POS:
+	LXI	H,SLINE
+	CALL	OUTSTR
+	CALL	CNTLF		; the line feeds before the cursor ...
+	INX	H		;   ... so the line it is on
+	CALL	EMITW
+	LXI	H,SCOLM
+	CALL	OUTSTR
+	LHLD	CBOL		; the byte column within the line, 0-based
+	INX	H
+	PUSH	H
+	CALL	EMITW
+	LHLD	CURDCL		; the column a TAB expands that byte to
+	INX	H
+	POP	D
+	CALL	CMP16		; the same -> vim writes one number, not two
+	RZ
+	PUSH	H
+	MVI	A,'-'
+	CALL	OUTCH
+	POP	H
+	JMP	EMITW
+
+;FILMSG -- the load message: the file and its flags.  vim adds the line and
+; byte totals ('3L, 30B'); the line total is the sweep MSGCTG's note describes.
+; A buffer with no file name gets no message at all, as in vim.
+FILMSG:
+	LDA	FNAME+1
+	CPI	' '
+	RZ
+	LXI	H,FNAME
+	CALL	MSGNAM
+	XRA	A		; nothing has been changed yet
+	JMP	MSGFLG
+
+;WRMSG -- what ':w' says.  vim counts what it wrote ('"TEST.TXT" 3L, 29B
+; written'); the counts are the same sweep, so this says only that it happened.
+; The name is TFCB's, so ':w OTHER.TXT' names the file it really wrote.
+WRMSG:
+	LXI	H,TFCB
+	CALL	MSGNAM
+	LXI	H,SWRIT
+	JMP	OUTSTR
+
+;MSGPST -- draw the message this key asked for, once the frame is painted, and
+; put the cursor back.  The main loop calls it after SCDRAW and MODEMS.
+MSGPST:
+	LDA	MSGWHT
+	ORA	A
+	RZ
+	MOV	B,A
+	XRA	A
+	STA	MSGWHT
+	MOV	A,B
+	CPI	MW_FIL
+	JZ	MP_FIL
+	CPI	MW_WRT
+	JZ	MP_WRT
+	CALL	MSGCTG
+	JMP	SCURS
+MP_FIL:
+	CALL	FILMSG
+	JMP	SCURS
+MP_WRT:
+	CALL	WRMSG
+	JMP	SCURS
+
+;VC_CTLG -- '^G'.  It changes nothing and moves nothing, so the frame is a
+; still one and the message goes on after it.
+VC_CTLG:
+	MVI	A,MW_CTG
+	STA	MSGWHT
+	MVI	A,R_MOVE
+	STA	RINTENT
+	RET
+
+CMDTAB:
+	DB	07H			; ^G -- where am I?
+	DW	VC_CTLG
+	DB	'h'
+	DW	VC_H
+	DB	'l'
+	DW	VC_L
+	DB	'j'
+	DW	VC_J
+	DB	'k'
+	DW	VC_K
+	DB	'0'
+	DW	VC_0
+	DB	'^'
+	DW	VC_CRT
+	DB	'$'
+	DW	VC_EOL
+	DB	CR			; <CR> -- down to the first non-blank
+	DW	VC_CR
+	DB	'w'
+	DW	VC_W
+	DB	'b'
+	DW	VC_B
+	DB	'e'
+	DW	VC_E
+	DB	'W'
+	DW	VCBGW
+	DB	'B'
+	DW	VCBGB
+	DB	'E'
+	DW	VCBGE
+	DB	'G'
+	DW	VC_G
+	DB	'g'
+	DW	VC_LG
+	DB	'x'
+	DW	VC_X
+	DB	'Z'
+	DW	VC_BZ
+	DB	'y'
+	DW	VC_Y
+	DB	'Y'
+	DW	VY_YY
+	DB	'p'
+	DW	VC_P
+	DB	'P'
+	DW	VCB_P
+	DB	'i'
+	DW	VC_I
+	DB	'a'
+	DW	VC_A
+	DB	'A'
+	DW	VCB_A
+	DB	'I'
+	DW	VCB_I
+	DB	'r'
+	DW	VC_R
+	DB	'R'
+	DW	VCB_R
+	DB	'd'
+	DW	VC_D
+	DB	'D'
+	DW	VCB_D
+	DB	'C'
+	DW	VCB_C
+	DB	'c'
+	DW	VC_C
+	DB	'o'
+	DW	VC_O
+	DB	'O'
+	DW	VCB_O
+	DB	'J'
+	DW	VCB_J
+	DB	'~'
+	DW	VC_TILD
+	DB	':'
+	DW	VC_EX
+	DB	'/'
+	DW	VC_SRCH
+	DB	'?'
+	DW	VC_SRCH
+	DB	'n'
+	DW	VC_N
+	DB	'N'
+	DW	VCB_N
+	DB	'H'
+	DW	VC_HIGH
+	DB	'M'
+	DW	VC_MIDL
+	DB	'L'
+	DW	VC_LOWL
+	DB	06H			; ^F -- page forward
+	DW	VC_PGDN
+	DB	02H			; ^B -- page back
+	DW	VC_PGUP
+	DB	04H			; ^D -- half page down
+	DW	VC_HFDN
+	DB	15H			; ^U -- half page up
+	DW	VC_HFUP
+	DB	0CH			; ^L -- redraw
+	DW	VC_REDR
+	DB	'.'			; '.' -- repeat the last change
+	DW	VC_DOT
+	DB	'u'			; 'u' -- undo (and undo the undo)
+	DW	VC_UNDO
+	DB	'm'		; m{a-c} -- set a mark
+	DW	VC_MK
+	DB	60H		; `{a-c} -- back to its exact spot
+	DW	VC_BQ
+	DB	27H		; '{a-c} -- back to its line's first non-blank
+	DW	VC_AQ
+	DB	0
+
+ACTTAB:
+	DB	ACT_CURLT
+	DW	VC_H
+	DB	ACT_CURRT
+	DW	VC_L
+	DB	ACT_CURDN
+	DW	VC_J
+	DB	ACT_CURUP
+	DW	VC_K
+	DB	ACT_LINST
+	DW	VC_0
+	DB	ACT_LINEN
+	DW	VC_EOL
+	DB	ACT_PGUP
+	DW	VC_PGUP
+	DB	ACT_PGDN
+	DW	VC_PGDN
+	DB	0
+
+;============================================================
+; DATA
+;============================================================
+EDMODE: DB	EM_CMD
+CMDCNT: DW	0		; count prefix (0 = none)
+QUITF:	DB	0		; set 1 by :q / :wq
+MODF:	DB	0		; 1 = unsaved changes
+RINTENT:DB	R_FULL		; render intent for the last key (SCRN.MAC reads)
+ILN:	DB	1		; lines an R_ILIN paint opens (SCRN.MAC reads)
+ICHAPP:	DB	0		; 1 = the R_ICH char went at the row's end, so
+				;   nothing follows it to shift: no ICH needed
+ILABOV:	DB	0		; 1 = the row above an R_ILIN's opened rows lost
+				;   text to them and must be redrawn too
+GOALCOL:DW	0FFFEH		; sticky goal screen column for j/k (0FFFFH = EOL, 0FFFEH = stale)
+WBIG:	DB	0		; word motion: 0 = w/b/e, 1 = W/B/E
+WPULL:	DB	0		; w/W ended off a line's end and was pulled back
+HFROW:	DB	0		; ^D/^U: the cursor's row before the move
+HFAMT:	DB	0		; ^D/^U: lines (vim's 'scroll'); 0 = NEDIT/2
+JKCNT:	DW	0		; j/k: count
+JKN:	DW	0		; j/k: lines scanned for (min(count, limit))
+JKMOV:	DW	0		; j: lines moved
+JKBK:	DW	0		; k: scan position, bytes back from GAPBEG
+JKPHN:	DB	0		; j: 1 = moved may be one less (last LF ends the file)
+JKLST:	DB	0		; j: last byte of the scan
+JKVC:	DW	0		; j/k landing: screen column
+JKLS:	DW	0		; j/k landing: last content char (0FFFFH = none)
+PG	EQU	1		; pending-prefix codes held in GPEND/GSAVE
+PZ	EQU	2
+PR	EQU	3		;   ('r', whose next key is its operand)
+PM	EQU	4		; which of 'm' / '`' / ''' is running (MKWHAT, not
+PJ	EQU	5		;   GPEND: each reads its own mark letter, so none
+PJL	EQU	6		;   of them leaves anything pending)
+;--- '.' (repeat): see the '.' section above for how these are driven.
+DOTCHG: DB	0		; 1 = the command being typed changed the text
+DOTSTA: DB	1		; 1 = the next key starts a new recording
+DOTRPL: DB	0		; 1 = '.' is replaying, so nothing is recorded
+DOTOVF: DB	0		; 1 = the change outgrew the scratch
+DOTLK:	DB	0		; the last key recorded, encoded
+DOTSP:	DW	DOTSCR		; the scratch's write pointer
+DOTLEN: DB	0		; keys in DOTBUF (0 = nothing to repeat)
+DOTIX:	DB	0		; the replay's read index into DOTBUF
+DOTNCT: DW	0		; the count typed on the '.' (0 = none)
+
+GPEND:	DB	0		; pending 'g' / 'Z' / 'r' (gg / ZZ / r{char})
+GSAVE:	DB	0		; the pending snapshot for the current command
+PENDOP: DB	0		; pending operator ('d' for dd)
+PSAVE:	DB	0		; pending-op snapshot for the current command
+DDSNG:	DB	0		; 1 = the current dd deletes a single line (DL paint)
+OPCLSV: DB	0		; operator: motion class (0 excl, 1 incl, 2 linewise,
+				;   3 excl but a jump -- no end-of-line clamp)
+CWEOL:	DB	0		; operator: the motion is 'cw' rewritten to 'ce',
+				;   so it stops at the line's content end
+OPSTA:	DW	0		; operator: span start (cursor before the motion)
+OPEND2: DW	0		; operator: span end (cursor after the motion)
+OPLO:	DW	0		; operator: low offset of the delete range
+OPHI:	DW	0		; operator: high offset of the delete range
+
+CNTV:	DW	0		; motion repeat counter
+TTI:	DW	0		; TAILTAB scan index
+WKI:	DW	0		; scan index
+WKN:	DW	0		; cached LOGLEN
+WKLO:	DW	0		; dd: range low offset
+WKTERM: DW	0		; line terminator offset
+WKBOL:	DW	0		; EOLC scratch: line BOL
+WKCLS:	DB	0		; word motion: class of the current run
+VRCH:	DB	0		; 'r' / R: the char being stored
+RPDEL:	DW	0		; R: chars overwritten, still in the gap (BS puts back)
+RPAPP:	DW	0		; R: chars appended past the line end (BS deletes)
+RPGE:	DW	0		; R: GAPEND as the last overwrite left it
+
+TOFFV:	DW	0		; QSNAP: cursor logical offset
+TLINEV: DW	0		; QSNAP: cursor line (0-based)
+TCOLV:	DW	0		; QSNAP: cursor column (0-based)
+
+RLPTR:	DW	0		; RDLINE: write pointer
+RLLEN:	DB	0		; RDLINE: chars stored
+RLMAX:	DB	0		; RDLINE: capacity
+EXOP:	DB	0		; ex: the command (EO_xx)
+EXARG:	DB	0		; ex: 0 = no file name given
+EXBAK:	DB	0		; ex: the write keeps a backup
+EXCMD:	DW	0		; ex: text shown after a message
+WPROW:	DB	0		; :w -- the cursor's row
+WPBYT:	DB	0		; :w -- the cursor's byte in its record
+WPREC:	DW	0		; :w -- the cursor's record in the file
+ZDIF:	DW	0		; G/gg: target - top (low 16 bits)
+ZLF:	DB	0		; G/gg: lines from the target up to the top
+ZSVCNT: DW	0		; G/gg: CMDCNT around LINPSB
+ZSVAUX: DW	0		; G/gg: AUXCNT around LINPSB
+ZSVDIR: DB	0		; G/gg: DIRFLG around LINPSB
+MSGWHT: DB	0		; the message the bottom row still owes (MW_xxx)
+MSGNEW: DB	0		; the file was not there when it was opened ('[New]')
+EXBANG: DB	0		; ex: 0 = '!' given
+ROFLAG: DB	0		; command line: '-R' / '/R' was given
+PLUSF:	DB	0		; command line: '+' was given
+YMODF:	DB	0		; yy: MODF across the delete + put back
+YDCHG:	DB	0		; yy: DOTCHG across it too (see '.')
+YURPL:	DB	0		; yy: UNDRPL across it too (see 'u')
+YOFF:	DW	0		; yy: the cursor, which a yank leaves alone
+YPT:	DW	0		; yy: where the lines came from
+PCNT:	DW	0		; p/P: copies still to put
+PPT:	DW	0		; p/P: the first line put
+PLFS:	DW	0		; p/P: the lines in the register
+PCPY:	DB	0		; p/P: the copies, kept for the paint
+YLDLT:	DW	0		; yy: LNDLT across the delete + put back
+
+SDIR:	DB	0		; the last '/' or '?' direction (FFH = back)
+SDIRE:	DB	0		; ... the direction THIS search runs in ('N')
+SHAVE:	DB	0		; nonzero once a pattern has been entered
+GPKEEP: DB	0		; GPLACE: keep the column (a search) not FNBLNK
+MKVAL:	DB	0,0,0		; marks: nonzero once 'm' has set that one.  It
+				;   lives HERE and not in MKTAB because the image
+				;   guarantees a DB, and nothing guarantees a DS
+MKEDIT: DW	0		; MKDROP: where the edit that may drop them is
+MKWHAT: DB	0		; which of 'm' / '`' / ''' is running
+MKHOLD: DB	0		; set across a yank's delete + put back: MKDROP
+				;   must leave the marks alone through it
+YACT:	DW	0		; how this yank takes its lines (VD_DD / YSPAN)
+YTGT:	DW	0		; YSPAN: the text's length once the span is out
+YWAS:	DW	0		; ... and its length BEFORE the lines came out
+SCNT:	DW	0		; searches still to do (the count)
+SOFF:	DW	0		; where the cursor was when the search began
+SLDLT:	DW	0		; ... and LNDLT, for the search that fails
+SSKIP:	DB	0		; skip the character under the cursor (not
+				;   on the wrapped pass)
+
+SREPMX	EQU	EXMAX-4		; ':s' -- bounded by the ex line itself, so
+				;   SCOPY can never truncate a line anyone is
+				;   able to type: the shortest possible
+				;   substitute is 's' '/' + one pattern char +
+				;   '/' before the replacement starts, and
+				;   RDLINE stores at most EXMAX.  Tied to
+				;   EXMAX rather than written out, the way
+				;   BUF.MAC ties SRCMAX to SRMAX, so the two
+				;   cannot drift apart.
+SRNGF:	DB	0		; ex: a line range was given
+SRNG1:	DW	0		; ex: its first line
+SRNG2:	DW	0		; ... and its last (FFFFH = the file's last)
+SDELIM: DB	0		; ':s' the delimiter typed
+SGFLAG: DB	0		; ':s' the 'g' flag
+SANY:	DB	0		; ':s' something in the range has changed
+SLCHG:	DB	0		; ':s' this line changed
+SBACK:	DW	0		; ':s' lines walked past the last change
+SLINES: DW	0		; ':s' lines of the range still to do
+SOFFS:	DW	0		; ':s' the cursor, for a substitute that
+SLDLTS: DW	0		;   changes nothing, and its LNDLT
+SREPLN: DB	0		; ':s' the replacement's length, kept
+SREPL:	DS	SREPMX+1	;   just below it: WM's RDSTR layout,
+				;   so INSSTR can splice it
+
+	END
+
+
+
+
+
+
+

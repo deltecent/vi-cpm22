@@ -1,0 +1,73 @@
+;============================================================
+; FILE:    VI.MAC
+; PROJECT: VI
+; MODULE:  Editor entry + main render-dispatch loop.
+;------------------------------------------------------------
+; The real program: it owns START (0100H), stands up the buffer, discovers the
+; terminal geometry, opens the file named on the command tail, paints, then runs
+; the edit loop -- read a key, dispatch it through the vi core (CMD.MAC), repaint,
+; until :q / :wq sets QUITF -- which is the one key that does NOT repaint: the
+; text on the screen is what the editor leaves behind, cursor on the bottom row.
+;
+; The command line is read before anything else (CMDTAIL is also the default DMA
+; address, so the first sector read would take it with it), and its '+{n}' is
+; applied once the file is loaded and before the first paint.
+;
+; VI links FIRST so START sits at the CP/M TPA base 0100H; BUF links LAST so its
+; MEMBAS (top of the image) is the base of the gap-buffer arena.
+;
+; The loop sets a default render intent (R_FULL) before each dispatch; CMD.MAC
+; lowers it to R_MOVE for a pure cursor motion, so SCDRAW repositions the cursor
+; without a full repaint when the viewport did not move; the edits that can be
+; drawn cheaper set their own R_* intent (RENDER.md).
+;
+; EXTRNS: BINIT (BUF); SCINIT/SCDRAW/SCDONE (SCRN); GETKEY (KEY);
+;         FOPEN/CMDDIS/QUITF (CMD).
+;============================================================
+	INCLUDE VI.INC
+
+	EXTRN	BINIT			; BUF.MAC -- stand up the arena
+	EXTRN	FOPEN			; CMD.MAC  -- open + load the file (or none)
+	EXTRN	ARGSCN, ARGGO		; CMD.MAC  -- '+{n}' / '-R' on the line
+	EXTRN	SCINIT, SCDRAW, SCDONE	; SCRN.MAC -- geometry / paint / teardown
+	EXTRN	MODEMS			; SCRN.MAC -- '-- INSERT --' on the bottom row
+	EXTRN	MSGPST			; CMD.MAC  -- the message this key left
+	EXTRN	SCPRE			; SCRN.MAC -- snapshot displayed viewport
+	EXTRN	GETKEY			; KEY.MAC  -- decoded key
+	EXTRN	CMDDIS, QUITF		; CMD.MAC  -- dispatch one key / quit flag
+	EXTRN	RINTENT			; CMD.MAC  -- render intent (default per key)
+	EXTRN	VISTK			; RSV.MAC  -- the stack, above the image
+
+	CSEG
+
+START:
+	LXI	SP,VISTK
+	CALL	ARGSCN			; '+{n}' / '-R': FIRST, since the line
+					;   sits at the default DMA address
+	CALL	BINIT			; gap-buffer pointer row + arena bounds
+	CALL	SCINIT			; terminal geometry (DSR autodetect)
+	CALL	FOPEN			; open the source FCB staged at 005CH
+	CALL	ARGGO			; '+{n}': the line to start on
+	MVI	A,R_FULL		; nothing is on the screen yet, and
+	STA	RINTENT			;   ARGGO dispatched real keys that
+					;   may have lowered the intent
+	CALL	SCDRAW			; first full paint
+	CALL	MSGPST			; ... and vim's load line under it
+MLOOP:
+	CALL	GETKEY			; B = KT_xxx, C = char / action code
+	CALL	SCPRE			; snapshot the displayed viewport pre-dispatch
+	MVI	A,R_FULL		; default: full repaint unless a motion lowers it
+	STA	RINTENT
+	CALL	CMDDIS			; dispatch through the vi core (may set R_MOVE)
+	LDA	QUITF
+	ORA	A
+	JNZ	MQUIT			; quitting: do not repaint what we are leaving
+	CALL	SCDRAW			; repaint: full, or cursor-only for a still motion
+	CALL	MODEMS			; '-- INSERT --' when the mode changed
+	CALL	MSGPST			; ... or whatever this key asked to say
+	JMP	MLOOP
+MQUIT:
+	CALL	SCDONE			; restore the terminal
+	JMP	WBOOT			; back to CP/M
+
+	END	START

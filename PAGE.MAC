@@ -1,0 +1,1453 @@
+;============================================================
+; FILE:    PAGE.MAC
+; PROJECT: VI
+; MODULE:  WordMaster's file-I/O layer, transcribed VERBATIM from WM.ASM.
+;
+; This is the disk side of WordMaster's single-buffer design: the random-
+; record engine, the file primitives (open/close/make/rename/delete), and the
+; load (FILLBUF) and save (SAVCLO/FLUSHTX) drivers.  WordMaster's control flow
+; and instruction sequence are reproduced exactly (same assembled object code);
+; only the label NAMES are translated -- WM.ASM's address-derived labels (Lxxxx)
+; are renamed descriptively, which changes nothing in the assembled bytes.
+; Every routine cites its WM.ASM source line, so it still diffs against WM.ASM.
+;
+; WHAT IS HERE: the load path is FILLBUF and the save path SAVCLO/FLUSHTX --
+; the read and write sides of WordMaster's pager.  The window slides along a
+; file bigger than RAM through the eviction seam: MKROOM (SPILL forward, SPILLB
+; backward), REWIND, PAGEBOT, PAGEDIR/PAGEWIN/PGNEED and NEEDIN.  UPDMARK keeps
+; the three record marks (OUTREC/SRCREC/BAKREC) that let PAGEOUT and PAGEBOT
+; tell "already on disk" from "must transfer", so nothing is written twice or
+; lost; every mark starts each file at zero, as WM's per-file work-variable
+; clear leaves it.
+;
+; DEVIATIONS FROM WM (each is also flagged where it is):
+;   1. GETKEY -> KBPOLL.  RDSEC and POLLBRK drain type-ahead through WM's
+;      GETKEY; the ring is KEY.MAC's, so they call its KBPOLL.  POLLBRK keeps
+;      only WM's non-interruptible path (no ^C 'INTERRUPTED').  Harnesses
+;      without KEY.MAC supply a KBPOLL RET stub.
+;   2. FATAL -> JMP ERRMSG.  WM's FATAL (WM 5429) prints via CRLF/PUTSTR/CONOUT
+;      then JMP ABORT (screen + stack-unwind, neither exists).  It shares the
+;      'CALL x / DB msg,0' convention with ERRMSG, so FATAL just enters ERRMSG's
+;      tail (print msg, set ERRFLG, warm-boot).  Only reached on a disk error.
+;   3. OPENFIL / SAVEFIL wrappers.  WM's file-open is inline INIT code (WM
+;      412-519) and its save is ENDEDIT reached from the command loop (557-567);
+;      neither is a CALLable unit.  These two entry points run WM's exact
+;      instruction sequences verbatim, with the source FCB pre-staged at 005CH
+;      by CP/M from the command tail.  Same-drive / user-0 only: the multi-drive
+;      DRVMAP / DSTDRV branches (INIT 458-493) are omitted -- the bodies kept
+;      are verbatim.  A write to another drive is WRTO's, below.
+;   4. FILLBUF stores the last record's byte count (80H) for a full record with
+;      no ^Z, which WM does not -- WM's end-of-file bug; see FILLBUF.
+;   5. DISCRD skips the work-file deletes when this session never wrote a work
+;      record; see DISCRD.
+;   6. The backup work file is VIBACKUP.$$$, where WM names it WMBACKUP.$$$
+;      (BAKNAM).  Same length, so no layout moves.
+;
+; APPENDED (not WM), tagged where each starts: REOPEN/SEEKTO/OPENZ (':w' keeps
+; editing), TFCB/WRTO/TEXIST/DISCRD/CNTLF (':w name', ':e', a buffer with no
+; name) and PGTOPM (the count of times the pager moved TXTBEG).
+;============================================================
+
+WBOOT	EQU	0
+BDOS	EQU	5
+EOF	EQU	1AH		; ^Z
+BS	EQU	08H
+PGINIT	EQU	200H		; WM 20 -- cold WRLIM/RDLIM (no-spill window)
+
+;--- entry points the harness / editor calls -------------------------------
+	PUBLIC	OPENFIL, SAVEFIL
+	PUBLIC	FILLBUF, SAVCLO
+;--- the disk seam BUF.MAC reaches -----------------------------------------
+	PUBLIC	MKROOM, REWIND, UPDMARK, MARKGB
+;--- scroll/search paging drivers (BUF.MAC's PAGESTP / SCRLST reach them)
+	PUBLIC	PAGEDIR, PAGEWIN
+	PUBLIC	POLLBRK		; break poll (CNTTST tail-calls it)
+	PUBLIC	MOREIN		; WM 4743 -- GOLINE (BUF.MAC) tests it
+	PUBLIC	AUXCNT		; WM L271E -- after NEWFIL, as in WM
+;--- data the harness reads to check state ---------------------------------
+	PUBLIC	NEWFIL, OUTFCB, BAKFCB
+	PUBLIC	OUTREC, SRCREC, BAKREC, DIRFLG
+	PUBLIC	PGTOPM		; (appended) times the pager moved TXTBEG
+	PUBLIC	OUTPOS		; OUTFCB read/write position (rewind progress)
+	PUBLIC	INRDY		; NZ while input remains (harness scroll loop)
+	PUBLIC	BAKRDY		; set FFH when a VIBACKUP$$$ record is written
+;--- on-demand page-in (BUF.MAC RGET) and the renderer's spill guard ------------
+	PUBLIC	NEEDIN		; WM 4617 -- RGET pages input in
+	PUBLIC	WRLIM		; WM L2745 -- the screen sets it (WM MEASURE)
+;--- APPENDED (NOT WordMaster): vi :w keeps editing (WM 'H' on the same file) ---
+	PUBLIC	REOPEN, SEEKTO, OPENZ
+;--- APPENDED (NOT WordMaster): vi :w name, :e, a buffer with no name ---------
+	PUBLIC	TFCB, WRTO, TEXIST, DISCRD, CNTLF
+	EXTRN	BINIT		; BUF.MAC -- WM L02F2 gap-pointer reset
+	EXTRN	WRTYP, SECBUF	; RSV.MAC -- held above the image (see RSV.MAC)
+
+;--- gap-buffer primitives + cells this layer drives (from BUF.MAC) ---------
+	EXTRN	MEMCPY, CMP16, LDHLI, PRSPAN, BUFSUM
+	EXTRN	PUTHOLE, PUTCUR, SUBHD, SUBCP2, POPRET, ERRMSG
+	EXTRN	TXTBEG, GAPBEG, GAPEND, TXTEND, BUFEND
+	EXTRN	KBPOLL		; KEY.MAC -- WM GETKEY (type-ahead drain)
+
+	CSEG
+
+;============================================================
+; OPENFIL -- open the source file (staged at 005CH by CP/M) and read it into
+; the gap buffer.  Verbatim INIT subset (WM 412-518) + CMDINI limits (854);
+; wrapper glue only (deviation 3).  BINIT must have run first.
+;============================================================
+OPENFIL:
+	LXI	H,PGINIT	; WM 854 (CMDINI) -- no-spill window
+	SHLD	WRLIM
+	SHLD	RDLIM
+	LHLD	BUFEND		; WM 388/412 -- H = high byte of BUFEND
+	MOV	A,H
+	CALL	PGCONST		; paging constants (BUFHI/BUFLO/IOBATCH/...)
+	LXI	H,5CH		; build OUTFCB as a copy of the source FCB
+	LXI	D,OUTFCB
+	LXI	B,10H
+	CALL	MEMCPY		; WM 462-463 -- 16-byte FCB header copy
+	LXI	H,BAKTYP	; set OUTFCB type = '$$$'  (WM 516-517)
+	LXI	D,OUTTYP
+	CALL	CPYTYP
+	LXI	D,OUTFCB	; zero OUTFCB random-record bytes
+	CALL	ZERORR
+	LDA	5CH		; build BAKFCB = drive + 'VIBACKUP$$$'
+	STA	BAKFCB		; WM 479-485
+	LXI	H,BAKNAM
+	LXI	D,BAKFCB
+	INX	D
+	LXI	B,0BH
+	CALL	MEMCPY
+	LXI	D,OUTFCB	; delete any stale name.$$$  (WM 513-514)
+	CALL	DELF
+	LXI	H,BAKEXT	; delete any stale name.BAK  (WM 510-517):
+	LXI	D,OUTTYP	;   point OUTTYP at 'BAK', delete, restore '$$$'
+	CALL	CPYTYP
+	LXI	D,OUTFCB
+	CALL	DELF
+	LXI	H,BAKTYP
+	LXI	D,OUTTYP
+	CALL	CPYTYP
+	LXI	D,5CH		; open the source file  (WM 496-505)
+	CALL	OPENF
+	MVI	A,0FFH
+	JZ	OPNEW
+	STA	5BH		; source has data (input side live)
+	JMP	OPRD
+OPNEW:				; source not found -> new file
+	STA	NEWFIL
+OPRD:				; cold-start the pager state.  WM does this by
+	XRA	A		;   zeroing its whole work-variable area (WM
+	STA	BAKRDY		;   369-373, the L0307 clear loop over TXTROWS..
+	STA	OUTACT		 ;   2730): every deque mark -- OUTACT/OUTPOS/BAKPOS/
+	STA	INLEN		;   INLEN/OUTREC/SRCREC/BAKREC -- lives in that
+	STA	DIRFLG		;   region, so its true cold value is ZERO.  With
+	LXI	H,0H		;   the real UPDMARK maintaining them (below), no
+	SHLD	OUTREC		;   bias is needed: at cold OUTPOS=0 and UPDMARK
+	SHLD	SRCREC		;   raises OUTREC to track each record spilled.
+	SHLD	BAKREC
+	SHLD	BAKPOS
+	SHLD	OUTPOS
+	CALL	FILLBUF		; WM 518 -- read the file into the buffer
+	RET
+
+;============================================================
+; SAVEFIL -- finish the file: flush the buffer to name.$$$ then swap names
+; (source -> name.BAK, name.$$$ -> original).  Verbatim ENDEDIT (WM 557-567).
+;============================================================
+SAVEFIL:			; WM 557 (ENDEDIT)
+	CALL	SAVCLO
+	LXI	H,NEWFIL
+	MOV	A,M
+	ORA	A
+	LXI	D,5CH
+	LXI	H,BAKEXT
+	CZ	RENAME		; not new: source -> name.BAK
+	LXI	D,OUTFCB
+	LXI	H,65H
+	JMP	RENAME		; name.$$$ -> original type (005CH+9 = 0065H)
+
+;============================================================
+; APPENDED (NOT WordMaster): vi ':w' saves and keeps editing.  WM has no such
+; command -- its 'H' (EDNEXT, WM 525-545) ends the edit and re-inits for the
+; next file.  REOPEN is that re-init applied to the same file, and SEEKTO
+; pages the saved text back in up to the cursor's old place, flushing and
+; refilling exactly as the save loop (SAVCLO) does.  Without this, the editor
+; kept running on the flushed buffer and closed/renamed FCBs after a ':w'.
+;============================================================
+
+;REOPEN -- after a save: re-open the file named at 005CH and load its start.
+REOPEN:
+	CALL	CLSBAK		; WM 526 (EDNEXT)
+	CALL	BINIT		; WM L02F2 -- reset the gap pointers
+;OPENZ -- OPENFIL after WM's L02F2 clears (WM 369-376): the source FCB's input
+; flag, extent, record count and random record, and NEWFIL.  At start-up the
+; input flag (005BH) holds whatever the last program left there; a file that
+; is not found must not be read from.
+OPENZ:
+	XRA	A
+	STA	5BH
+	STA	68H
+	STA	6BH
+	STA	7DH
+	STA	NEWFIL
+	JMP	OPENFIL		; WM INIT: FCBs, stale-file deletes, open, fill
+
+;SEEKTO -- DE = record, A = byte (0-127) of a file position: page forward
+;until that position is in the window.  HL = its logical offset (the end of
+;the text if the file is shorter).  OUTPOS*128 is TXTBEG's file position.
+SEEKTO:
+	STA	SKBYT
+	XCHG
+	SHLD	SKREC
+SKLP:
+	LHLD	OUTPOS
+	XCHG
+	LHLD	SKREC
+	CALL	SUBHD		; HL = records past TXTBEG's
+	MOV	A,H
+	CPI	2H
+	JNC	SKMORE		; >= 200H records: not in the window
+	RAR			; CY = bit 8 (H is 0 or 1)
+	MOV	A,L
+	RAR			; A = bits 8-1, CY = bit 0
+	MOV	D,A
+	MVI	A,0
+	RAR			; A = bit 0 << 7
+	MOV	E,A
+	LDA	SKBYT
+	ORA	E
+	MOV	E,A		; DE = HL*128 + byte: the target offset
+	PUSH	D
+	LHLD	TXTBEG
+	XCHG
+	LHLD	TXTEND
+	CALL	SUBHD
+	XCHG			; DE = text in the window
+	POP	H		; HL = target
+	CALL	CMP16		; CY iff length < target
+	RNC			; in the window
+SKMORE:
+	CALL	FLUSHTX		; WM 4850 (SAVCLO): write it all, refill
+	CALL	FILLBF2
+	JNC	SKLP
+	LHLD	TXTBEG		; no more input: the end of the text
+	XCHG
+	LHLD	TXTEND
+	JMP	SUBHD
+
+;============================================================
+; APPENDED (NOT WordMaster): vi writes the text to a name of its own (:w name,
+; and a buffer that has no name) and drops it for another file (:e).  WM always
+; writes back to the file it read.  These use WM's own primitives: SAVCLO for
+; the flush, RENAME for the backup, RENF, DELF, MAKEF, OPENF, CLOSEF.
+; TFCB holds the target name; the vi layer fills its drive, name and type
+; (bytes 0-11) and zeroes the rest.
+;============================================================
+
+;TEXIST -- Z iff no file has TFCB's name.
+TEXIST:
+	LXI	D,TFCB
+	CALL	BDOSFN
+	DB	11H		; search for the first match
+	INR	A
+	RET
+
+;WRTO -- write the whole text to the file named in TFCB (the edit is flushed
+; to name.$$$, as WM's ENDEDIT does).  A <> 0: a file already there becomes
+; name.BAK (WM ENDEDIT); A = 0: it is deleted (vim overwrites it).  Then
+; name.$$$ takes TFCB's name, by RENF on its own drive or by a copy to another
+; drive.  REOPEN must follow (from TFCB's name).
+WRTO:
+	PUSH	PSW
+	CALL	SAVCLO		; WM 558 (ENDEDIT)
+	LXI	D,TFCB
+	POP	PSW
+	ORA	A
+	JZ	WRDEL
+	LXI	H,TFCB+9	; delete any old name.BAK
+	LXI	D,WRTYP
+	CALL	CPYTYP
+	LXI	D,TFCB+9
+	CALL	CPYBAK
+	LXI	D,TFCB
+	CALL	DELF
+	LXI	H,WRTYP
+	LXI	D,TFCB+9
+	CALL	CPYTYP
+	LXI	D,TFCB		; name -> name.BAK (WM 562)
+	LXI	H,BAKEXT
+	CALL	RENAME
+	JMP	WRMOV
+WRDEL:
+	CALL	DELF
+WRMOV:
+	LDA	OUTFCB
+	LXI	H,TFCB
+	CMP	M
+	JNZ	WRCPY		; another drive
+	LXI	H,OUTFCB	; RENF block: name.$$$, then TFCB's name
+	LXI	D,OUTFCB+10H
+	LXI	B,10H
+	CALL	MEMCPY
+	LXI	H,TFCB+1
+	LXI	D,OUTFCB+11H
+	LXI	B,0BH
+	CALL	MEMCPY
+	XRA	A
+	STA	OUTFCB+10H	; the new name's drive byte is 0 (as RENAME)
+	LXI	D,OUTFCB
+	JMP	RENF		; WM 566
+WRCPY:				; name.$$$ copied record by record
+	XRA	A		; extent 0, record 0 on both
+	STA	OUTFCB+0CH
+	STA	OUTFCB+20H
+	STA	TFCB+20H
+	LXI	D,OUTFCB
+	CALL	OPENF
+	LXI	D,TFCB
+	CALL	DELRST		; make the new file
+WRCLP:
+	LXI	D,OUTFCB
+	CALL	BDOSFN
+	DB	14H		; read the next record
+	ORA	A
+	JNZ	WRCEND
+	LXI	D,TFCB
+	CALL	BDOSFN
+	DB	15H		; write it
+	ORA	A
+	JZ	WRCLP
+	JMP	DSKERR
+WRCEND:
+	LXI	D,TFCB
+	CALL	CLOSEF
+	LXI	D,OUTFCB
+	JMP	DELF
+
+;DISCRD -- drop the edit: delete name.$$$ and VIBACKUP$$$ (WM EDEND, 581).
+;DEVIATION (not WordMaster): both are skipped when this session never wrote a
+;work record at all (WRKMAD clear), because then neither file can exist.  A BDOS
+;delete scans the whole directory whether or not the name is on it -- the best
+;part of a second each on a large drive -- and ':q' on a text that never spilled
+;paid it twice for nothing.  The per-file [FCB-2]/[FCB-1] flags will NOT do:
+;reading the backup back to its end clears them while the file is still there,
+;which is why WM's EDEND deletes unconditionally.
+DISCRD:
+	LDA	WRKMAD
+	ORA	A
+	RZ			; no work file was ever made: nothing to drop
+	XRA	A
+	STA	WRKMAD		; the deletes below leave nothing to drop again
+	LXI	D,OUTFCB
+	CALL	DELF
+	JMP	KILLBAK
+
+;CNTLF -- HL = the line feeds before the cursor: in output records 0 to
+; OUTPOS-1, read back into SECBUF with RDNEXT (as REWIND reads them), then in
+; the window up to the gap.  OUTPOS ends where it was.
+CNTLF:
+	LHLD	OUTPOS
+	SHLD	CLREC
+	LXI	H,0
+	SHLD	OUTPOS
+	SHLD	CLCNT
+CLREC0:
+	LHLD	CLREC
+	XCHG
+	LHLD	OUTPOS
+	CALL	CMP16
+	JZ	CLWIN		; all read
+	LXI	D,OUTFCB
+	LXI	H,SECBUF
+	CALL	RDNEXT
+	JC	CLWIN		; (not expected: the records are written)
+	LXI	D,80H
+	CALL	CLBYTS
+	JMP	CLREC0
+CLWIN:
+	LHLD	TXTBEG
+	PUSH	H
+	XCHG
+	LHLD	GAPBEG
+	CALL	SUBHD
+	XCHG			; DE = the text before the gap
+	POP	H
+	CALL	CLBYTS
+	LHLD	CLCNT
+	RET
+
+;CLBYTS -- HL = text, DE = its length: CLCNT += its line feeds.
+CLBYTS:
+	MOV	A,D
+	ORA	E
+	RZ
+	MOV	A,M
+	INX	H
+	DCX	D
+	CPI	0AH
+	JNZ	CLBYTS
+	PUSH	H
+	LHLD	CLCNT
+	INX	H
+	SHLD	CLCNT
+	POP	H
+	JMP	CLBYTS
+
+;============================================================
+; PAGING CONSTANTS -- WM 412-447.  From A/H = high byte of BUFEND, derive the
+; batch/margin sizing and the free-space water marks the load/spill path reads.
+;============================================================
+PGCONST:			; WM 412
+	MOV	A,H
+	ORA	A
+	RAR
+	RAR
+	RAR
+	INR	A
+	INR	A
+	ANI	3CH
+	MOV	B,A
+	STA	PGSCAL
+	RLC
+	STA	PGSCL2
+	MOV	A,B
+	CPI	BS
+	JNC	PGCON1
+	MVI	A,BS
+PGCON1:				 ; WM 430
+	STA	PGMARGN
+	MOV	A,H
+	CPI	64H
+	LXI	H,400H
+	SHLD	BUFLO
+	JC	PGCON2
+	DAD	H
+PGCON2:				 ; WM 439
+	SHLD	BUFHI
+	MVI	A,BS
+	STA	PGSCRA
+	JC	PGCON3
+	ADD	A
+PGCON3:				 ; WM 446
+	STA	IOBATCH
+	RET
+
+;============================================================
+; SPILL / PAGEOUT / FLUSHTX -- the output (write-behind) side.  RAM-only, SPILL
+; no-ops (CKWRLIM) on load and FLUSHTX drains the whole buffer on save.
+;============================================================
+
+;SPILL -- WM 4386: write-behind a batch of TXTBEG-side sectors to OUTFCB.
+SPILL:				; WM 4386
+	PUSH	B
+	PUSH	D
+	PUSH	H
+	CALL	PAGEOUT
+	JC	POPRET
+	LXI	H,SPLCNT
+	INR	M
+	MOV	B,M
+	LXI	H,PGSCL2
+	XRA	A
+SPLSUM:				 ; WM 4398
+	ADD	M
+	DCR	B
+	JNZ	SPLSUM
+	DCR	A
+	ORI	7H
+	MOV	C,A
+	LDA	IOBATCH
+	DCR	A
+	MOV	B,A
+SPLLP:				; WM 4409
+	CALL	PAGEOUT
+	DCR	B
+	JZ	SPLDON
+	DCR	C
+	JNZ	SPLLP
+SPLDON:				 ; WM 4416
+	ORA	A
+	JMP	POPRET
+
+;PAGEOUT -- WM 4439: spill one sector at TXTBEG to OUTFCB, bump TXTBEG.
+PAGEOUT:			; WM 4439
+	LHLD	TXTBEG
+	CALL	CKWRLIM
+	RC
+	PUSH	H
+	LHLD	OUTPOS
+	XCHG
+	LHLD	OUTREC
+	CALL	CMP16
+	POP	H
+	LXI	D,OUTFCB
+	JNC	POFRSH
+	CALL	RECINC
+	JMP	POADV
+POFRSH:				 ; WM 4454 -- write a fresh output record
+	CALL	WRRECP
+	XCHG
+	LHLD	OUTREC
+	INX	H
+	SHLD	OUTREC
+	XCHG
+	INR	B
+POADV:				; WM 4463 -- advance TXTBEG past the sector
+	LXI	D,80H
+	DAD	D
+	SHLD	TXTBEG
+	PUSH	H
+	LHLD	PGTOPM		; (appended) the window's top moved: 'u' reads
+	INX	H		;   this to know its offsets have shifted
+	SHLD	PGTOPM
+	POP	H
+	RET
+
+;FLUSHTX -- WM 4471: collapse the gap and PAGEOUT every remaining sector.
+FLUSHTX:			; WM 4471
+	PUSH	B
+	PUSH	D
+	PUSH	H
+	LXI	H,81H
+	SHLD	WRLIM
+	LXI	H,BUFEND
+	CALL	PUTHOLE
+	LHLD	TXTEND
+	CALL	PUTCUR
+FLXLP:				; WM 4482 -- flush loop
+	CALL	PAGEOUT
+	JNC	FLXLP
+	JMP	POPRET
+
+;STAGSEC -- WM 4588: stage a short final record into SECBUF, ^Z-pad the tail.
+STAGSEC:			; WM 4588
+	PUSH	B
+	PUSH	D
+	LXI	D,SECBUF
+	PUSH	D
+	MOV	B,A
+	MVI	C,82H
+	INR	B
+	DCX	H
+	DCX	D
+STGCPY:				 ; WM 4599 -- copy the partial sector
+	MOV	A,M
+	STAX	D
+	INX	H
+	INX	D
+	DCR	C
+	DCR	B
+	JNZ	STGCPY
+STGPAD:				 ; WM 4608 -- pad the rest with ^Z
+	MVI	A,EOF
+	STAX	D
+	INX	D
+	DCR	C
+	JNZ	STGPAD
+	JMP	POPRET
+
+;============================================================
+; FILLBUF / RDIN / CLNSEC -- the input (read) side.
+;============================================================
+
+;NEEDIN -- WM 4617: page input in when the forward read (RGET) runs dry.
+;SPILL first if free space is under a record, then reserve and fill.
+NEEDIN:				; WM 4617
+	CALL	INRDY
+	RZ
+	PUSH	B
+	PUSH	D
+	PUSH	H
+	CALL	BUFSUM
+	LXI	H,80H
+	CALL	CMP16
+	XCHG
+	LHLD	BUFHI
+	JNC	NDIRSV
+	CALL	SPILL
+	JC	MEMSHT
+	XCHG
+NDIRSV:				 ; WM 4633 -- reserve free space, then fill
+	XCHG
+	LXI	H,BUFEND
+	CALL	FREEREC
+	JMP	FILLRD
+
+;FILLBF2 -- WM 4640: fill from input, capped at 7800H.
+FILLBF2:			; WM 4640
+	PUSH	B
+	PUSH	D
+	PUSH	H
+	LXI	H,BUFEND
+	LXI	D,7800H
+	CALL	BUFFREE
+	CALL	INRDY
+	JZ	FILRET
+	MOV	A,C
+	ORA	A
+	JNZ	FILLRD
+	JMP	POPRET
+
+;FILLBUF -- WM 4659: top the window up from the input file(s).
+FILLBUF:			; WM 4659
+	PUSH	B
+	PUSH	D
+	PUSH	H
+	CALL	INRDY
+	JZ	FILRET
+	LXI	H,BUFEND
+	CALL	RESVBF0
+FILLRD:				 ; WM 4668
+	LHLD	TXTEND
+FILRLP:				 ; WM 4671 -- read & clean one input record
+	CALL	RDIN
+	CNC	CLNSEC
+	JNC	FILRSV		; DEVIATION (WM bug): WM is JC L1C6B, which
+	ORA	A		;   skips the store for a full record (CY,
+	JZ	FILRST		;   A=80H), so a file ending on a record
+FILRSV: STA	INLEN		;   boundary w/o ^Z leaves INLEN=0 and PAGEBOT
+				;   RECDECs one record too far (record saved
+				;   twice).  Skip only RDIN's no-record case
+				;   (CY, A=0).
+FILRST:				 ; WM 4677
+	SHLD	TXTEND
+	DCR	C
+	JNZ	FILRLP
+	ORA	A
+FILRET:				 ; WM 4683
+	JMP	POPRET
+
+;RDIN -- WM 4689: read the next input record into [HL] (backup then source).
+RDIN:				; WM 4689
+	CALL	POLLBRK
+	LXI	D,BAKRDY
+	LDAX	D
+	INX	D
+	ORA	A
+	STC
+	CNZ	RDPREV
+	RNC
+	LXI	D,5BH
+	LDAX	D
+	INX	D
+	ORA	A
+	STC
+	CNZ	RDNEXT
+	RET
+
+;CLNSEC -- WM 4709: mask bit 7, stop at ^Z; return live byte count in A.
+CLNSEC:				; WM 4709
+	MVI	B,80H
+CLNLP:				; WM 4712
+	MOV	A,M
+	ANI	7FH
+	MOV	M,A
+	CPI	EOF
+	JZ	CLNEOF
+	INX	H
+	DCR	B
+	JNZ	CLNLP
+	STC
+	MVI	A,80H
+	RET
+CLNEOF:				 ; WM 4725 -- input EOF: return the byte count
+	CALL	IOEOF
+	MVI	A,80H
+	SUB	B
+	RET
+
+;INRDY -- WM 4733: NZ while any input data is still unread.
+INRDY:				; WM 4733
+	PUSH	H
+	LDA	5BH
+	LXI	H,BAKRDY
+	ORA	M
+	STC
+	POP	H
+	RET
+
+;MOREIN -- WM 4743: NZ if more input remains in the current direction
+;(WM's L26AA is OUTACT, the byte before OUTFCB).
+MOREIN:				; WM 4743
+	LDA	DIRFLG
+	ORA	A
+	LDA	OUTACT
+	CP	INRDY
+	ORA	A
+	RET
+
+;============================================================
+; FREE-SPACE ACCOUNTING -- WM 4786-4841.  Reserve/compute the read-ahead room.
+;============================================================
+
+;RESVBF0/RESVBUF -- WM 4786/4790: reserve free buffer space up to BUFHI.
+RESVBF0:			; WM 4786
+	LXI	D,SPILL
+RESVBUF:			; WM 4790
+	PUSH	H
+	LHLD	BUFHI
+	PUSH	D
+	CALL	BUFSUM
+	CALL	CMP16
+	POP	H
+	CC	DISPKEY
+	LHLD	BUFLO
+	DAD	H
+	INR	H
+	INR	H
+	XCHG
+	POP	H
+FREEREC:			; WM 4806 -- free bytes -> capped record count
+	CALL	BUFFREE
+	CPI	BS
+	JC	FRECOK
+	SUI	4H
+	MOV	C,A
+FRECOK:				 ; WM 4813
+	ORA	A
+	RNZ
+MEMSHT:				 ; WM 4817
+	CALL	ERRMSG
+	DB	'MEM SHORTAGE, TRY CLEARING QBUF',0H
+
+;DISPKEY -- WM 2846: PCHL trampoline (call the reserve routine held in HL).
+DISPKEY:			; WM 2846
+	PCHL
+
+;BUFFREE -- WM 4827: collapse the gap and report free bytes (A/C = pages).
+BUFFREE:			; WM 4827
+	CALL	PUTHOLE
+	PUSH	D
+	CALL	BUFSUM
+	POP	H
+	CALL	SUBCP2
+	XCHG
+	DAD	H
+BFRLP:				; WM 4836
+	JC	BFRLP
+	XCHG
+	MOV	A,D
+	MOV	C,D
+	RET
+
+;============================================================
+; SAVCLO -- WM 4846: flush all buffered text to OUTFCB and close it.
+;============================================================
+SAVCLO:				; WM 4846
+	CALL	FILLBF2
+SAVLP:				; WM 4849 -- flush all, refill, repeat
+	CALL	FLUSHTX
+	CALL	FILLBF2
+	JNC	SAVLP
+	LXI	H,TXTBEG
+	CALL	PRSPAN
+	CALL	LDHLI
+	MOV	A,C
+	CALL	STAGSEC
+	LXI	D,OUTFCB
+	CALL	WRRECP
+	JMP	CLOSEF
+
+;CKWRLIM -- WM 4863: CY if GAPBEG is below the PAGEOUT write limit.
+CKWRLIM:			; WM 4863
+	PUSH	H
+	LHLD	WRLIM
+	XCHG
+	LHLD	GAPBEG
+	CALL	SUBHD
+	XCHG
+	POP	H
+	JMP	CMP16
+
+;CKRDLIM -- WM 4874: compare GAPEND against the read limit (PAGEBOT guard).
+CKRDLIM:			; WM 4874
+	PUSH	H
+	LHLD	RDLIM
+	XCHG
+	LHLD	GAPEND
+	DAD	D
+	POP	D
+	CALL	CMP16
+	XCHG
+	RET
+
+;============================================================
+; EVICTION SEAM + DEQUE MARKS.  Transcribed VERBATIM (WM 4335-4962).
+; MKGAP (BUF.MAC) reaches disk only here: MKROOM evicts a window edge (SPILL the
+; TXTBEG side to OUTFCB when scrolling forward, SPILLB the TXTEND side back to
+; the input/backup side when scrolling back).  UPDMARK keeps the three record
+; marks (OUTREC / SRCREC / BAKREC) that let PAGEOUT and PAGEBOT tell "already on
+; disk" from "must transfer", so nothing is written twice or lost.
+; PAGEDIR / PAGEWIN / PGNEED (scroll- and search-time paging) are real below:
+; PAGEDIR picks REWIND (backward, re-read spilled text) vs FILLBUF (forward),
+; and PGNEED / PAGEWIN keep PGMARGN bytes of text resident on the active edge.
+; The editor reaches them through BUF.MAC's PAGESTP and SCRLST (the line moves,
+; the line kill and the search sweep); PGBKTST drives PAGEDIR directly.
+;============================================================
+
+;PAGEDIR -- WM 4320: page more text into the window in the current scroll
+;direction -- REWIND (re-read text previously spilled to OUTFCB) when DIRFLG is
+;backward, else FILLBUF (read more of the input) when forward.
+PAGEDIR:			; WM 4320
+	CALL	POLLBRK
+	LDA	DIRFLG
+	ORA	A
+	JM	REWIND
+	JMP	FILLBUF
+
+;MKROOM -- WM 4335: free gap space by evicting a window edge (DIRFLG picks).
+MKROOM:				; WM 4335
+	LDA	DIRFLG
+	ORA	A
+	STC
+	CM	SPILLB
+	RNC
+	CALL	SPILL
+	RNC
+	JMP	SPILLB
+
+;PAGEWIN -- WM 4350: keep PGMARGN bytes of text buffered around the cursor on
+;the active edge (for a whole-file search); PAGEDIR one increment at a time
+;until PGNEED is satisfied or the source runs out.
+PAGEWIN:			; WM 4350
+	CALL	PGNEED
+	RC
+	CALL	PAGEDIR
+	RC
+	CALL	PGNEED
+	CNC	PAGEDIR
+	ORA	A
+	RET
+
+;PGNEED -- WM 4361: CY if the active edge (TXTBEG scanning back, GAPEND scanning
+;forward) is still within PGMARGN*256 bytes -- i.e. the resident text on that
+;side is shorter than the margin, so more must be paged in.  LHLD MARGLO reads
+;the word whose high byte is PGMARGN and whose low byte (MARGLO) is a fixed 0,
+;yielding PGMARGN*256 (WM does this as LHLD 272F).
+PGNEED:				; WM 4361
+	PUSH	B
+	PUSH	D
+	PUSH	H
+	LDA	DIRFLG
+	ORA	A
+	LXI	D,TXTBEG
+	JM	PGNCMP
+	LXI	D,GAPEND
+PGNCMP:				 ; WM 4371 -- span the active edge, compare to margin
+	LHLD	MARGLO
+	XCHG
+	CALL	PRSPAN
+	MOV	H,B
+	MOV	L,C
+	CALL	CMP16
+	JMP	POPRET
+
+;SPILLB -- WM 4491: evict a batch of bottom (TXTEND-side) sectors via PAGEBOT.
+SPILLB:				; WM 4491
+	PUSH	B
+	PUSH	D
+	PUSH	H
+	CALL	PAGEBOT
+	JC	POPRET
+	LDA	IOBATCH
+	MOV	B,A
+	DCR	B
+	ADD	A
+	MOV	C,A
+	DCR	C
+SPBLP:				; WM 4504 -- evict-batch loop
+	CALL	PAGEBOT
+	DCR	B
+	JZ	SPBDON
+	DCR	C
+	JNZ	SPBLP
+SPBDON:				 ; WM 4511
+	ORA	A
+	JMP	POPRET
+
+;PAGEBOT -- WM 4520: evict the window's bottom sector back to the input side.
+;If it still aligns with the original, un-read the source (RECDEC); otherwise
+;write it to VIBACKUP$$$ -- SRCREC/BAKREC decide which.  Then TXTEND -= 128.
+PAGEBOT:			; WM 4520
+	LHLD	TXTEND
+	CALL	INRDY
+	JNZ	PBSTEP
+	LDA	INLEN
+	MOV	D,A
+	CALL	SUBHA
+	PUSH	H
+	MOV	A,D
+	CALL	STAGSEC
+	JMP	PBRDLM
+PBSTEP:				 ; WM 4532 -- step back one sector at TXTEND
+	LXI	D,0FF80H
+	DAD	D
+	PUSH	H
+PBRDLM:				 ; WM 4537 -- check the read limit
+	XTHL
+	CALL	CKRDLIM
+	XTHL
+	JNC	PBSRC
+	POP	H
+	RET
+PBSRC:				; WM 4545 -- read from the source if its rec is due
+	PUSH	H
+	LHLD	SRCREC
+	XCHG
+	CALL	RECBASE
+	CALL	CMP16
+	POP	H
+	JNC	PBBAK
+	LXI	D,5CH
+	CALL	RECDEC
+	JMP	PBFIN
+PBBAK:				; WM 4557 -- else read / recycle from the backup
+	PUSH	H
+	LHLD	BAKREC
+	XCHG
+	CALL	RECBASE
+	CALL	CMP16
+	POP	H
+	LXI	D,BAKFCB
+	JNC	PBWBAK
+	CALL	RECINC
+	JMP	PBFIN
+PBWBAK:				 ; WM 4569 -- write back a backup record; step BAKREC
+	CALL	WRRECP
+	PUSH	H
+	LHLD	BAKREC
+	DCX	H
+	SHLD	BAKREC
+	POP	H
+	INR	B
+PBFIN:				; WM 4578 -- store new TXTEND; note input remaining
+	CALL	INRDY
+	ORA	A
+	POP	H
+	SHLD	TXTEND
+	RET
+
+;REWIND -- WM 4755: scrolling back, re-read sectors previously spilled to
+;OUTFCB (by random record, stepping backward) and prepend them at TXTBEG.
+;Enabled only when OUTACT marks that text has actually been written out.
+REWIND:				; WM 4755
+	PUSH	B
+	PUSH	D
+	PUSH	H
+	LDA	OUTACT
+	ORA	A
+	STC
+	JZ	RWNRET
+	LXI	D,SPILLB
+	LXI	H,TXTBEG
+	CALL	RESVBUF
+	LHLD	TXTBEG
+RWNLP:				; WM 4768 -- re-read one output record backward
+	CALL	POLLBRK
+	LXI	D,0FF80H
+	DAD	D
+	LXI	D,OUTFCB
+	CALL	RDPREV
+	JC	RWNDON
+	SHLD	TXTBEG
+	PUSH	H
+	LHLD	PGTOPM		; (appended) the window's top moved: 'u' reads
+	INX	H		;   this to know its offsets have shifted
+	SHLD	PGTOPM
+	POP	H
+	DCR	C
+	JNZ	RWNLP
+RWNDON:				 ; WM 4779
+	ORA	A
+RWNRET:				 ; WM 4782
+	JMP	POPRET
+
+;MARKGB -- WM 4886: UPDMARK only when HL points at GAPBEG (falls into UPDMARK).
+MARKGB:				; WM 4886
+	PUSH	D
+	LXI	D,GAPBEG
+	CALL	CMP16
+	POP	D
+	RNZ
+;UPDMARK -- WM 4898: after the gap moves, recompute the record marks that say
+;which records are in RAM: OUTREC (TXTBEG/output side, only rises) and SRCREC /
+;BAKREC (GAPEND/input side, only fall), via PTRREC + RECBASE.
+UPDMARK:			; WM 4898
+	PUSH	B
+	PUSH	D
+	PUSH	H
+	PUSH	PSW
+	LXI	H,TXTBEG
+	CALL	PTRREC
+	LHLD	OUTPOS
+	DAD	D
+	XCHG
+	LHLD	OUTREC
+	CALL	CMP16
+	XCHG
+	JNC	UMKGAP
+	SHLD	OUTREC
+UMKGAP:				 ; WM 4914 -- update the GAPEND-side marks
+	LXI	H,GAPEND
+	CALL	PTRREC
+	CALL	RECBASE
+	CALL	SUBHD
+	XCHG
+	LHLD	SRCREC
+	CALL	CMP16
+	XCHG
+	JC	UMKBAK
+	SHLD	SRCREC
+UMKBAK:				 ; WM 4926 -- lower BAKREC if needed
+	XCHG
+	LHLD	BAKREC
+	CALL	CMP16
+	XCHG
+	JC	UMKDON
+	SHLD	BAKREC
+UMKDON:				 ; WM 4934
+	POP	PSW
+	JMP	POPRET
+
+;RECBASE -- WM 4939: disk record base for the buffer (BAKPOS - source_rec + 7FFF).
+;7EH is the source FCB's random-record word (FCB 005C + 22H).
+RECBASE:			; WM 4939
+	PUSH	D
+	LHLD	BAKPOS
+	XCHG
+	LHLD	7EH
+	CALL	SUBHD
+	LXI	D,7FFFH
+	DAD	D
+	POP	D
+	RET
+
+;PTRREC -- WM 4951: DE = record number (128-byte) for the pointer pair at HL.
+PTRREC:				; WM 4951
+	CALL	PRSPAN
+	MOV	H,B
+	MOV	L,C
+	DAD	H
+	MOV	E,H
+	MVI	D,0H
+	JNC	PTRRET
+	INR	D
+PTRRET:				 ; WM 4961
+	RET
+
+;SUBHA -- WM 2066: HL := HL - A.
+SUBHA:				; WM 2066
+	PUSH	H
+	MOV	H,A
+	MOV	A,L
+	SUB	H
+	POP	H
+	MOV	L,A
+	MOV	A,H
+	SBI	0H
+	MOV	H,A
+	RET
+
+;============================================================
+; BDOS GLUE -- WM 5396-5424.
+;============================================================
+
+;BDOSFN -- WM 5396: set DMA=80H, then fall into BDOSC for the inline fn.
+BDOSFN:				; WM 5396
+	PUSH	D
+	LXI	D,80H
+	CALL	BDOSC
+	DB	1AH
+	POP	D
+;BDOSC -- WM 5412: BDOS call with the fn number stored inline after the CALL.
+BDOSC:				; WM 5412
+	XTHL
+	PUSH	B
+	MOV	C,M
+	INX	H
+	PUSH	D
+	PUSH	H
+	CALL	5H
+	POP	H
+	POP	D
+	POP	B
+	XTHL
+	RET
+
+;FATAL -- WM 5429 (deviation 2): share ERRMSG's tail.
+FATAL:				; WM 5429
+	JMP	ERRMSG
+
+;============================================================
+; FILE PRIMITIVES -- WM 5436-5566.
+;============================================================
+
+;OPENF -- WM 5438: BDOS-open the FCB at DE, then zero its random-record bytes.
+OPENF:				; WM 5438
+	CALL	BDOSFN
+	DB	0FH
+	INR	A
+ZERORR:				; WM 5444 -- zero FCB+22H/+23H
+	PUSH	H
+	LXI	H,23H
+	DAD	D
+	MVI	M,0H
+	DCX	H
+	MVI	M,0H
+	POP	H
+	RET
+
+;CLSBAK/CLOSEC -- WM 5455/5459: close the FCB at DE if its open flag is set.
+CLSBAK:				; WM 5455
+	LXI	D,BAKFCB
+CLOSEC:				; WM 5459
+	DCX	D
+	DCX	D
+	LDAX	D
+	INX	D
+	INX	D
+	ORA	A
+	RZ
+;CLOSEF -- WM 5469: BDOS-close the file; FATAL 'CLOSE ERR' on failure.
+CLOSEF:				; WM 5469
+	CALL	BDOSFN
+	DB	10H
+	INR	A
+	RNZ
+	CALL	FATAL
+	DB	'CLOSE ERR',0H
+
+;KILLBAK -- WM 5478: close then delete VIBACKUP$$$ (BAKFCB).
+KILLBAK:			; WM 5478
+	LXI	D,BAKFCB
+	CALL	CLOSEC
+;DELF -- WM 5483: BDOS-delete the file named by the FCB at DE.
+DELF:				; WM 5483
+	CALL	BDOSFN
+	DB	13H
+	DCX	D
+	CALL	IOEOF
+	INX	D
+	JMP	IOEOF
+
+;DELRST -- WM 5492: delete the FCB's file, then ZERORR (prep a fresh file).
+DELRST:				; WM 5492
+	CALL	DELF
+	CALL	ZERORR
+;MAKEF -- WM 5497: BDOS-create the file; FATAL 'DIRECTORY FULL' on failure.
+MAKEF:				; WM 5497
+	CALL	BDOSFN
+	DB	16H
+	INR	A
+	RNZ
+DIRFUL:				 ; WM 5503
+	CALL	FATAL
+	DB	'DIRECTORY FULL',0H
+
+;RENAME -- WM 5534: rename the file on the FCB at DE to the 3-byte type at HL.
+RENAME:				; WM 5534
+	PUSH	B
+	PUSH	D
+	PUSH	H
+	PUSH	D
+	LXI	H,10H
+	DAD	D
+	LXI	B,10H
+	XCHG
+	CALL	MEMCPY
+	MVI	M,0H
+	POP	D
+	LXI	H,19H
+	DAD	D
+	XCHG
+	POP	H
+	PUSH	H
+	CALL	CPYTYP
+	POP	H
+	POP	D
+	POP	B
+;RENF -- WM 5557: BDOS-rename; FATAL 'RENAME FAILURE' (CP/M-1 only) on failure.
+RENF:				; WM 5557
+	CALL	BDOSFN
+	DB	17H
+	INR	A
+	RNZ
+	LDA	CPMNEW
+	ORA	A
+	RNZ
+	CALL	FATAL
+	DB	'RENAME FAILURE',0H
+
+;CPYBAK/CPYTYP -- WM 5178/5182: copy a 3-byte file type from [HL] to [DE].
+CPYBAK:				; WM 5178
+	LXI	H,BAKEXT
+CPYTYP:				; WM 5182
+	LXI	B,3H
+	JMP	MEMCPY
+
+;============================================================
+; RANDOM-RECORD ENGINE -- WM 5568-5789.
+;============================================================
+
+;RDNEXT -- WM 5569: RDSEC, then advance the record number.
+RDNEXT:				; WM 5569
+	CALL	RDSEC
+	CNC	RECINC
+	RET
+
+;RDPREV -- WM 5575: step the record number back, then RDSEC.
+RDPREV:				; WM 5575
+	CALL	RECDEC
+	RC
+;RDSEC -- WM 5588: read one record into [HL] (CY on EOF).
+RDSEC:				; WM 5588
+	CALL	KBPOLL		; WM: CALL GETKEY
+	XRA	A
+	CALL	SETREC
+	JC	IOEOF
+	CALL	BDOSC
+	DB	14H
+	ORA	A
+	DCR	A
+	RNZ
+;IOEOF -- WM 5600: mark an I/O read as EOF (zero count, set carry).
+IOEOF:				; WM 5600
+	DCX	D
+	XRA	A
+	STAX	D
+	INX	D
+	STC
+	RET
+
+;WRREC -- WM 5609: write one record with extent / DISK FULL handling.
+WRREC:				; WM 5609
+	PUSH	H
+	MOV	H,D
+	MOV	L,E
+	DCX	H
+	DCX	H
+	MOV	A,M
+	ORA	A
+	CZ	DELRST
+	MVI	M,0FFH
+	MVI	A,0FFH
+	STA	WRKMAD		; APPENDED: a work file exists -> DISCRD must run
+	POP	H
+	CALL	WRSEC
+	RNZ
+	PUSH	PSW
+	PUSH	H
+	LXI	H,BAKFCB
+	CALL	CMP16
+	POP	H
+	JZ	DSKFUL
+	LDA	BAKRDY
+	ORA	A
+	PUSH	D
+	CZ	KILLBAK
+	POP	D
+	POP	PSW
+	CALL	WRSEC
+	RNZ
+	PUSH	PSW
+DSKFUL:				 ; WM 5638 -- DISK FULL on a write error
+	POP	PSW
+	CPI	2H
+	JNZ	DIRFUL
+DSKERR: CALL	ERRMSG
+	DB	'DISK FULL',0H
+
+;WRSEC -- WM 5646: BDOS write-seq one record from [HL]; return disk status.
+WRSEC:				; WM 5646
+	CALL	SETRCW
+	CALL	BDOSC
+	DB	15H
+	CPI	1H
+	RZ
+	CPI	0FFH
+	RZ
+	CPI	2H
+	RET
+
+;WRRECP -- WM 5674: poll ^C-break, then WRREC; WRRECA writes then advances.
+WRRECP:				; WM 5674
+	CALL	POLLBRK
+WRRECA:				; WM 5678
+	CALL	WRREC
+;RECINC -- WM 5682: FCB random-record number += 1.
+RECINC:				; WM 5682
+	PUSH	B
+	LXI	B,1H
+	JMP	RECADJ
+;RECDEC -- WM 5688: FCB random-record number += -1.
+RECDEC:				; WM 5688
+	PUSH	B
+	LXI	B,0FFFFH
+RECADJ:				 ; WM 5692 -- adjust FCB+22/23 by BC
+	PUSH	D
+	PUSH	H
+	DCX	D
+	MVI	A,0FFH
+	STAX	D
+	LXI	H,23H
+	DAD	D
+	PUSH	H
+	CALL	LDHLI
+	DAD	B
+	MOV	A,H
+	ANA	L
+	INR	A
+	JZ	RECWRP
+	XCHG
+	POP	H
+	MOV	M,E
+	INX	H
+	MOV	M,D
+	ORA	A
+	JMP	POPRET
+RECWRP:				 ; WM 5715 -- wrapped / overflow: flag EOF
+	XRA	A
+	STAX	D
+	STC
+	POP	H
+	JMP	POPRET
+
+;SETRCW/SETREC -- WM 5723/5733: prepare an FCB (DE) for the next record I/O.
+SETRCW:			       ; WM 5723
+	MVI	A,0FFH
+SETREC:				; WM 5733
+	PUSH	B
+	MOV	B,A
+	PUSH	H
+	LXI	H,22H
+	DAD	D
+	CALL	LDHLI
+	MOV	A,L
+	ANI	7FH
+	MOV	C,A
+	DAD	H
+	MOV	A,H
+	LXI	H,0CH
+	DAD	D
+	CMP	M
+	JZ	SETRCR
+	PUSH	H
+	PUSH	PSW
+	LXI	H,21H
+	DAD	D
+	MOV	A,M
+	ORA	A
+	CNZ	CLOSEF
+	MVI	M,0H
+	POP	PSW
+	POP	H
+	MOV	M,A
+	CALL	BDOSFN
+	DB	0FH
+	INR	A
+	JNZ	SETRCR
+	MOV	A,B
+	ORA	A
+	STC
+	JZ	SETDMA
+	CALL	MAKEF
+SETRCR:				; WM 5771 -- extent already open: set CR + DMA
+	LXI	H,20H
+	DAD	D
+	MOV	M,C
+	INX	H
+	MOV	A,M
+	ORA	B
+	MOV	M,A
+SETDMA:				 ; WM 5780 -- set the DMA address (BDOS 1A)
+	POP	H
+	PUSH	PSW
+	XCHG
+	CALL	BDOSC
+	DB	1AH
+	XCHG
+	POP	PSW
+	POP	B
+	RET
+
+;============================================================
+; TYPE-AHEAD POLL -- WM 6199 (POLLBRK).
+;============================================================
+;POLLBRK -- WM 6199: drain type-ahead during long operations so keys typed at
+;9600 baud are queued, not lost.  WM's CALL GETKEY is KEY.MAC's KBPOLL (the
+;ring lives there).  Only WM's non-interruptible path (L26A5 = 0) is kept;
+;the ^C 'INTERRUPTED' path (L23E3/CKBRK) belongs to WM's command language.
+POLLBRK:			; WM 6199
+	PUSH	PSW
+	CALL	KBPOLL
+	POP	PSW
+	RET
+
+;============================================================
+; DATA -- FCBs, sector buffer, pager marks and constants.
+; The disassembly renders these cells as aliased code bytes; only their layout
+; is authoritative.  OPENFIL sets the live ones at run time.  Each FCB is
+; preceded by two flag bytes: [FCB-2] = WRREC/CLOSEC per-file open flag,
+; [FCB-1] = the file's has-data flag (WM layout: OUTACT before OUTFCB, BAKRDY
+; before BAKFCB; source uses 005BH before the CCP FCB at 005CH).
+;============================================================
+;WM's marks OUTPOS (0x26CD) and BAKPOS (0x26F3) are NOT separate cells -- the
+;authoritative wm_map.py addresses show they ARE FCB random-record fields:
+;OUTPOS = OUTFCB(0x26AB)+22H and BAKPOS = BAKFCB(0x26D1)+22H.  They advance with
+;the file automatically: RECINC/RECDEC/WRRECP step FCB+22H, so OUTPOS is OUTFCB's
+;current write position and PAGEOUT's "OUTREC vs OUTPOS" compare skips exactly the
+;records REWIND already pulled back.  A separate static cell would never
+;advance, and the save would stop after its first record.
+	DB	0		; OUTFCB-2 : WRREC/CLOSEC open flag
+OUTACT:	 DB	 0		 ; OUTFCB-1 : out-side active flag
+OUTFCB: DS	36		; output file (name.$$$)
+OUTTYP	EQU	OUTFCB+9	; OUTFCB type field ('$$$' / briefly 'BAK')
+OUTPOS	 EQU	 OUTFCB+22H	 ; OUTFCB random-record word (write position)
+
+	DB	0		; BAKFCB-2 : WRREC/CLOSEC open flag
+BAKRDY: DB	0		; BAKFCB-1 : backup-has-data flag
+BAKFCB: DS	36		; backup file (VIBACKUP$$$)
+BAKPOS	 EQU	 BAKFCB+22H	 ; BAKFCB random-record word (RECBASE input base)
+
+BAKNAM:	 DB	 'VIBACKUP$$$'	  ; WM 520 -- BAKFCB name (WM: WMBACKUP$$$)
+BAKTYP	EQU	BAKNAM+8	 ; the '$$$' substring (WM BAKTYP EQU 443H)
+BAKEXT: DB	'BAK'		; WM 5245 -- the .BAK rename type
+
+PGTOPM: DW	0		; (appended) times the pager moved TXTBEG --
+				;   the window signature 'u' checks (see BUF.MAC)
+OUTREC: DW	0		; output write high-water (record)
+SRCREC: DW	0		; source read low-water (record)
+BAKREC: DW	0		; backup read low-water (record)
+INLEN:	DB	0		; last input record byte count
+DSTDRV: DB	0		; nonzero if output is on a different drive
+NEWFIL: DB	0		; nonzero if the source did not exist
+AUXCNT: DW	0		; WM L271E -- must follow NEWFIL: GOLINE's
+				;   LHLD NEWFIL / DAD H tests its low byte
+DIRFLG: DB	0		; scroll/search direction (neg = backward)
+CPMNEW: DB	0FFH		; nonzero = CP/M 2.x+ (tolerant rename)
+
+;--- APPENDED (NOT WordMaster).  Kept clear of NEWFIL/AUXCNT: GOLINE reads the
+;    byte after NEWFIL as AUXCNT's low byte.
+WRKMAD: DB	0		; a work record has been written, so name.$$$ /
+				;   VIBACKUP$$$ may exist (DISCRD tests it)
+SKREC:	DW	0		; SEEKTO: target record (APPENDED, not WM)
+SKBYT:	DB	0		; SEEKTO: target byte in that record
+CLREC:	DW	0		; CNTLF: OUTPOS on entry
+CLCNT:	DW	0		; CNTLF: line feeds counted
+	DB	0		; TFCB-2 : WRREC/CLOSEC open flag (DELF clears)
+	DB	0		; TFCB-1
+TFCB:	DS	36		; WRTO / TEXIST: the target file
+
+WRLIM:	DW	0		; PAGEOUT write limit (set to PGINIT / 81H)
+RDLIM:	DW	0		; PAGEBOT read limit (set to PGINIT)
+BUFLO:	DW	0		; buffer low-water reserve (PGCONST)
+BUFHI:	DW	0		; buffer high-water fill target (PGCONST)
+PGSCAL:DB      0	       ; memory-scaled batch count (PGCONST)
+PGSCL2:DB      0	       ; = PGSCAL*2 (SPILL arithmetic)
+MARGLO: DB	0		; WM 272F: fixed 0 low byte so LHLD MARGLO = PGMARGN*256
+PGMARGN:DB	0		; paging low-water margin in pages
+IOBATCH:DB	0		; records per read-ahead / write-behind batch
+PGSCRA:	 DB	 0		 ; (PGCONST scratch; nothing reads it)
+SPLCNT:	 DB	 0		 ; SPILL batch counter
+
+	END

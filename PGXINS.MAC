@@ -1,0 +1,138 @@
+;============================================================
+; FILE:    PGXINS.MAC
+; PROJECT: VI
+; MODULE:  INSERT-OVERFLOW exerciser (test harness -- NOT editor code).
+;
+; PGXTST proved the SAVE-side write-behind (FLUSHTX/FILLBF2/PAGEOUT) under real
+; paging.  PGXINS proves the OTHER forward path: the editing seam MKGAP->MKROOM->
+; SPILL that fires when an insert fills the RAM window, evicting the TXTBEG side
+; to OUTFCB mid-edit -- WordMaster's whole reason for existing (edit a file bigger
+; than RAM).
+;
+; Battery:
+;   1. BINIT + WINCAP  -- BUFEND := TXTBEG + WINSIZE (small window, as PGXTST)
+;   2. OPENFIL         -- load a SMALL file that fits entirely (no load paging)
+;   3. insert loop     -- PUTCUR to INSOFF, then INSBLK a 128-byte block K times.
+;                         Total inserted (K*128) far exceeds the window, so MKGAP
+;                         repeatedly calls MKROOM->SPILL: TXTBEG advances past
+;                         TXTBAS and OUTREC rises (records land in OUTFCB mid-edit)
+;   4. snapshot        -- SNTXTB = TXTBEG, SNOUTR = OUTREC just after the inserts,
+;                         so pgxins.py can confirm eviction actually fired
+;   5. SAVEFIL         -- SAVCLO drains the rest; the deque marks (OUTREC/OUTPOS)
+;                         make PAGEOUT skip the records already spilled, so OUTFCB
+;                         ends up holding the whole file, in order, exactly once
+;
+; Each block copy is stamped with its 2-digit iteration index (BLOCK+0/+1) so a
+; dropped, duplicated or mis-ordered record shifts the byte-compare, not just the
+; length.  pgxins.py byte-compares logical[:INSOFF] + block(0..K-1) + logical[INSOFF:].
+;============================================================
+
+WBOOT	EQU	0
+
+	EXTRN	BINIT
+	EXTRN	OPENFIL, SAVEFIL
+	EXTRN	INSBLK, PUTCUR
+	EXTRN	TXTBEG, GAPBEG, GAPEND, TXTEND, BUFEND, TXTBAS
+	EXTRN	OUTREC
+
+WINSIZE EQU	1800H		; forced window (~6 KB), same as PGXTST
+INSOFF	EQU	60		; insert at this logical offset (inside the file)
+NBLK	EQU	48		; blocks to insert (48 * 128 = 6144 bytes >> window)
+BLKLN	EQU	128		; one block = exactly one record
+
+	PUBLIC	INSLEN, SNTXTB, SNOUTR, SNTXTA, DONE
+	PUBLIC	CNTTST			; BUF.MAC PAGESTP count-test (resident stub)
+	PUBLIC	CMDCNT, KBPOLL		; BUF.MAC line-move EXTRNs (stubbed)
+
+	CSEG
+
+;============================================================
+; The battery.
+;============================================================
+START:	LXI	SP,STACK
+	CALL	BINIT
+;--- WINCAP: shrink the window ---
+	LHLD	TXTBEG		; = TXTBAS just after BINIT
+	LXI	D,WINSIZE
+	DAD	D
+	SHLD	BUFEND
+	CALL	OPENFIL		; load the (small) command-tail file -- fits
+;--- move the cursor to INSOFF ---
+	LHLD	GAPEND		; cursor at start -> GAPEND is logical offset 0
+	LXI	D,INSOFF
+	DAD	D
+	CALL	PUTCUR
+;--- insert NBLK stamped blocks; MKROOM fires once the window fills ---
+	MVI	A,'0'
+	STA	TENS
+	STA	UNITS
+	MVI	B,NBLK
+INSLP:
+	LDA	TENS		; stamp this block with its iteration index
+	STA	BLOCK
+	LDA	UNITS
+	STA	BLOCK+1
+	PUSH	B
+	LXI	D,BLOCK
+	LXI	B,BLKLN
+	CALL	INSBLK		; splice one block at the cursor (may page out)
+	POP	B
+	LDA	UNITS		; bump the 2-digit index
+	INR	A
+	CPI	'9'+1
+	JNZ	PUTU
+	MVI	A,'0'
+	STA	UNITS
+	LDA	TENS
+	INR	A
+	STA	TENS
+	JMP	INSNXT
+PUTU:	STA	UNITS
+INSNXT:
+	DCR	B
+	JNZ	INSLP
+;--- snapshot the eviction evidence BEFORE the save drains the window ---
+	LHLD	TXTBEG
+	SHLD	SNTXTB		; > TXTBAS if the top edge was evicted
+	LHLD	OUTREC
+	SHLD	SNOUTR		; > 0 if records were spilled to OUTFCB mid-edit
+	LHLD	TXTBAS
+	SHLD	SNTXTA		; the base, so the harness can compare
+;--- save it all back out ---
+	CALL	SAVEFIL
+	MVI	A,0FFH
+	STA	DONE
+	JMP	WBOOT
+
+;CNTTST -- stub for BUF.MAC's PAGESTP (DELTO's tail): resident battery, so Z
+; ("count exhausted") is correct -- PAGESTP returns instead of CALLing an
+; unresolved-to-0000 (WBOOT) symbol.  See BUFTST for the full note.
+CNTTST:
+	XRA	A
+	RET
+;CMDCNT / KBPOLL -- stubs for BUF.MAC's line move (GOLINE/SCRLST): no command
+; count and no keyboard in this batch battery.
+KBPOLL:
+	RET
+CMDCNT: DW	0
+
+;------------------------------------------------------------
+; Data
+;------------------------------------------------------------
+TENS:	DB	'0'		; running 2-digit block index
+UNITS:	DB	'0'
+BLOCK:	DB	'0000'		; [0][1] = index (stamped), [2][3] = '00' filler
+	REPT	124
+	DB	'.'		; ... then 124 dots -> 128-byte block (1 record)
+	ENDM
+
+INSLEN: DW	NBLK*BLKLN	; total inserted bytes (harness convenience)
+SNTXTB: DW	0		; TXTBEG after the insert loop
+SNOUTR: DW	0		; OUTREC after the insert loop
+SNTXTA: DW	0		; TXTBAS (window base) for comparison
+DONE:	DB	0
+
+	DS	64
+STACK:
+
+	END	START
