@@ -74,6 +74,15 @@ CASES = [
     ("put-P",           PLAIN, ["10j", "yy"],      "P",   300),
     ("put-p-3lines",    PLAIN, ["10j", "3yy"],     "p",   450),
     ("put-2p",          PLAIN, ["10j", "yy"],      "2p",  450),
+    # A yank changes NOTHING, so it has nothing to draw: not the register's
+    # lines, not the cursor, which it leaves where it found it.  The last row
+    # is the count vim refuses on the last line -- a command that does nothing
+    # at all, which used to cost a frame like the rest of them.
+    ("yank-yy",         PLAIN, ["10j"],            "yy",  300),
+    ("yank-3yy",        PLAIN, ["10j"],            "3yy", 300),
+    ("yank-yy-wide",    WIDE,  ["10j"],            "yy",  300),
+    ("yank-y-motion",   PLAIN, ["10j"],            "yj",  300),
+    ("yank-yy-last",    PLAIN, ["G"],              "2yy", 300),
     ("undo-u",          PLAIN, ["10j", "5l", "x"], "u",   None),
     ("redraw-ctrl-L",   PLAIN, ["10j"],            "\x0c", None),
 ]

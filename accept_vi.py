@@ -2151,6 +2151,42 @@ VIM_PUT = [
       (2, 0, 'bbb', '  aaa'),
       (2, 0, 'bbb', '  aaa'),
       (3, 2, '  aaa', '  aaa')]),
+    # A yank on a PAGED file, which is where BOTH ways of taking one run.  The
+    # copy that leaves the lines where they are (CMD.MAC's YNCOPY) needs the
+    # span free in the arena and its count's lines inside the resident window;
+    # where either fails they are taken out with dd's engine and put straight
+    # back, the way every yank used to work.  Measured here at line 2500 of the
+    # 40 K file, where the window leaves 7394 bytes free: 'yy' is copied and so
+    # is '60yy' (480 bytes -- two chunks of the copy loop, so the source is
+    # re-derived mid-copy), while '500yy' runs off the end of the resident text
+    # and only the pager can say where its lines are, so it goes the old way.
+    # 'G 2yy' is the count vim refuses on the last line, and at the end of a
+    # paged file the text alone cannot say that this IS the last line -- the
+    # input file is not known to be finished -- so that goes the old way too
+    # and must still refuse, register untouched.  Same lines, same file, all
+    # four ways.
+    ('5120', ['2500G', 'yy', 'p'], '3e2806c1b9b1f3d6',
+     [(11, 0, '002500', '002489'),
+      (11, 0, '002500', '002489'),
+      (12, 0, '002500', '002489')]),
+    ('5120', ['2500G', '60yy', 'G', 'p'], 'f2387aaa0a5b29fc',
+     [(11, 0, '002500', '002489'),
+      (11, 0, '002500', '002489'),
+      (22, 0, '005120', '005098'),
+      (22, 0, '002500', '005099')]),
+    ('5120', ['2500G', '500yy', 'G', 'p'], '11ff29f22fae3dfb',
+     [(11, 0, '002500', '002489'),
+      (11, 0, '002500', '002489'),
+      (22, 0, '005120', '005098'),
+      (22, 0, '002500', '005099')]),
+    ('5120', ['G', '2yy', 'p'], 'c4c3ab9e6a003a32',
+     [(22, 0, '005120', '005098'),
+      (22, 0, '005120', '005098'),
+      (22, 0, '005120', '005098')]),
+    ('wide', ['700G', '3yy', 'p'], 'ea6a40360e421c1b',
+     [(11, 0, '000700', '000689'),
+      (11, 0, '000700', '000689'),
+      (12, 0, '000700', '000689')]),
 ]
 
 

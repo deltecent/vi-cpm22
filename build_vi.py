@@ -126,10 +126,13 @@ def run_build(target):
         # Move every source onto the CP/M disk via R (host -> guest).
         # VI.INC is INCLUDEd; the rest are assembled + linked.
         # VI.SUB rides along so an in-CP/M `SUBMIT VI` build works too.
+        # The sources are a third of a megabyte and go over the host bridge a
+        # byte at a time, so this is minutes, not seconds: it needs a timeout
+        # of its own rather than the 60 s an ordinary CCP command gets.
         print("  R *.INC, *.MAC, VI.SUB -> CP/M disk")
-        sim.rfile("*.INC")
-        sim.rfile("*.MAC")
-        sim.rfile("VI.SUB")
+        sim.rfile("*.INC", timeout=600)
+        sim.rfile("*.MAC", timeout=600)
+        sim.rfile("VI.SUB", timeout=600)
 
         for mod in modules:
             cmd(f"ERA {mod}.REL", timeout=60)
@@ -149,13 +152,15 @@ def run_build(target):
         print(f"  L80 {link},{target}/Y/N/E  [{len(l80)} chars]")
         cmd(l80)
 
-        # Pull the artifacts back to the host via W (guest -> host).
-        sim.wfile(f"{target}.COM")        # .COM implies binary
-        sim.wfile(f"{target}.SYM", "T")   # symbol table is text
+        # Pull the artifacts back to the host via W (guest -> host).  Same
+        # bridge, same arithmetic as the R step above: CMD.PRN alone is most of
+        # a megabyte, so these get their own timeout too.
+        sim.wfile(f"{target}.COM", timeout=600)        # .COM implies binary
+        sim.wfile(f"{target}.SYM", "T", timeout=600)   # symbol table is text
 
         # Also pull each module's M80 listing (.PRN, text) alongside the sources.
         for mod in modules:
-            sim.wfile(f"{mod}.PRN", "T")
+            sim.wfile(f"{mod}.PRN", "T", timeout=600)
 
     text = "\n".join(console)
     up = text.upper()

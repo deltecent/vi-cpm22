@@ -64,6 +64,7 @@ RESVMEM EQU	0D80H		; WM 25: the arena QROOM keeps free past
 
 ;--- The Q-buffer: the vi layer's yank register.  WM.ASM 1528-1600. ----------
 	PUBLIC	QCOPY, QGET, QKILL, QROOM, QPUTLN
+	PUBLIC	QCPYN			 ; ... and the APPENDED copy that does not delete
 
 ;--- String search: the pattern and the two matchers.  WM.ASM 2035-2150. -----
 	PUBLIC	MATCHF, MATCHB, FWDCNT, SUBLEN
@@ -348,6 +349,55 @@ QCPYLP:				; WM 1566
 	DCR	B
 	JNZ	QCPYLP
 	RET
+
+;QCPYN -- APPENDED (NOT WordMaster): copy BC bytes forward from the cursor into
+;the Q-buffer WITHOUT taking them out of the text.  This is the verb WordMaster
+;has no need of: QCOPY above copies by DELETING, and can re-read its source
+;from GAPEND on every chunk precisely BECAUSE the delete advances GAPEND past
+;what it has taken.  A copy that leaves the text alone has no such pointer --
+;MKGAP may MOVGAP between chunks, which relocates the text and fixes up only
+;the pointer row.
+;
+;What survives MOVGAP is a COUNT, so that is what this keeps: the source is
+;GAPEND plus the bytes already moved, worked out afresh each chunk.  What no
+;count survives is MKGAP reaching MKROOM -- a spill writes resident text out to
+;disk and the source is then not in RAM at all -- so the CALLER must show there
+;is room for the whole copy before calling (CMD.MAC's YNROOM: the span plus a
+;chunk's slack, free).  With that held every MKGAP here finds 256 bytes free
+;and relocates rather than pages.
+;
+;The text is not touched: no delete, no UPDMARK, and nothing for 'u' to capture.
+;The caller is expected to have QKILLed: this appends, as QCOPY does.
+QCPYN:				; (appended) BC = the span at the cursor
+	LXI	H,0
+	SHLD	QCPDON		; nothing of it has gone in yet
+	CALL	CKLEN		; B = chunks, C = the first chunk's length
+	JZ	QCPYND		; an empty span: nothing to do
+QCPYNL:
+	LXI	H,QEND
+	CALL	MKGAP		; room for a chunk above the register
+	CALL	QROOM		; ... and the register's own ceiling
+	LHLD	QCPDON		; where this chunk's source lies NOW
+	XCHG
+	LHLD	GAPEND
+	DAD	D
+	XCHG			; DE = the source
+	LXI	H,QEND
+	CALL	CPYGAP		; C bytes [DE] -> the register, QEND advanced
+	XCHG			; HL = the source past the chunk
+	PUSH	H
+	LHLD	GAPEND		; (re-read: CPYGAP cannot have moved it, but the
+	XCHG			;   next pass's MKGAP can, so the COUNT is what
+	POP	H		;   is kept)
+	CALL	SUBHD		; HL = what has gone in altogether
+	SHLD	QCPDON
+	DCR	B
+	JNZ	QCPYNL
+QCPYND:
+	ORA	A		; NC, and it has to be SAID: the last thing through
+	RET			;   here was SUBHD, whose DAD leaves the carry set,
+				;   and the caller reads the carry to tell a copy
+				;   that ran from one that could not
 
 ;QGET -- WM 1541: splice the whole Q-buffer into the text at the cursor.
 QGET:				; WM 1541
@@ -2213,6 +2263,7 @@ SRCHBF: DB	0		; the pattern length
 SRCHST: DS	SRMAX+1		; the pattern, 0-terminated
 
 L2756:	DW	0		; WM L2756 -- GOLINE's last target position
+QCPDON: DW	0		; (appended) QCPYN: bytes already copied in
 ;--- 'u' (undo): see the UNDO section above for how these are driven.
 UNDN:	DB	0		; steps captured (0 = nothing to undo)
 UNDST:	DB	0		; 0 none, 1 change applied ('u' undoes it),

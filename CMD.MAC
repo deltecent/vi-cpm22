@@ -64,6 +64,8 @@
 	EXTRN	CLRCNT				; BUF.MAC -- WM count/direction reset
 	EXTRN	DELLN, SETC0			; BUF.MAC -- WM line kill (dd)
 	EXTRN	QPUTLN, QGET, QKILL		; BUF.MAC -- the yank register
+	EXTRN	QCPYN, BUFSUM			; ... the copy that does not delete
+	EXTRN	INRDY				; PAGE.MAC -- is any of the file unread
 	EXTRN	QBEG, QEND			; BUF.MAC -- ... and whether it is empty
 	EXTRN	LFCNT				; BUF.MAC -- LFs in a span (p/P row)
 	EXTRN	INSSTR				; BUF.MAC -- splice WM's string
@@ -3368,18 +3370,20 @@ VC_Y:
 	JMP	SETMOV
 
 ;VY_YY -- 'yy' / 'Y': count whole lines into the register, the file unchanged.
-; WordMaster has no copy-without-delete -- QCOPY's source is always GAPEND, and
-; a non-deleting chunked copy has no pointer the gap machinery would keep valid
-; across its MKGAP (MOVGAP fixes up the pointer row only, and MKROOM can page
-; the source out entirely) -- so the lines are taken out with dd's own engine
-; and put straight back with QGET.  The file is therefore briefly short, and
-; MODF is put back afterwards: a yank must not mark the file modified.
-; The paint is forced full: the delete and re-insert may have paged.
+; The copy that leaves the lines where they are (YNCOPY, below) runs whenever
+; it can.  Where it cannot -- no room in the arena for the span, or a count
+; whose lines are not all in the resident text to be measured -- they are taken
+; out with dd's own engine and put straight back with QGET (YKGO), which leaves
+; the right text behind but has to hold everything else still while it runs and
+; repaint the screen whole afterwards.
 VY_YY:
 	CALL	CUROFF
 	SHLD	YOFF		; the cursor, which a yank leaves alone
 	CALL	BOL
 	SHLD	YPT		; where the lines come from, to put them back
+	CALL	YNPRE		; the window it starts in, for YNDONE's paint
+	CALL	YNCOPY		; copied where they lie, if that can be done
+	JNC	YNDONE
 	LXI	H,VD_DD		; the count's worth of them, dd's own engine
 	JMP	YKGO
 
@@ -3403,13 +3407,22 @@ OPY_LO:
 	SHLD	YOFF
 	LHLD	OPLO
 	SHLD	YPT		; where the lines come from, to put them back
+	CALL	YNPRE		; the window it starts in, for YNDONE's paint
+	CALL	YNSPAN		; copied where they lie, if there is room
+	JNC	YNDONE
 	LXI	H,YSPAN
+	JMP	YKGO
 
 ;YKGO -- HL = how this yank takes its lines out.  WordMaster has no copy-without-
 ; delete (see the section head), so either way they come out and go straight
 ; back, and everything a change would leave behind is put back with them.
 YKGO:
 	SHLD	YACT
+	LHLD	YPT		; how far INTO the lines being taken the cursor
+	XCHG			;   sits.  A logical offset (YOFF) does not
+	LHLD	YOFF		;   survive this -- the put-back below can page
+	CALL	SUBHD		;   the window's top out and shift every one of
+	SHLD	YCOL		;   them -- but a distance within the lines does
 	LDA	MODF
 	STA	YMODF
 	LDA	DOTCHG		; ... and the '.' recorder's own change flag:
@@ -3439,9 +3452,34 @@ YKGO:
 	LHLD	YPT
 	CALL	GOTO
 	CALL	QGET		; and straight back in
-YK_FIN:
-	LHLD	YOFF
+	;--- Putting them back can PAGE: QGET splices the register through
+	;    INSBLK, whose MKGAP reaches MKROOM when the arena is tight, and a
+	;    spill writes the window's top out to disk -- which moves TXTBEG and
+	;    shifts every logical offset under us, YOFF among them.  ('500yy' at
+	;    line 2500 of a 40 K file spills 48 records and used to land the
+	;    cursor 573 lines below where it started; a yank moves the cursor
+	;    nowhere.)  So the cursor is found again from the lines THEMSELVES:
+	;    QGET leaves it just past them, so they start at the cursor less the
+	;    register's length, and the cursor was YCOL bytes into them.  Both
+	;    terms are read AFTER the paging, so neither can be stale. ---
+	CALL	CUROFF		; where QGET left it: just past the lines
+	SHLD	YBLK
+	LHLD	QBEG
+	XCHG
+	LHLD	QEND
+	CALL	SUBHD		; HL = the register's length = what went back
+	XCHG
+	LHLD	YBLK
+	CALL	SUBHD		; HL = where those lines start NOW
+	XCHG
+	LHLD	YCOL
+	DAD	D		; ... and the cursor is YCOL into them
 	CALL	GOTO
+	JMP	YK_RST
+YK_FIN:				; nothing came out, so nothing was put back and
+	LHLD	YOFF		;   no offset can have shifted: the cursor is
+	CALL	GOTO		;   where it was
+YK_RST:
 	LHLD	YLDLT
 	SHLD	LNDLT		; nothing moved: the cursor is on the row it was
 	LDA	YMODF
@@ -3497,6 +3535,225 @@ YS_LP:
 	JNZ	YS_LP		;   but never spin here if it ever did
 YS_END:
 	JMP	MARKMOD
+
+;============================================================
+; THE YANK THAT COPIES  (APPENDED -- NOT WordMaster, which has no verb for a
+; copy that does not delete, and until QCPYN neither had this.)
+;
+; Taking the lines out and putting them straight back (YKGO above) ends with
+; the right text, but everything ELSE has to be held still while it runs --
+; MODF, DOTCHG, UNDRPL, the marks, LNDLT -- and the screen repainted whole
+; afterwards, because the delete and the re-insert may have moved the window
+; under it.  That is 1467 characters, a second and a half at 9600 baud, spent
+; on a command that changed nothing at all.
+;
+; QCPYN (BUF.MAC) copies the span into the register and leaves the text where
+; it is, so none of that is owed and the paint is a cursor move: 13 characters.
+;
+; Two things have to hold first, and where either does not the old path runs
+; exactly as it did:
+;   * the span must fit in the arena's free space with a chunk to spare
+;     (YNROOM).  The copy must not reach MKROOM, which pages resident text out
+;     to disk -- and the text it would page out is the source being read.
+;   * 'yy' must be able to measure its count's lines in the resident text
+;     (YNLINE).  Past the window's end only the pager can say where they are.
+; On a file that fits in RAM both hold for any yank at all.  On a paged one
+; they hold for the small yanks and not the large: mid-file the arena runs to a
+; few hundred free bytes, so 'yy' copies where '20yy' is taken out and put back.
+;============================================================
+
+;YNPRE -- remember which window the yank starts in, for YNDONE's paint test.
+YNPRE:
+	LHLD	PGTOPM
+	SHLD	YNPG
+	RET
+
+;YNDONE -- the tail of a yank that copied: the cursor back where it started and
+; the cheapest paint there is.  Nothing else is owed -- the text was never
+; changed, so MODF, DOTCHG and UNDRPL were never disturbed, no mark was
+; dropped, and 'u' saw nothing go by.  The WINDOW is the one thing that could
+; still have moved (LNSTRT pages back to reach a line start the window has
+; cut), and PGTOPM is what says whether it did.
+YNDONE:
+	LHLD	YOFF
+	CALL	GOTO
+	LHLD	PGTOPM
+	XCHG
+	LHLD	YNPG
+	CALL	CMP16		; DE = the window now vs HL = the one it began in
+	JNZ	SETFUL		; it moved under us: repaint after all
+	JMP	SETMOV		; nothing on the screen changed
+
+;YNROOM -- HL = a span: NC if the register can take a copy of it without the
+; pager being reached, CY if not.  MKGAP pages only once the free space in the
+; WHOLE arena is under one chunk (256 bytes), and the copy takes that free
+; space as it goes, so what must be free when it starts is the span plus a
+; chunk.  BUFSUM is the arena's holes: the gap, the tail above TXTEND, and
+; whatever the regions below the text are not using.
+YNROOM:
+	LXI	D,100H
+	DAD	D
+	RC			; within a chunk of 64K: no arena holds that
+	PUSH	H		; the span plus its slack
+	CALL	BUFSUM		; DE = the free bytes (BC and HL are kept)
+	XCHG			; HL = free
+	POP	D		; DE = the span plus its slack
+	CALL	CMP16		; DE vs HL: CY iff it fits, Z iff it just fits
+	JC	YNR_OK
+	JZ	YNR_OK
+	STC			; not enough: the delete-and-put-back path
+	RET
+YNR_OK:
+	ORA	A		; NC: there is room to copy it where it lies
+	RET
+
+;YNGO -- BC = the span at the cursor: the count spent, the goal column stale as
+; dd leaves it, and the register replaced by a copy of the span.  The text is
+; not touched.
+YNGO:
+	PUSH	B
+	CALL	GETCNT		; spent here: this yank is happening
+	CALL	GLSTAL
+	CALL	QKILL		; these lines become the register, not the last
+	POP	B
+	JMP	QCPYN
+
+;YNCOPY -- 'yy' where the lines lie: NC when the register holds the count's
+; lines, or deliberately does not (vim refuses a count over one on the last
+; line, and that refusal IS the whole command); CY when this yank has to be
+; taken out and put back after all.  The cursor is left at the line's start --
+; YNDONE puts it back.
+YNCOPY:
+	LHLD	CMDCNT		; PEEKED, not spent: a fall back to VD_DD reads
+	MOV	A,H		;   the count itself
+	ORA	L
+	JNZ	YNC_HV
+	LXI	H,1
+YNC_HV:
+	PUSH	H
+	CALL	LNSTRT		; the WHOLE line is yanked: start at its start
+	POP	H
+	CALL	YNLINE		; BC = the span, measured where it stands
+	JC	YNC_NO
+	MOV	H,B
+	MOV	L,C
+	CALL	YNROOM		; room to copy it where it lies?  (BC kept)
+	RC			; no: the delete-and-put-back path
+	JMP	YNGO
+YNC_NO:
+	LDA	YNNOP
+	ORA	A
+	JZ	YNC_CN		; not measurable here: let the pager answer it
+	CALL	GETCNT		; refused: vim does nothing and leaves the
+	CALL	GLSTAL		;   register alone, and that is the command
+	ORA	A		; NC: done
+	RET
+YNC_CN:
+	STC
+	RET
+
+;YNLINE -- HL = the count: the span 'yy' takes, measured in the RESIDENT text
+; alone.  The cursor is at the line's start, so the span starts at GAPEND and
+; the measure is a walk up to TXTEND -- no CHARAT, no logical offsets, and
+; nothing that could page.  Returns BC = the span's length and NC; or CY, and
+; then YNNOP says which kind of no it is: 1 = there is nothing to yank at all
+; (the last line with a count over one, which vim refuses and VD_DD with it),
+; 0 = the text ran out with some of the file still unread, where only the pager
+; can say where the count's lines end.
+YNLINE:
+	SHLD	YNCNT		; the lines it still wants
+	XRA	A
+	STA	YNNOP		; nothing refused yet ...
+	STA	YNSAW		;   and no line break seen yet
+	LHLD	GAPEND
+YNL_LP:
+	XCHG			; DE = the scan
+	LHLD	TXTEND
+	CALL	CMP16		; DE vs HL: CY iff the scan is short of the end
+	XCHG			; HL = the scan
+	JNC	YNL_EN		; the resident text ran out
+	MOV	A,M
+	INX	H
+	CPI	LF
+	JNZ	YNL_LP
+	LDA	YNSAW
+	ORA	A
+	JNZ	YNL_CT
+	MVI	A,1
+	STA	YNSAW		; the FIRST break: what is past it, if anything,
+	SHLD	YNLF		;   is the line below the cursor's
+YNL_CT:
+	PUSH	H
+	LHLD	YNCNT
+	DCX	H
+	SHLD	YNCNT
+	MOV	A,H
+	ORA	L
+	POP	H
+	JNZ	YNL_LP
+	;--- every line of the count is here: the span is what was walked ---
+	XCHG			; DE = past the last of them
+	LHLD	GAPEND
+	XCHG			; HL = past them, DE = GAPEND
+	JMP	YNL_BC
+YNL_EN:				; HL = TXTEND: the resident text ran out here
+	CALL	INRDY		; NZ while any of the file is still unread, and
+	JNZ	YNL_NO		;   then what is past the window is not knowable
+	LDA	YNSAW
+	ORA	A
+	JZ	YNL_1		; no break at all: the cursor IS on the last line
+	LHLD	YNLF		; ... and it still is if nothing follows the first
+	XCHG
+	LHLD	TXTEND
+	CALL	CMP16		; DE = past that break vs HL = the text's end
+	JZ	YNL_RF		; the last line, with a count of more than one
+	JMP	YNL_TO
+YNL_1:
+	LHLD	YNCNT		; nothing was counted off, so this is the count
+	DCX	H		;   as typed: one takes the unterminated last
+	MOV	A,H		;   line, more than one is vim's refusal
+	ORA	L
+	JNZ	YNL_RF
+YNL_TO:				; vim clamps a count that runs past the end
+	LHLD	TXTEND
+	XCHG
+	LHLD	GAPEND
+	XCHG			; HL = TXTEND, DE = GAPEND
+YNL_BC:
+	CALL	SUBHD		; HL = the span
+	MOV	B,H
+	MOV	C,L
+	ORA	A		; NC (SUBHD's DAD leaves the carry set)
+	RET
+YNL_RF:
+	MVI	A,1
+	STA	YNNOP		; there is nothing for this 'yy' to take
+YNL_NO:
+	STC
+	RET
+
+;YNSPAN -- 'y{motion}' where the lines lie: the span [OPLO,OPHI) copied.  NC
+; when it is in the register, CY when there is no room for it and the delete-
+; and-put-back path has to run.  OPALSP measured the span in resident text
+; already, so there is no question here of where it ends -- only of room.
+YNSPAN:
+	LHLD	OPHI
+	XCHG
+	LHLD	OPLO
+	XCHG			; HL = OPHI, DE = OPLO
+	CALL	SUBHD		; HL = the span's length
+	CALL	YNROOM
+	RC			; no room: the delete-and-put-back path
+	LHLD	OPLO
+	CALL	GOTO		; the span starts at the cursor, as QCPYN wants
+	LHLD	OPHI		; (GOTO's LFCNT takes BC, so re-measure it here)
+	XCHG
+	LHLD	OPLO
+	XCHG
+	CALL	SUBHD
+	MOV	B,H
+	MOV	C,L
+	JMP	YNGO
 
 ;VC_P -- 'p': the register's lines in AFTER the cursor's line, count copies.
 ;VCB_P -- 'P': the same, in BEFORE the cursor's line.
@@ -5751,6 +6008,14 @@ MKHOLD: DB	0		; set across a yank's delete + put back: MKDROP
 YACT:	DW	0		; how this yank takes its lines (VD_DD / YSPAN)
 YTGT:	DW	0		; YSPAN: the text's length once the span is out
 YWAS:	DW	0		; ... and its length BEFORE the lines came out
+YCOL:	DW	0		; ... how far into them the cursor sat
+YBLK:	DW	0		; ... and where they ended when they came back
+;--- the yank that copies instead (YNCOPY / YNSPAN) ---
+YNPG:	DW	0		; the window the yank started in (YNDONE's paint)
+YNCNT:	DW	0		; YNLINE: the lines it still wants
+YNLF:	DW	0		; ... where the line below the cursor's starts
+YNSAW:	DB	0		; ... 1 once a line break has been seen
+YNNOP:	DB	0		; ... 1 = refused: there is nothing to yank
 SCNT:	DW	0		; searches still to do (the count)
 SOFF:	DW	0		; where the cursor was when the search began
 SLDLT:	DW	0		; ... and LNDLT, for the search that fails

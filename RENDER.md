@@ -178,6 +178,8 @@ Every multi-step paint is bracketed by `ESC[?25l` … `CUP` + `ESC[?25h`.
 | `Ndd`, `dd` of the last line | `R_FULL` | full |
 | `o` `O`, a `<CR>` typed at the line's end | `R_ILIN` (1) | IL + the opened row |
 | a `<CR>` typed with text after it, `r<CR>` | `R_ILIN` (1) + `ILABOV` | IL + that row and the one above |
+| `yy` `Y` `y{motion}` copied where the lines lie | `R_MOVE` (`YNDONE`) | cursor only — the text is not touched |
+| … taken out and put back (no room, or a count past the window) | `R_FULL` | full — the pager may have moved the window |
 | `p` `P` (linewise; the only kind there is) | `R_ILIN` (lines put, if < 256) | IL + the opened rows |
 | `J` | `R_JOIN` | row + DL + bottom row |
 | `.` `u` `:s` `^L` | `R_FULL` | full |

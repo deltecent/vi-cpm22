@@ -198,8 +198,20 @@ as they go. An offset is resident-relative, so it is only meaningful while
 
 The yank register is WordMaster's Q-buffer: a region of the arena that grows
 through the same `MKGAP` as the text, with the text free to page out from under
-it (`QROOM` keeps `RESVMEM` in reserve). `QCOPY` fills it by deleting what it
-takes, which is why `yy` is a delete and a put-back.
+it (`QROOM` keeps `RESVMEM` in reserve). WordMaster fills it one way only:
+`QCOPY` copies **by deleting** what it takes, and can re-read its source from
+`GAPEND` on every chunk precisely *because* the delete advances `GAPEND` past
+what has gone. A yank was therefore a delete and a put-back.
+
+`QCPYN` (appended, not WordMaster) copies without deleting, and so has no
+self-advancing pointer to read its source from. It keeps a **count** instead:
+the source is `GAPEND` plus the bytes already moved, re-derived on every chunk,
+which is what survives `MKGAP` relocating the text under it (`MOVGAP` fixes up
+the pointer row and nothing else). What no count survives is `MKGAP` reaching
+`MKROOM`, which writes resident text out to disk — the very bytes being read.
+So the caller must show there is room for the whole copy before starting
+(`CMD.MAC`'s `YNROOM`: the span plus one chunk, free in the arena), and where
+it cannot the yank still takes the lines out and puts them back.
 
 Undo is captured inside the primitives that change text, so no command can
 forget to record itself. Its region grows only at a command boundary, never
