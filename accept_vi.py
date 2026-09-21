@@ -3654,18 +3654,37 @@ def ops_cmds():
               at_ccp(e, ':q\r'))
     finally:
         e.close()
-    # --- 'f F t T ; , %' are not motions in this editor, and an operator on
-    #     one must cancel like 'cq' above.  A key left in OPCTAB with no CMDTAB
-    #     row is not inert: OPPEND takes the class, VSCAN finds no handler so
-    #     the cursor does not move, and the inclusive INX H turns the empty span
-    #     into one character -- 'df' becomes 'x' and 'cf' becomes 's',
-    #     silently. ---
+    # --- '%' is not a motion in this editor, and an operator on it must
+    #     cancel like 'cq' above.  A key left in OPCTAB with no CMDTAB row is
+    #     not inert: OPPEND takes the class, VSCAN finds no handler so the
+    #     cursor does not move, and the inclusive INX H turns the empty span
+    #     into one character -- 'df' became 'x' and 'cf' became 's', silently,
+    #     for exactly as long as 'f F t T ; , %' stayed classed here after
+    #     their handlers were cut.  f F t T are built again now (group 'find'),
+    #     and build_vi.py's check_tables refuses any link where an OPCTAB key
+    #     has no CMDTAB row, so this case is the last one left: '%'. ---
     for op in 'dc':
-        for mot in 'fFtT;,%':
+        for mot in '%':
             e = Editor(files['bl'])
             try:
                 send_keys(e, op + mot)
                 check(f'{op}{mot}: not a motion, so nothing is deleted '
+                      f'({rows(e)[0]!r})', rows(e)[0] == 'ab')
+                check(f'{op}{mot}: and no insert mode',
+                      e.s.mem(SYM['EDMODE'])[0] == 0)
+                check(f'{op}{mot}: the text is unmodified (:q exits)',
+                      at_ccp(e, ':q\r'))
+            finally:
+                e.close()
+    # --- ';' and ',' ARE motions now, but a repeat with nothing to repeat is
+    #     refused, and it has to take the operator with it: the find that never
+    #     happened must not leave 'd' pending to eat the next key. ---
+    for op in 'dc':
+        for mot in ';,':
+            e = Editor(files['bl'])
+            try:
+                send_keys(e, op + mot)
+                check(f'{op}{mot}: no find to repeat, so nothing is deleted '
                       f'({rows(e)[0]!r})', rows(e)[0] == 'ab')
                 check(f'{op}{mot}: and no insert mode',
                       e.s.mem(SYM['EDMODE'])[0] == 0)
@@ -4427,6 +4446,270 @@ def quit_semantics(label, n):
         e.close()
 
 
+
+def find_files():
+    """What f F t T ; , need beyond hml_files()/ins_files(): a line carrying
+    the same target many times over, a line of punctuation for 'dt)' and 'df,',
+    a line the target is NOT on (the refusal), and a WIDE line whose later
+    targets sit past the right screen edge, so a find has to pan to land on
+    one."""
+    wide = (b'aXbXcX' + b'-' * 70 + b'dXeX' + b'-' * 60 + b'fX')
+    return dict(hml_files(), **ins_files(),
+                fd=b'foo bar baz bar qux bar end\r\n'
+                   b'func(arg1, arg2, arg3);\r\n'
+                   b'no targets on this line\r\n'
+                   + wide + b'\r\n'
+                   b'last\r\n')
+
+
+# ---------------------------------------------------------------------------
+# VIM_FIND -- f F t T ; , against vim 9.1, recorded by vimref.py ('find')
+# BEFORE they were written.  Shape is VIM_MARKS's: (file, keys, the sha1 of the
+# file vim wrote, [(cursor row, column, cursor line, top line) after each key]).
+#
+# What the rows have to pin down, because none of it is guessable:
+#   - a find that does not find stays put, and takes the pending operator with
+#     it ('dfz' deletes nothing at all)
+#   - 't' when the target is already the next char, and what ';' does after a
+#     't' (vim special-cases exactly this -- it is the one place where ';' is
+#     not simply "the same find again")
+#   - counts on the find AND on ';' / ','
+#   - ',' is the find reversed, not the last direction repeated
+#   - f/t never leave the line, whatever is on the next one
+#   - the operator spans: 'f' and 't' are INCLUSIVE, 'F' and 'T' exclusive
+VIM_FIND = [
+    ('fd', ['gg', 'fb'], '58c62356825b5646',
+     [(0, 0, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end'),
+      (0, 4, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end')]),
+    ('fd', ['gg', '2fb'], '58c62356825b5646',
+     [(0, 0, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end'),
+      (0, 8, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end')]),
+    ('fd', ['gg', '3fb'], '58c62356825b5646',
+     [(0, 0, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end'),
+      (0, 12, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end')]),
+    ('fd', ['gg', '9fb'], '58c62356825b5646',
+     [(0, 0, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end'),
+      (0, 0, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end')]),
+    ('fd', ['gg', 'fb', ';'], '58c62356825b5646',
+     [(0, 0, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end'),
+      (0, 4, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end'),
+      (0, 8, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end')]),
+    ('fd', ['gg', 'fb', ';', ';'], '58c62356825b5646',
+     [(0, 0, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end'),
+      (0, 4, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end'),
+      (0, 8, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end'),
+      (0, 12, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end')]),
+    ('fd', ['gg', 'fb', ';', ','], '58c62356825b5646',
+     [(0, 0, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end'),
+      (0, 4, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end'),
+      (0, 8, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end'),
+      (0, 4, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end')]),
+    ('fd', ['gg', 'fb', '2;'], '58c62356825b5646',
+     [(0, 0, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end'),
+      (0, 4, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end'),
+      (0, 12, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end')]),
+    ('fd', ['gg', '$', 'Fb'], '58c62356825b5646',
+     [(0, 0, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end'),
+      (0, 26, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end'),
+      (0, 20, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end')]),
+    ('fd', ['gg', '$', '2Fb'], '58c62356825b5646',
+     [(0, 0, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end'),
+      (0, 26, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end'),
+      (0, 12, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end')]),
+    ('fd', ['gg', '$', 'Fb', ';'], '58c62356825b5646',
+     [(0, 0, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end'),
+      (0, 26, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end'),
+      (0, 20, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end'),
+      (0, 12, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end')]),
+    ('fd', ['gg', '$', 'Fb', ','], '58c62356825b5646',
+     [(0, 0, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end'),
+      (0, 26, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end'),
+      (0, 20, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end'),
+      (0, 20, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end')]),
+    ('fd', ['gg', 'tb'], '58c62356825b5646',
+     [(0, 0, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end'),
+      (0, 3, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end')]),
+    ('fd', ['gg', 'tb', ';'], '58c62356825b5646',
+     [(0, 0, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end'),
+      (0, 3, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end'),
+      (0, 7, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end')]),
+    ('fd', ['gg', '2tb'], '58c62356825b5646',
+     [(0, 0, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end'),
+      (0, 7, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end')]),
+    ('fd', ['gg', 'tb', ';', ';'], '58c62356825b5646',
+     [(0, 0, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end'),
+      (0, 3, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end'),
+      (0, 7, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end'),
+      (0, 11, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end')]),
+    ('fd', ['gg', '$', 'Tb'], '58c62356825b5646',
+     [(0, 0, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end'),
+      (0, 26, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end'),
+      (0, 21, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end')]),
+    ('fd', ['gg', '$', 'Tb', ';'], '58c62356825b5646',
+     [(0, 0, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end'),
+      (0, 26, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end'),
+      (0, 21, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end'),
+      (0, 13, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end')]),
+    ('fd', ['gg', 'fz'], '58c62356825b5646',
+     [(0, 0, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end'),
+      (0, 10, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end')]),
+    ('fd', ['gg', 'fb', 'fz'], '58c62356825b5646',
+     [(0, 0, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end'),
+      (0, 4, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end'),
+      (0, 10, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end')]),
+    ('fd', ['3G', 'fq'], '58c62356825b5646',
+     [(2, 0, 'no targets on this line', 'foo bar baz bar qux bar end'),
+      (2, 0, 'no targets on this line', 'foo bar baz bar qux bar end')]),
+    ('fd', ['gg', 'ft'], '58c62356825b5646',
+     [(0, 0, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end'),
+      (0, 0, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end')]),
+    ('fd', ['2G', 'df,'], '10d8555e6dca283a',
+     [(1, 0, 'func(arg1, arg2, arg3);', 'foo bar baz bar qux bar end'),
+      (1, 0, ' arg2, arg3);', 'foo bar baz bar qux bar end')]),
+    ('fd', ['2G', 'dt)'], '9fb55cd198d1cdcc',
+     [(1, 0, 'func(arg1, arg2, arg3);', 'foo bar baz bar qux bar end'),
+      (1, 0, ');', 'foo bar baz bar qux bar end')]),
+    ('fd', ['2G', 'd2f,'], '97260f7358c2c1b3',
+     [(1, 0, 'func(arg1, arg2, arg3);', 'foo bar baz bar qux bar end'),
+      (1, 0, ' arg3);', 'foo bar baz bar qux bar end')]),
+    ('fd', ['2G', 'dfz'], '58c62356825b5646',
+     [(1, 0, 'func(arg1, arg2, arg3);', 'foo bar baz bar qux bar end'),
+      (1, 0, 'func(arg1, arg2, arg3);', 'foo bar baz bar qux bar end')]),
+    ('fd', ['2G', 'ct)new\x1b'], '26d8ad421c336c3b',
+     [(1, 0, 'func(arg1, arg2, arg3);', 'foo bar baz bar qux bar end'),
+      (1, 2, 'new);', 'foo bar baz bar qux bar end')]),
+    ('fd', ['2G', 'cf,Y\x1b'], '3b4ee88b473e553b',
+     [(1, 0, 'func(arg1, arg2, arg3);', 'foo bar baz bar qux bar end'),
+      (1, 0, 'Y arg2, arg3);', 'foo bar baz bar qux bar end')]),
+    ('fd', ['2G', 'dfa', '.'], 'c23ff6ee451d1134',
+     [(1, 0, 'func(arg1, arg2, arg3);', 'foo bar baz bar qux bar end'),
+      (1, 0, 'rg1, arg2, arg3);', 'foo bar baz bar qux bar end'),
+      (1, 0, 'rg2, arg3);', 'foo bar baz bar qux bar end')]),
+    ('fd', ['2G', 'dTf'], '58c62356825b5646',
+     [(1, 0, 'func(arg1, arg2, arg3);', 'foo bar baz bar qux bar end'),
+      (1, 0, 'func(arg1, arg2, arg3);', 'foo bar baz bar qux bar end')]),
+    ('fd', ['2G', '$', 'dF,'], '7de51e44193da861',
+     [(1, 0, 'func(arg1, arg2, arg3);', 'foo bar baz bar qux bar end'),
+      (1, 22, 'func(arg1, arg2, arg3);', 'foo bar baz bar qux bar end'),
+      (1, 15, 'func(arg1, arg2;', 'foo bar baz bar qux bar end')]),
+    ('fd', ['4G', 'fX'], '58c62356825b5646',
+     [(3, 0, 'aXbXcX----------------------------------------------------------------------dXeX------------------------------------------------------------fX', 'foo bar baz bar qux bar end'),
+      (3, 1, 'aXbXcX----------------------------------------------------------------------dXeX------------------------------------------------------------fX', 'foo bar baz bar qux bar end')]),
+    ('fd', ['4G', '3fX'], '58c62356825b5646',
+     [(3, 0, 'aXbXcX----------------------------------------------------------------------dXeX------------------------------------------------------------fX', 'foo bar baz bar qux bar end'),
+      (3, 5, 'aXbXcX----------------------------------------------------------------------dXeX------------------------------------------------------------fX', 'foo bar baz bar qux bar end')]),
+    ('fd', ['4G', '7fX'], '58c62356825b5646',
+     [(3, 0, 'aXbXcX----------------------------------------------------------------------dXeX------------------------------------------------------------fX', 'foo bar baz bar qux bar end'),
+      (3, 0, 'aXbXcX----------------------------------------------------------------------dXeX------------------------------------------------------------fX', 'foo bar baz bar qux bar end')]),
+    ('fd', ['4G', '$', 'FX'], '58c62356825b5646',
+     [(3, 0, 'aXbXcX----------------------------------------------------------------------dXeX------------------------------------------------------------fX', 'foo bar baz bar qux bar end'),
+      (3, 141, 'aXbXcX----------------------------------------------------------------------dXeX------------------------------------------------------------fX', 'foo bar baz bar qux bar end'),
+      (3, 79, 'aXbXcX----------------------------------------------------------------------dXeX------------------------------------------------------------fX', 'foo bar baz bar qux bar end')]),
+    ('fd', ['4G', 'fX', ';', ';', ';', ';'], '58c62356825b5646',
+     [(3, 0, 'aXbXcX----------------------------------------------------------------------dXeX------------------------------------------------------------fX', 'foo bar baz bar qux bar end'),
+      (3, 1, 'aXbXcX----------------------------------------------------------------------dXeX------------------------------------------------------------fX', 'foo bar baz bar qux bar end'),
+      (3, 3, 'aXbXcX----------------------------------------------------------------------dXeX------------------------------------------------------------fX', 'foo bar baz bar qux bar end'),
+      (3, 5, 'aXbXcX----------------------------------------------------------------------dXeX------------------------------------------------------------fX', 'foo bar baz bar qux bar end'),
+      (3, 77, 'aXbXcX----------------------------------------------------------------------dXeX------------------------------------------------------------fX', 'foo bar baz bar qux bar end'),
+      (3, 79, 'aXbXcX----------------------------------------------------------------------dXeX------------------------------------------------------------fX', 'foo bar baz bar qux bar end')]),
+    ('fd', ['4G', '2tX'], '58c62356825b5646',
+     [(3, 0, 'aXbXcX----------------------------------------------------------------------dXeX------------------------------------------------------------fX', 'foo bar baz bar qux bar end'),
+      (3, 2, 'aXbXcX----------------------------------------------------------------------dXeX------------------------------------------------------------fX', 'foo bar baz bar qux bar end')]),
+    ('fd', ['gg', 'tb', ';', ','], '58c62356825b5646',
+     [(0, 0, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end'),
+      (0, 3, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end'),
+      (0, 7, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end'),
+      (0, 5, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end')]),
+    ('fd', ['gg', '$', 'Tb', ','], '58c62356825b5646',
+     [(0, 0, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end'),
+      (0, 26, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end'),
+      (0, 21, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end'),
+      (0, 21, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end')]),
+    ('fd', ['gg', ';'], '58c62356825b5646',
+     [(0, 0, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end'),
+      (0, 0, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end')]),
+    ('fd', ['gg', 'd;'], '58c62356825b5646',
+     [(0, 0, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end'),
+      (0, 0, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end')]),
+    ('fd', ['gg', 'fb', 'd;'], '59cb89f3b89f2f25',
+     [(0, 0, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end'),
+      (0, 4, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end'),
+      (0, 4, 'foo az bar qux bar end', 'foo az bar qux bar end')]),
+    ('fd', ['gg', 'fb', '2,'], '58c62356825b5646',
+     [(0, 0, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end'),
+      (0, 4, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end'),
+      (0, 4, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end')]),
+    ('fd', ['gg', 'fb', ',', ','], '58c62356825b5646',
+     [(0, 0, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end'),
+      (0, 4, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end'),
+      (0, 4, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end'),
+      (0, 4, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end')]),
+    ('fd', ['gg', 'd,'], '58c62356825b5646',
+     [(0, 0, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end'),
+      (0, 0, 'foo bar baz bar qux bar end', 'foo bar baz bar qux bar end')]),
+]
+
+
+
+def find_like_vim():
+    """f F t T ; , land where vim lands them, and the operator forms leave the
+    file byte-exact."""
+    import hashlib
+    files = find_files()
+    for f, keys, sha, want in VIM_FIND:
+        e = Editor(files[f])
+        try:
+            for k, (wrow, wcol, wcur, wtop) in zip(keys, want):
+                e.key(k)
+                if '\x1b' in k:
+                    e.s.run_until_quiet(quiet=1.5, timeout=40)
+                r = rows(e); v = e.screen()
+                hs = int.from_bytes(bytes(e.s.mem(SYM['HSCROL'], 2)), 'little')
+                shown = lambda t: expand(t)[hs:hs + 80].rstrip()
+                got = (v.row, v.col + hs, r[v.row], r[0])
+                check(f'vim find {f} {keys!r} {k!r}: {got[:2]} {got[2][:14]!r} '
+                      f'== {(wrow, wcol)} {wcur[:14]!r}',
+                      got == (wrow, wcol, shown(wcur), shown(wtop)))
+            e.key(':w\r')
+            ex_settled(e)
+            got = hashlib.sha1(saved_bytes(e)).hexdigest()[:16]
+            check(f'vim find {f} {keys!r}: file as vim wrote it ({got})',
+                  got == sha)
+        finally:
+            e.close()
+
+
+def find_cmds():
+    """Where vim cannot be the reference, because this editor's 'y' takes
+    LINEWISE motions only (COMMANDS.md): 'yf' is dropped -- and the character
+    it was going to look for must be SWALLOWED with it.  An orphan target
+    dispatched as a command is the 'df'-was-an-'x' bug of 0f9837f wearing the
+    other shoe: 'yfd' would yank nothing and then run 'd' as the next command.
+    """
+    e = Editor(find_files()['fd'])
+    try:
+        e.key('gg')
+        e.key('yfb')            # dropped: 'y' takes linewise motions only
+        r = rows(e); v = e.screen()
+        check(f'yfb: dropped, cursor stays at 0,0 (got {v.row},{v.col})',
+              (v.row, v.col) == (0, 0))
+        check('yfb: the target was swallowed, not run as a command',
+              r[0] == 'foo bar baz bar qux bar end')
+        e.key('yf')             # ... and the same with the target in a
+        e.key('d')              #     separate keystroke
+        r = rows(e)
+        check('yf then d: still no command ran',
+              r[0] == 'foo bar baz bar qux bar end')
+        # f/t never leave the line: the '(' is on the NEXT line, not this one
+        e.key('gg')
+        e.key('f(')
+        v = e.screen()
+        check(f'f(: the ( is on the next line, cursor unmoved '
+              f'(got {v.row},{v.col})', (v.row, v.col) == (0, 0))
+    finally:
+        e.close()
+
+
 def marks_files():
     """What marks need beyond hml_files()/ins_files(): a file whose lines are
     distinct and unevenly indented, so `'a` (the line's first non-blank) and
@@ -5081,6 +5364,10 @@ def main():
         print('\n=== m / ` / \' (marks) vs vim ===', flush=True)
         marks_like_vim()
         marks_cmds()
+    if not args or 'vim' in args or 'find' in args:
+        print('\n=== f F t T ; , vs vim ===', flush=True)
+        find_like_vim()
+        find_cmds()
     if not args or 'vim' in args or 'ctrlg' in args:
         print('\n=== ^G / the message line vs vim ===', flush=True)
         ctrlg_like_vim()

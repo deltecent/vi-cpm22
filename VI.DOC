@@ -34,8 +34,14 @@ MOVING ---------------------------------------------------------------------
     G               last line, or line N with a count:  20G
     gg              first line, or line N:  20gg
     H M L           top / middle / bottom line of the screen
+    f{c} F{c}       forward / back to the character c, on this line
+    t{c} T{c}       the same, but stopping just short of it
+    ;  ,            that find again / the same find reversed
 
 The arrow keys work as h j k l, and PgUp / PgDn as ^B / ^F.
+
+f F t T and their repeats look on THIS LINE only, take counts (3fx), and
+ring the bell without moving when the character is not there.
 
 
 SCROLLING AND THE SCREEN ---------------------------------------------------
@@ -76,13 +82,16 @@ OPERATORS ------------------------------------------------------------------
 d deletes, c changes and y yanks over the motion that follows:
 
     dw  dd  d$  dj  dG  d'a  d`a        delete to there
-    cw  C                               change
+    df,  dt)  d;                        ... and to a character on the line
+    cw  C  ct)                          change
     yy  Y  5yy  y'a                     yank whole lines
 
 cw changes to the END of the word, which is what vi's ce does -- vi's one
 special case, and it is kept here.  dd, yy, D and C are the short spellings
 of the common ones.  cc and S are not here, and cc does nothing at all.
-The register holds whole lines, so y`a -- part of a line -- is refused.
+The register holds whole lines, so y`a and yf, -- part of a line -- are
+refused.  f and t take the character they land on; F and T stop short of
+it, so df, deletes the comma and dF, leaves it.
 
 
 YANK AND PUT ---------------------------------------------------------------
@@ -167,4 +176,4 @@ NOT IN THIS VI -------------------------------------------------------------
 
 A count before an insert (3ix) is ignored: it inserts once.  So is a count
 on r and ~.
-
+

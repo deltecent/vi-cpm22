@@ -157,12 +157,13 @@ move would break:
               pointer row, text + gap, Q-buffer (the yank register), undo region
     BUFEND  = BDOS base - 700H - 1
 
-In this build: the image is 16482 bytes, the `.COM` file 16512 bytes (129
-records), the reserve block 791 bytes (`4162H`–`4479H`), and the stack 128
-bytes. **16384 is the size that matters**: the 8 MB disk allocates in 4 K
-blocks, so a 16384-byte `.COM` occupies four of them and one byte more occupies
-five — 16 K becomes 20 K on disk without a feature being gained. This build is
-98 bytes the wrong side of that line.
+In this build: the image is 16844 bytes, the `.COM` file 16896 bytes (132
+records), the reserve block 791 bytes (`42CCH`–`45E3H`), and the stack 128
+bytes. **The size that matters is a 4 K BLOCK BOUNDARY**, because that is what
+the 8 MB disk allocates in: 16384 bytes occupy four blocks and one byte more
+occupies five. This build is past that line by design (`f F t T ; ,` would not
+fit under it) and the next boundary is **20480 bytes**, so everything between
+here and there costs the same 20 K on disk.
 
 **Why a reserve block.** L80 writes every byte up to the top of the image into
 the `.COM`, `DS` included, and fills that space with its own leftovers rather

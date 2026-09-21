@@ -35,6 +35,7 @@
 	PUBLIC	CURRW				; cursor's screen row (SCRN.MAC reads)
 	PUBLIC	FOPEN				; open the command-line file
 	PUBLIC	ARGSCN, ARGGO			; the rest of the command line
+	PUBLIC	CMDTAB, OPCTAB			; the two tables build_vi.py pairs up
 
 	EXTRN	GETKEY				; KEY.MAC
 	EXTRN	OPENZ				; PAGE.MAC -- open + load (cold)
@@ -491,6 +492,203 @@ MKG_KB:
 	STC
 	RNZ			; an action key (ESC) cancels the command
 	ORA	A		; CY clear
+	RET
+
+;============================================================
+; FIND A CHARACTER -- 'f' 'F' 't' 'T' and the repeats ';' ',' .
+;
+; Each looks on THIS LINE only, whatever is on the next one, and moves nothing
+; at all when the character is not there -- taking a pending operator with it,
+; so 'dfz' with no 'z' on the line deletes nothing (recorded from vim 9.1,
+; VIM_FIND in accept_vi.py).
+;
+; The target is read by the command ITSELF, the way 'm' and the two mark jumps
+; read the letter that names their mark: under an operator the whole of "df,"
+; has to happen inside one VSCAN, because OPPEND measures the span the moment
+; the motion returns.  Unlike the marks, the character is then handed to
+; DOTPRE, so it joins the recording and '.' can repeat "dfa" -- MKGETK's
+; keyboard path does not record for itself.
+;
+; ';' repeats the find and ',' repeats it reversed, and the stored find is NOT
+; changed by the ',': a ';' after it goes the original way again, as vim's
+; does.  A repeat of a 't' starts TWO characters along rather than one, which
+; is vim's one special case here and the whole reason FNDGO takes a step: the
+; cursor is sitting one short of the target it just found, so a repeat that
+; started one along would find that same target and go nowhere.
+;============================================================
+VC_FF:				; 'f' -- forward, onto the character
+	MVI	A,'f'
+	JMP	FNDNEW
+VC_FB:				; 'F' -- backward, onto it
+	MVI	A,'F'
+	JMP	FNDNEW
+VC_TF:				; 't' -- forward, up to it
+	MVI	A,'t'
+	JMP	FNDNEW
+VC_TB:				; 'T' -- backward, up to it
+	MVI	A,'T'
+FNDNEW:
+	STA	FNDKND		; the find ';' and ',' will repeat
+	CALL	MKGETK		; the character it looks for
+	JC	FNDNIL		; ESC, or a '.' replay that ran out of keys
+	MOV	A,C
+	STA	FNDCH
+	MVI	B,KT_CHAR	; ... and into the '.' recording (see the head)
+	CALL	DOTPRE
+	LDA	FNDKND
+	MVI	B,1		; a find starts at the next character along
+	JMP	FNDGO
+
+;VC_SEMI / VC_COMMA -- ';' repeats the last find, ',' repeats it reversed.
+VC_SEMI:
+	LDA	FNDKND
+	ORA	A
+	JZ	FNDNIL		; nothing has been looked for yet
+	JMP	FNDREP
+VC_COMMA:
+	LDA	FNDKND
+	ORA	A
+	JZ	FNDNIL
+	XRI	20H		; the case IS the direction, and FNDKND keeps
+				;   the find as it was
+FNDREP:
+	MVI	B,1
+	PUSH	PSW
+	ANI	5FH		; fold to 'F' / 'T'
+	CPI	'T'
+	JNZ	FNDR_GO
+	MVI	B,2		; a 't' repeat starts two along (see the head)
+FNDR_GO:
+	POP	PSW
+	JMP	FNDGO
+
+;FNDNIL -- there is nothing to look for: no character was typed, or ';' / ','
+; came before any find at all.  Nothing moves, and an operator waiting on this
+; motion is cancelled whole (PSAVE is what OPPEND's tail reads).
+FNDNIL:
+	XRA	A
+	STA	PSAVE
+	JMP	SETMOV
+
+;FNDGO -- A = the find to run, B = how far along to start.  The count's
+; occurrence of FNDCH on this line, or nothing.
+FNDGO:
+	STA	FNDRUN
+	MOV	A,B
+	STA	FNDSTP
+	CALL	MOVCNT		; a cursor motion, and its count -- spent here
+	SHLD	FNDN		; the occurrence wanted
+	CALL	CUROFF
+	SHLD	FNDCUR
+	LDA	FNDRUN
+	ANI	20H		; lower case ('f' / 't') = forward
+	JZ	FNDBWD
+	LHLD	FNDCUR
+	CALL	EOLC		; HL = the line's last content character
+	SHLD	FNDLIM
+	LHLD	FNDCUR
+	LDA	FNDSTP
+	MOV	E,A
+	MVI	D,0
+	DAD	D		; HL = where the scan starts
+FNDF_LP:
+	XCHG			; DE = the scan
+	LHLD	FNDLIM
+	CALL	CMP16		; DE vs HL: CY iff the scan is short of the end
+	XCHG			; HL = the scan
+	JZ	FNDF_AT		; the last character is still a candidate
+	JNC	FNDMIS		; past it: not on this line
+FNDF_AT:
+	CALL	FNDSEE		; Z iff this is the character
+	JNZ	FNDF_NX
+	CALL	FNDCNT		; Z iff it is the one the count asked for
+	JZ	FNDHIT
+FNDF_NX:
+	INX	H
+	JMP	FNDF_LP
+FNDBWD:
+	LHLD	FNDCUR
+	CALL	BOL		; HL = the line's first character
+	SHLD	FNDLIM
+	LHLD	FNDCUR
+	LDA	FNDSTP
+	CMA
+	MOV	E,A
+	MVI	D,0FFH
+	INX	D		; DE = -step
+	DAD	D		; HL = where the scan starts
+	JNC	FNDMIS		; ... off the front of the text altogether
+FNDB_LP:
+	XCHG			; DE = the scan
+	LHLD	FNDLIM
+	CALL	CMP16		; DE vs HL: CY iff the scan is below the start
+	XCHG			; HL = the scan
+	JC	FNDMIS		; before this line: not on it
+	CALL	FNDSEE
+	JNZ	FNDB_NX
+	CALL	FNDCNT
+	JZ	FNDHIT
+FNDB_NX:
+	MOV	A,H
+	ORA	L
+	JZ	FNDMIS		; offset 0 and no hit: there is nowhere below
+	DCX	H
+	JMP	FNDB_LP
+
+;FNDHIT -- HL = where the character is.  A 't' stops one short of it, on the
+; side the search came from.
+FNDHIT:
+	LDA	FNDRUN
+	ANI	5FH
+	CPI	'T'
+	JNZ	FNDLND
+	LDA	FNDRUN
+	ANI	20H
+	JZ	FNDH_BW
+	DCX	H		; forward 't': the character before it
+	JMP	FNDLND
+FNDH_BW:
+	INX	H		; backward 'T': the character after it
+FNDLND:
+	JMP	GOSET		; there, and the goal column with it
+
+;FNDMIS -- the character is not on this line.  vim moves nothing and rings the
+; bell; an operator running the motion is cancelled whole, so 'dfz' deletes
+; nothing rather than falling back on some other span.
+FNDMIS:
+	XRA	A
+	STA	PSAVE
+	JMP	DOTBEL
+
+;FNDSEE -- Z iff the character at HL is the one being looked for.  Keeps HL.
+FNDSEE:
+	PUSH	H
+	CALL	CHARAT
+	POP	H
+	MOV	B,A
+	LDA	FNDCH
+	CMP	B
+	RET
+
+;FNDCNT -- count one occurrence off; Z iff that was the one asked for.  HL is
+; the scan and stays it.
+FNDCNT:
+	PUSH	H
+	LHLD	FNDN
+	DCX	H
+	SHLD	FNDN
+	MOV	A,H
+	ORA	L
+	POP	H
+	RET
+
+;ISFIND -- Z iff A is one of 'f' 'F' 't' 'T': the finds that read a character
+; of their own, and so owe one back when the operator drops the motion.
+ISFIND:
+	ANI	5FH		; fold the case away
+	CPI	'F'
+	RZ
+	CPI	'T'
 	RET
 
 ;VC_MK / VC_BQ / VC_AQ -- 'm', '`' and '''.  Each reads the key that names its
@@ -2527,11 +2725,13 @@ OPP_NC:
 	CPI	2		;   beside the Q-buffer and a 'p' that puts
 	JZ	OPP_GO		;   within a line -- neither of which is built
 OPP_NO:
-	MOV	A,C		; dropped -- but ''' and '`' still owe us their
-	CPI	27H		;   mark letter, and an orphan would be dispatched
-	JZ	OPP_SW		;   as a command ('a' opens an insert and types
-	CPI	60H		;   into the buffer), so swallow it before
-	JNZ	OPABRT		;   dropping the command
+	MOV	A,C		; dropped -- but the mark jumps and the finds still
+	CPI	27H		;   owe us the character they were going to read,
+	JZ	OPP_SW		;   and an orphan would be dispatched as a command
+	CPI	60H		;   ('a' opens an insert and types into the buffer),
+	JZ	OPP_SW		;   so swallow it before dropping the command
+	CALL	ISFIND		; f F t T read one too ('yfx': 'y' takes linewise
+	JNZ	OPABRT		;   motions only, so the find is dropped here)
 OPP_SW:
 	CALL	MKGETK
 	JMP	OPABRT
@@ -2599,6 +2799,33 @@ OPLINE:
 ;OPCLS -- A(key) -> A = motion class (0 excl, 1 incl, 2 linewise); CY if the key
 ; is not an operator-usable motion (scan OPCTAB).
 OPCLS:
+	CPI	';'		; ';' and ',' are whatever find they repeat: 'd;'
+	JZ	OPC_SEM		;   after 'fx' is inclusive, after 'Fx' exclusive,
+	CPI	','		;   and ',' is the reverse of that -- one class per
+	JNZ	OPC_TB		;   KEY, as the table holds, cannot say it
+	MVI	B,20H		; ',' runs the find reversed
+	JMP	OPC_FK
+OPC_SEM:
+	MVI	B,0		; ';' runs it as it stands
+OPC_FK:
+	LDA	FNDKND
+	ORA	A
+	STC
+	RZ			; nothing looked for yet: not a motion, so the
+				;   operator is dropped and nothing is owed.  This
+				;   test comes BEFORE the reversal: 0 flipped is
+				;   20H, which would read as a find that was never
+				;   made
+	XRA	B		; ... and now the direction ',' asked for
+	ANI	20H		; lower case ('f' / 't') = forward = inclusive
+	JZ	OPC_EXC
+	MVI	A,1
+	ORA	A		; CY clear: a motion, class 1
+	RET
+OPC_EXC:
+	XRA	A		; class 0, CY clear
+	RET
+OPC_TB:
 	MOV	B,A
 	LXI	H,OPCTAB
 OPC_LP:
@@ -2817,6 +3044,10 @@ OPCTAB:
 	DB	'w',0, 'W',0, 'b',0, 'B',0, 'h',0, 'l',0, '0',0, '^',0
 	DB	60H,3		; `{a-c} -- charwise exclusive, but a JUMP: class 3
 				;   so OPA_EX's end-of-line clamp does not apply
+	DB	'f',1, 't',1		; onto / up to the character: INCLUSIVE
+	DB	'F',0, 'T',0		; ... backward, and so exclusive
+	DB	';',1, ',',1		; the class OPCLS works out from FNDKND --
+				;   these two only have to be IN the table
 	DB	'e',1, 'E',1, '$',1
 	DB	'j',2, 'k',2, 'G',2, 'H',2, 'M',2, 'L',2
 	DB	27H,2		; '{a-c} -- linewise, as j and G are
@@ -5712,6 +5943,18 @@ CMDTAB:
 	DW	VC_X
 	DB	'Z'
 	DW	VC_BZ
+	DB	'f'
+	DW	VC_FF
+	DB	'F'
+	DW	VC_FB
+	DB	't'
+	DW	VC_TF
+	DB	'T'
+	DW	VC_TB
+	DB	';'
+	DW	VC_SEMI
+	DB	','
+	DW	VC_COMMA
 	DB	'y'
 	DW	VC_Y
 	DB	'Y'
@@ -5909,6 +6152,13 @@ YLDLT:	DW	0		; yy: LNDLT across the delete + put back
 SDIR:	DB	0		; the last '/' or '?' direction (FFH = back)
 SDIRE:	DB	0		; ... the direction THIS search runs in ('N')
 SHAVE:	DB	0		; nonzero once a pattern has been entered
+FNDKND: DB	0		; f/F/t/T: which find ';' repeats (0 = none yet)
+FNDCH:	DB	0		; ... and the character it looked for
+FNDRUN: DB	0		; the find THIS command is running (',' reverses)
+FNDSTP: DB	0		; how far along it starts: 2 for a 't' repeat
+FNDN:	DW	0		; occurrences still to count off
+FNDCUR: DW	0		; the cursor it started from
+FNDLIM: DW	0		; ... and the end of the line it may not pass
 GPKEEP: DB	0		; GPLACE: keep the column (a search) not FNBLNK
 MKVAL:	DB	0,0,0		; marks: nonzero once 'm' has set that one.  It
 				;   lives HERE and not in MKTAB because the image

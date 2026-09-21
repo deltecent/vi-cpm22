@@ -91,8 +91,9 @@ GROUPS = {
     'srch': ('VIM_SRCH', None),
     'ctrlg': ('VIM_CTRLG', None),
     'marks': ('VIM_MARKS', None),
+    'find': ('VIM_FIND', None),
 }
-TEXT = {'ins', 'ops', 'put', 'srch', 'dot', 'undo', 'subst', 'marks'}  # rows carrying text + a file hash
+TEXT = {'ins', 'ops', 'put', 'srch', 'dot', 'undo', 'subst', 'marks', 'find'}  # rows carrying text + a file hash
 
 # Rows the final-line-end fold must NOT be applied to.  The fold exists because
 # this editor writes a file back as it read it, without the line end vim
@@ -140,6 +141,7 @@ def content(name):
         _HML.update(A['plus_files']())              # + an empty one ('0')
         _HML.update(A['subst_files']())             # + rep
         _HML.update(A['marks_files']())             # + mk
+        _HML.update(A['find_files']())              # + fd
     if name in _HML:
         return lf(_HML[name])
     if name == 'indent':

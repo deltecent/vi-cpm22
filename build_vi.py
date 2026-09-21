@@ -108,6 +108,47 @@ def check_reserves():
                      f"now says {expr} = {got}.  Correct the size in RSV.MAC.")
 
 
+def check_tables(target, modules):
+    """Every key in OPCTAB must also be a row in CMDTAB.
+
+    An OPCTAB row without a CMDTAB row is not inert.  OPPEND takes the class,
+    VSCAN then finds no handler so the cursor does not move, and the class-1
+    inclusive INX H turns that empty span into a span of ONE: 'df' becomes an
+    unannounced 'x' and 'cf' an unannounced 's'.  That is exactly what the
+    leftover 'f F t T ; , %' rows did after their handlers were cut (0f9837f,
+    15 failures in `ops`), and a comment in the table is what was relied on to
+    stop it happening again.  This reads the two tables out of the LINKED
+    image instead: CMDTAB is {key, handler} triples to a 0 key, OPCTAB is
+    {key, class} pairs to a 0 key.
+    """
+    if "CMD" not in modules:
+        return
+    sym = {}
+    for addr, name in re.findall(r"([0-9A-F]{4})\s+(\S+)",
+                                 open(os.path.join(HERE, f"{target}.SYM"),
+                                      encoding="latin-1").read()):
+        sym[name] = int(addr, 16)
+    if "CMDTAB" not in sym or "OPCTAB" not in sym:
+        sys.exit(f"BUILD FAILED: {target}.SYM has no CMDTAB/OPCTAB to pair up.")
+    with open(os.path.join(HERE, f"{target}.COM"), "rb") as fh:
+        com = fh.read()
+    at = lambda a: a - 0x100                      # .COM loads at 0100H
+    keys, i = set(), at(sym["CMDTAB"])
+    while com[i]:
+        keys.add(com[i]); i += 3
+    orphans, i = [], at(sym["OPCTAB"])
+    while com[i]:
+        if com[i] not in keys:
+            orphans.append(com[i])
+        i += 2
+    if orphans:
+        sys.exit("BUILD FAILED: OPCTAB classes a key CMDTAB cannot dispatch: "
+                 + ", ".join(f"{k:#04x} ({chr(k)!r})" for k in orphans)
+                 + ".  An operator on it would delete the character under the "
+                   "cursor (see check_tables).")
+    print(f"  tables: {len(keys)} commands, every OPCTAB key dispatchable")
+
+
 def run_build(target):
     modules = TARGETS[target]
     check_reserves()
@@ -163,6 +204,8 @@ def run_build(target):
         # Also pull each module's M80 listing (.PRN, text) alongside the sources.
         for mod in modules:
             sim.wfile(f"{mod}.PRN", "T", timeout=600)
+
+    check_tables(target, modules)
 
     text = "\n".join(console)
     up = text.upper()
