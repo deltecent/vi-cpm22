@@ -73,11 +73,13 @@ TARGETS = {
     # replays a vi session (motions, x, dd, insert, :wq) over a resident file and
     # checks the frozen cursor snapshot + byte-exact saved text (see cmdtst.py).
     # BUF links last (arena at the image top); PAGE/CMD/KEY sit below it.
-    "CMDTST": ["CMDTST", "CMD", "KEY", "PAGE", "BUF", "RSV"],
+    # QSN is the cursor snapshot the harness reads -- a test hook, so it links
+    # HERE and not into VI.COM (see QSN.MAC).
+    "CMDTST": ["CMDTST", "CMD", "KEY", "PAGE", "BUF", "QSN", "RSV"],
     # Motion exerciser: walks the cursor through the motion set (l w $ 0 e j k
     # G gg W b h / n, counts, goal-column tracking, H M L and the scrolls) and
     # snapshots the landing offset after each, so mottst.py checks every one.
-    "MOTTST": ["MOTTST", "CMD", "KEY", "PAGE", "BUF", "RSV"],
+    "MOTTST": ["MOTTST", "CMD", "KEY", "PAGE", "BUF", "QSN", "RSV"],
 }
 
 

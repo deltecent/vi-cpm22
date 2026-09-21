@@ -51,7 +51,8 @@ back to one of them.
 
 ## 2. Layers and link order
 
-Six code modules plus a reserve block, linked in this order:
+Six code modules plus a reserve block, linked in this order (a seventh,
+`QSN.MAC`, links into the harnesses alone):
 
     L80 VI,SCRN,CMD,KEY,PAGE,BUF,RSV,VI/Y/N/E
 
@@ -64,6 +65,7 @@ Six code modules plus a reserve block, linked in this order:
 | `PAGE.MAC` | files and paging: record engine, load, spill/rewind, save and rename | WordMaster 5.55A, verbatim, plus appended glue |
 | `BUF.MAC` | the gap buffer: pointer row, insert/delete/move, line moves, matcher, Q-buffer | WordMaster 5.55A, verbatim, plus the logical-offset API and undo capture |
 | `RSV.MAC` | emits no bytes; names the storage above the image | VI |
+| `QSN.MAC` | the harnesses' hooks (`QSNAP`, `CMDRUN`); links into CMDTST/MOTTST only, never into `VI.COM` | VI |
 
 **Link order is load-bearing.** `VI` links first so `START` sits at the TPA
 base. `RSV` links last and emits nothing, so its base is the top of the image.
@@ -155,9 +157,12 @@ move would break:
               pointer row, text + gap, Q-buffer (the yank register), undo region
     BUFEND  = BDOS base - 700H - 1
 
-In this build: the image is 16160 bytes, the `.COM` file 16256 bytes (127
-records), the reserve block 791 bytes (`4020H`–`4337H`), and the stack 128
-bytes.
+In this build: the image is 16482 bytes, the `.COM` file 16512 bytes (129
+records), the reserve block 791 bytes (`4162H`–`4479H`), and the stack 128
+bytes. **16384 is the size that matters**: the 8 MB disk allocates in 4 K
+blocks, so a 16384-byte `.COM` occupies four of them and one byte more occupies
+five — 16 K becomes 20 K on disk without a feature being gained. This build is
+98 bytes the wrong side of that line.
 
 **Why a reserve block.** L80 writes every byte up to the top of the image into
 the `.COM`, `DS` included, and fills that space with its own leftovers rather
@@ -168,6 +173,11 @@ move there. One that sits against an initialised neighbour it depends on (§3)
 stays put. `build_vi.py` checks each `;CHECK` line in RSV.MAC against BUF.MAC's
 equates on every build, because a reserve that silently comes up short would
 overrun into the arena. **Nothing may assume a `DS` starts at zero.**
+
+**Test hooks do not ship.** `QSN.MAC` holds `QSNAP` (the cursor snapshot
+`cmdtst.py`/`mottst.py` read) and `CMDRUN` (the headless key loop); the editor
+reaches neither — `VI.MAC` has its own loop, because it repaints between keys
+— so the module links into CMDTST and MOTTST and not into `VI.COM`.
 
 **The stack is 128 bytes** because `.` replays keys through `CMDDIS` from inside
 a handler, which adds a level of nesting.

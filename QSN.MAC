@@ -1,0 +1,78 @@
+;============================================================
+; FILE:    QSN.MAC
+; PROJECT: VI
+; MODULE:  QSNAP -- the headless harnesses' cursor snapshot.
+;------------------------------------------------------------
+; A TEST HOOK, and nothing else: CMDTST and MOTTST call it after every scripted
+; key and read TOFFV/TLINEV/TCOLV out of the machine to see where the cursor
+; ended up (cmdtst.py / mottst.py).  The editor itself never calls it -- the
+; screen layer works the cursor out for itself -- so it lives in its own module
+; and links into the stubs alone.  In CMD.MAC it was 75 bytes of VI.COM, and a
+; sector of load time, spent on something the editor cannot reach.
+;
+; The line and column are counted the slow, obvious way, from the top of the
+; resident text: a test's answer has to be arrived at differently from the
+; editor's or it proves nothing.
+;============================================================
+	INCLUDE VI.INC
+
+	PUBLIC	QSNAP, CMDRUN
+	PUBLIC	TOFFV, TLINEV, TCOLV	; ... what the harness reads
+
+	EXTRN	CUROFF, CHARAT, CMP16	; BUF.MAC
+	EXTRN	COL			; CMD.MAC -- the column, as the editor has it
+	EXTRN	CMDDIS, QUITF		; CMD.MAC -- one key, and the flag ':q' sets
+	EXTRN	GETKEY			; KEY.MAC -- the decoded key
+
+	CSEG
+
+;CMDRUN -- the headless MAIN LOOP: read a key, dispatch it, until QUITF.  The
+; harnesses drive the editor through this; the on-screen editor has its own
+; loop in VI.MAC, because it repaints between the keys, so this too is code the
+; editor itself can never reach.
+CMDRUN:
+	CALL	GETKEY		; B = KT_xxx, C = char / action
+	CALL	CMDDIS
+	LDA	QUITF
+	ORA	A
+	JZ	CMDRUN
+	RET
+
+;QSNAP -- snapshot cursor state into TOFFV/TLINEV/TCOLV (test hook).
+QSNAP:
+	CALL	CUROFF
+	SHLD	TOFFV
+	LXI	H,0
+	SHLD	TLINEV
+	LXI	H,0
+	SHLD	QSWKI
+QS_LP:
+	LHLD	QSWKI
+	XCHG			; DE = i
+	LHLD	TOFFV
+	CALL	CMP16		; DE=i vs HL=cur: CY iff i < cur
+	JNC	QS_COL
+	LHLD	QSWKI
+	CALL	CHARAT
+	CPI	LF
+	JNZ	QS_NX
+	LHLD	TLINEV
+	INX	H
+	SHLD	TLINEV
+QS_NX:
+	LHLD	QSWKI
+	INX	H
+	SHLD	QSWKI
+	JMP	QS_LP
+QS_COL:
+	LHLD	TOFFV
+	CALL	COL
+	SHLD	TCOLV
+	RET
+
+QSWKI:	DW	0		; the scan index
+TOFFV:	DW	0		; cursor logical offset
+TLINEV: DW	0		; cursor line (0-based)
+TCOLV:	DW	0		; cursor column (0-based)
+
+	END

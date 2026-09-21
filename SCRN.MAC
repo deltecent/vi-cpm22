@@ -150,7 +150,7 @@ EMD_DN:
 	JNZ	EMD_PR		; nonzero digit -> print
 	MOV	A,B
 	ORA	A
-	JZ	EMD_RT		; leading zero -> skip
+	RZ			; leading zero -> skip
 EMD_PR:
 	MOV	A,C
 	ADI	'0'
@@ -193,6 +193,22 @@ GOROW1:
 CEKL:
 	LXI	H,SEK
 	JMP	OUTSTR
+;PTROW -- paint the row PROWN names and step to the next: clear it, write it,
+; CR/LF (the last LF of a full repaint lands on the message row, and a backward
+; scroll's N <= NEDIT-1 keeps it inside the region), and count the row off.
+; Both paint loops are this, once each.
+PTROW:
+	CALL	CEKL		; ESC[K -- clear the row
+	CALL	PAINTR
+	MVI	A,CR
+	CALL	OUTCH
+	MVI	A,LF
+	CALL	OUTCH
+	LDA	PROWN
+	INR	A
+	STA	PROWN
+	RET
+
 ;GOTOP -- address row 1, column 1 (the scroll region's top row).
 GOTOP:
 	MVI	B,1
@@ -276,21 +292,21 @@ RDNUMS:
 	CALL	RDB
 	RC
 	CPI	ESC
-	JNZ	RS_BAD
+	RNZ			; not what a DSR reply looks like
 	CALL	RDB
 	RC
 	CPI	'['
-	JNZ	RS_BAD
+	RNZ			; not what a DSR reply looks like
 	CALL	RDNUM		; DE = rows
 	RC
 	CPI	';'
-	JNZ	RS_BAD
+	RNZ			; not what a DSR reply looks like
 	XCHG
 	SHLD	TMPR
 	CALL	RDNUM		; DE = cols
 	RC
 	CPI	'R'
-	JNZ	RS_BAD
+	RNZ			; not what a DSR reply looks like
 	XCHG
 	SHLD	TMPC
 	LHLD	TMPR		; rows -> clamp [24,200]
@@ -473,15 +489,7 @@ ROW_LP:
 	LDA	PROWN
 	CMP	B
 	JNC	ROWS_DN
-	CALL	CEKL		; ESC[K -- clear the row
-	CALL	PAINTR
-	MVI	A,CR		; step to next row (the last LF lands on the message row)
-	CALL	OUTCH
-	MVI	A,LF
-	CALL	OUTCH
-	LDA	PROWN
-	INR	A
-	STA	PROWN
+	CALL	PTROW		; the row, then down to the next one
 	JMP	ROW_LP
 ROWS_DN:
 	;--- message row (now at NROWS, col 1): vim leaves it blank ---
@@ -591,15 +599,7 @@ SBW_LP:
 	LDA	PROWN
 	CMP	B
 	JNC	SBW_DN
-	CALL	CEKL
-	CALL	PAINTR
-	MVI	A,CR		; next row (N <= NEDIT-1: stays inside the region)
-	CALL	OUTCH
-	MVI	A,LF
-	CALL	OUTCH
-	LDA	PROWN
-	INR	A
-	STA	PROWN
+	CALL	PTROW		; the row, then down to the next one
 	JMP	SBW_LP
 SBW_DN:
 	CALL	CRGRS		; restore full-screen region

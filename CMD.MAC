@@ -23,10 +23,10 @@
 ;============================================================
 	INCLUDE VI.INC
 
-	PUBLIC	CMDRUN, CMDDIS, QSNAP
+	PUBLIC	CMDDIS
 	PUBLIC	EDMODE, QUITF, MODF, CMDCNT
 	PUBLIC	MSGPST				; the message this key left
-	PUBLIC	TOFFV, TLINEV, TCOLV
+	PUBLIC	COL				; QSN.MAC's cursor column (test hook)
 	PUBLIC	RINTENT				; render intent (read by SCRN.MAC)
 	PUBLIC	ILN				; ... and the lines an R_ILIN opens
 	PUBLIC	ICHAPP				; ... 1 = an R_ICH needs no ICH
@@ -85,20 +85,6 @@
 	EXTRN	FNAME, ZTOP, PLUSB, EXBUF	; RSV.MAC -- name / G top / '+{n}' / ':'
 
 	CSEG
-
-;============================================================
-; MAIN LOOP -- read a key, dispatch by mode, until QUITF.
-; The headless harnesses (CMDTST/MOTTST) drive CMDRUN; the on-screen editor
-; (VI.MAC) reads the key and repaints itself, calling CMDDIS per key.  Both share
-; the one mode-dispatch chokepoint, CMDDIS.
-;============================================================
-CMDRUN:
-	CALL	GETKEY		; B = KT_xxx, C = char / action
-	CALL	CMDDIS
-	LDA	QUITF
-	ORA	A
-	JZ	CMDRUN
-	RET
 
 ;CMDDIS -- dispatch one already-read key (B = KT type, C = char/action) by mode.
 ;The key passes through the '.' recorder on the way in and the way out: DOTPRE
@@ -863,16 +849,14 @@ ENL_LP:
 	LHLD	WKN
 	CALL	CMP16		; DE=i vs HL=n: CY iff i < n
 	XCHG			; HL = i, DE = n
-	JNC	ENL_DN		; i >= n
+	RNC			; i >= n: no LF on this line
 	PUSH	H
 	CALL	CHARAT
 	POP	H
 	CPI	LF
-	JZ	ENL_DN
+	RZ			; the LF: HL is its offset
 	INX	H
 	JMP	ENL_LP
-ENL_DN:
-	RET
 
 ;NLSTART -- HL(off) -> HL = start of next line (EOLNL+1), or LOGLEN if last.
 NLSTART:
@@ -881,12 +865,10 @@ NLSTART:
 	CALL	LOGLEN
 	POP	D		; DE = eol result
 	CALL	CMP16		; DE=eol vs HL=LOGLEN: Z iff equal
-	JZ	NLS_DN		; no next line
+	RZ			; no next line: HL = LOGLEN
 	XCHG			; HL = eol
 	INX	H
 	RET
-NLS_DN:
-	RET			; HL = LOGLEN
 
 ;EOLC -- HL(off) -> HL = last content-char offset of the line (>= BOL).
 EOLC:
@@ -2728,17 +2710,22 @@ SPNBRK:
 	LHLD	OPHI
 	JMP	CMP16		; CY iff the break lies inside the span
 
+;OPSPNL -- HL = OPHI - OPLO, the operator span's length.  Three callers measure
+; it the same way and none of them wants DE afterwards.
+OPSPNL:
+	LHLD	OPHI
+	XCHG
+	LHLD	OPLO
+	XCHG			; HL = hi, DE = lo
+	JMP	SUBHD
+
 ;OPDSPN -- delete the logical span [OPLO,OPHI) (charwise).
 OPDSPN:
 	CALL	SPNBRK		; asked BEFORE the delete, while the text is there
 	PUSH	PSW
 	LHLD	OPLO
 	CALL	GOTO
-	LHLD	OPHI
-	XCHG			; DE = hi
-	LHLD	OPLO
-	XCHG			; HL = hi, DE = lo
-	CALL	SUBHD		; HL = hi - lo
+	CALL	OPSPNL		; HL = hi - lo
 	CALL	DELFWD
 	CALL	MARKMOD
 	POP	PSW
@@ -3288,14 +3275,9 @@ VD_DD:
 	STA	DDSNG
 	JMP	VDD_GO
 VDD_LS:
-	CALL	RGET0		; vim: is this the last line?  (pages in)
-VDD_LL:
-	CALL	RDGET
-	JC	SETMOV		; the file ends on this line: nothing to do
-	CPI	LF
-	JNZ	VDD_LL
-	CALL	RDGET
-	JC	SETMOV		; nothing after its LF: the last line
+	CALL	ONLAST		; vim: is this the last line?  (pages in, and it is
+	JC	SETMOV		;   the same question <CR> and 'j' ask) -- then a
+				;   count over one does nothing at all
 VDD_GO:
 	CALL	QKILL		; these lines become the register, not the last
 	CALL	LNSTRT		; the WHOLE line is yanked, so start at its start.
@@ -3508,11 +3490,7 @@ YCALL:	PCHL
 ; that moved fewer bytes, which the byte target below already allows for.
 YSPAN:
 	CALL	GLSTAL
-	LHLD	OPHI
-	XCHG
-	LHLD	OPLO
-	XCHG			; HL = hi, DE = lo
-	CALL	SUBHD		; HL = the span's length
+	CALL	OPSPNL		; HL = the span's length
 	SHLD	YTGT
 	CALL	LOGLEN		; HL = the text's length
 	XCHG			; DE = it
@@ -3623,6 +3601,11 @@ YNGO:
 ; line, and that refusal IS the whole command); CY when this yank has to be
 ; taken out and put back after all.  The cursor is left at the line's start --
 ; YNDONE puts it back.
+;
+; The refusal is ONLAST's answer -- the question 'dd' and '<CR>' already ask:
+; is there a line below this one?  It reads ahead THROUGH the pager, so it is
+; answered the same wherever the window happens to end, and the walk below is
+; left with nothing to decide but where the count clamps.
 YNCOPY:
 	LHLD	CMDCNT		; PEEKED, not spent: a fall back to VD_DD reads
 	MOV	A,H		;   the count itself
@@ -3630,41 +3613,41 @@ YNCOPY:
 	JNZ	YNC_HV
 	LXI	H,1
 YNC_HV:
+	MOV	A,L		; a count of one always has its own line to take;
+	DCR	A		;   a count over one has to have the NEXT one
+	ORA	H
+	JZ	YNC_M
+	PUSH	H
+	CALL	ONLAST		; vim: a count over one on the last line does
+	POP	H		;   nothing at all, and leaves the register alone
+	JC	YNC_RF
+YNC_M:
 	PUSH	H
 	CALL	LNSTRT		; the WHOLE line is yanked: start at its start
 	POP	H
 	CALL	YNLINE		; BC = the span, measured where it stands
-	JC	YNC_NO
+	RC			; not measurable here: let the pager answer it
 	MOV	H,B
 	MOV	L,C
 	CALL	YNROOM		; room to copy it where it lies?  (BC kept)
 	RC			; no: the delete-and-put-back path
 	JMP	YNGO
-YNC_NO:
-	LDA	YNNOP
-	ORA	A
-	JZ	YNC_CN		; not measurable here: let the pager answer it
+YNC_RF:
 	CALL	GETCNT		; refused: vim does nothing and leaves the
 	CALL	GLSTAL		;   register alone, and that is the command
 	ORA	A		; NC: done
-	RET
-YNC_CN:
-	STC
 	RET
 
 ;YNLINE -- HL = the count: the span 'yy' takes, measured in the RESIDENT text
 ; alone.  The cursor is at the line's start, so the span starts at GAPEND and
 ; the measure is a walk up to TXTEND -- no CHARAT, no logical offsets, and
 ; nothing that could page.  Returns BC = the span's length and NC; or CY, and
-; then YNNOP says which kind of no it is: 1 = there is nothing to yank at all
-; (the last line with a count over one, which vim refuses and VD_DD with it),
-; 0 = the text ran out with some of the file still unread, where only the pager
-; can say where the count's lines end.
+; then the count's lines are not all here to be measured: the text ran out with
+; some of the file still unread, and only the pager can say where they end.
+; Running out with the file fully READ is not a no -- vim clamps a count at the
+; last line, and the one count that refuses instead never reaches here.
 YNLINE:
 	SHLD	YNCNT		; the lines it still wants
-	XRA	A
-	STA	YNNOP		; nothing refused yet ...
-	STA	YNSAW		;   and no line break seen yet
 	LHLD	GAPEND
 YNL_LP:
 	XCHG			; DE = the scan
@@ -3676,13 +3659,6 @@ YNL_LP:
 	INX	H
 	CPI	LF
 	JNZ	YNL_LP
-	LDA	YNSAW
-	ORA	A
-	JNZ	YNL_CT
-	MVI	A,1
-	STA	YNSAW		; the FIRST break: what is past it, if anything,
-	SHLD	YNLF		;   is the line below the cursor's
-YNL_CT:
 	PUSH	H
 	LHLD	YNCNT
 	DCX	H
@@ -3699,24 +3675,8 @@ YNL_CT:
 YNL_EN:				; HL = TXTEND: the resident text ran out here
 	CALL	INRDY		; NZ while any of the file is still unread, and
 	JNZ	YNL_NO		;   then what is past the window is not knowable
-	LDA	YNSAW
-	ORA	A
-	JZ	YNL_1		; no break at all: the cursor IS on the last line
-	LHLD	YNLF		; ... and it still is if nothing follows the first
-	XCHG
-	LHLD	TXTEND
-	CALL	CMP16		; DE = past that break vs HL = the text's end
-	JZ	YNL_RF		; the last line, with a count of more than one
-	JMP	YNL_TO
-YNL_1:
-	LHLD	YNCNT		; nothing was counted off, so this is the count
-	DCX	H		;   as typed: one takes the unterminated last
-	MOV	A,H		;   line, more than one is vim's refusal
-	ORA	L
-	JNZ	YNL_RF
-YNL_TO:				; vim clamps a count that runs past the end
-	LHLD	TXTEND
-	XCHG
+	LHLD	TXTEND		; ... otherwise the file ends here too, and the
+	XCHG			;   count clamps to it as vim's does
 	LHLD	GAPEND
 	XCHG			; HL = TXTEND, DE = GAPEND
 YNL_BC:
@@ -3725,9 +3685,6 @@ YNL_BC:
 	MOV	C,L
 	ORA	A		; NC (SUBHD's DAD leaves the carry set)
 	RET
-YNL_RF:
-	MVI	A,1
-	STA	YNNOP		; there is nothing for this 'yy' to take
 YNL_NO:
 	STC
 	RET
@@ -3737,22 +3694,15 @@ YNL_NO:
 ; and-put-back path has to run.  OPALSP measured the span in resident text
 ; already, so there is no question here of where it ends -- only of room.
 YNSPAN:
-	LHLD	OPHI
-	XCHG
-	LHLD	OPLO
-	XCHG			; HL = OPHI, DE = OPLO
-	CALL	SUBHD		; HL = the span's length
+	CALL	OPSPNL		; HL = the span's length
+	MOV	B,H
+	MOV	C,L		; BC = it, the way QCPYN wants it (YNROOM keeps BC)
 	CALL	YNROOM
 	RC			; no room: the delete-and-put-back path
+	PUSH	B		; GOTO's LFCNT takes BC, so the span rides the stack
 	LHLD	OPLO
 	CALL	GOTO		; the span starts at the cursor, as QCPYN wants
-	LHLD	OPHI		; (GOTO's LFCNT takes BC, so re-measure it here)
-	XCHG
-	LHLD	OPLO
-	XCHG
-	CALL	SUBHD
-	MOV	B,H
-	MOV	C,L
+	POP	B
 	JMP	YNGO
 
 ;VC_P -- 'p': the register's lines in AFTER the cursor's line, count copies.
@@ -5456,40 +5406,6 @@ SR1_BK:
 	JMP	PUTCUR
 
 ;============================================================
-; QSNAP -- snapshot cursor state into TOFFV/TLINEV/TCOLV (test hook).
-;============================================================
-QSNAP:
-	CALL	CUROFF
-	SHLD	TOFFV
-	LXI	H,0
-	SHLD	TLINEV
-	LXI	H,0
-	SHLD	WKI
-QS_LP:
-	LHLD	WKI
-	XCHG			; DE = i
-	LHLD	TOFFV
-	CALL	CMP16		; DE=i vs HL=cur: CY iff i < cur
-	JNC	QS_COL
-	LHLD	WKI
-	CALL	CHARAT
-	CPI	LF
-	JNZ	QS_NX
-	LHLD	TLINEV
-	INX	H
-	SHLD	TLINEV
-QS_NX:
-	LHLD	WKI
-	INX	H
-	SHLD	WKI
-	JMP	QS_LP
-QS_COL:
-	LHLD	TOFFV
-	CALL	COL
-	SHLD	TCOLV
-	RET
-
-;============================================================
 ; DISPATCH TABLES -- the messages first, then CMDTAB and ACTTAB.
 ;============================================================
 ;============================================================
@@ -5950,7 +5866,6 @@ CNTV:	DW	0		; motion repeat counter
 TTI:	DW	0		; TAILTAB scan index
 WKI:	DW	0		; scan index
 WKN:	DW	0		; cached LOGLEN
-WKLO:	DW	0		; dd: range low offset
 WKTERM: DW	0		; line terminator offset
 WKBOL:	DW	0		; EOLC scratch: line BOL
 WKCLS:	DB	0		; word motion: class of the current run
@@ -5959,9 +5874,6 @@ RPDEL:	DW	0		; R: chars overwritten, still in the gap (BS puts back)
 RPAPP:	DW	0		; R: chars appended past the line end (BS deletes)
 RPGE:	DW	0		; R: GAPEND as the last overwrite left it
 
-TOFFV:	DW	0		; QSNAP: cursor logical offset
-TLINEV: DW	0		; QSNAP: cursor line (0-based)
-TCOLV:	DW	0		; QSNAP: cursor column (0-based)
 
 RLPTR:	DW	0		; RDLINE: write pointer
 RLLEN:	DB	0		; RDLINE: chars stored
@@ -6013,9 +5925,6 @@ YBLK:	DW	0		; ... and where they ended when they came back
 ;--- the yank that copies instead (YNCOPY / YNSPAN) ---
 YNPG:	DW	0		; the window the yank started in (YNDONE's paint)
 YNCNT:	DW	0		; YNLINE: the lines it still wants
-YNLF:	DW	0		; ... where the line below the cursor's starts
-YNSAW:	DB	0		; ... 1 once a line break has been seen
-YNNOP:	DB	0		; ... 1 = refused: there is nothing to yank
 SCNT:	DW	0		; searches still to do (the count)
 SOFF:	DW	0		; where the cursor was when the search began
 SLDLT:	DW	0		; ... and LNDLT, for the search that fails
