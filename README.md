@@ -1,7 +1,7 @@
 # VI — a vi-style editor for CP/M 2.2 on the 8080
 
 `VI.COM` is a screen editor for CP/M 2.2 that behaves like vi. It runs on a
-plain 8080 in a 56 K TPA, it is 16,256 bytes, and it edits files far larger
+plain 8080 in a 56 K TPA, it is 16,896 bytes, and it edits files far larger
 than memory — 100 K files are ordinary — by paging text to and from disk.
 
 vim 9.1 is the reference for behaviour. A command is not finished here until it
@@ -35,7 +35,8 @@ Commands, with counts (`5j`, `3dd`, `20G`):
 | scroll | `^F ^B` `^D ^U` `^L` `^G` |
 | insert | `i a I A` `o O` `R` `r{c}`, with BS/DEL rubbing out across lines as vim does |
 | edit | `x` `dd` `D` `C` `J` `~` `u` `.` |
-| operators | `d c y` over a motion: `dw dd d$ dj dG` `cw C` `yy Y y'a` |
+| find | `f F t T` `; ,` — find a character on the line, inclusive/exclusive |
+| operators | `d c y` over a motion: `dw dd d$ dj dG dfz` `cw C` `yy Y y'a` |
 | yank/put | `yy Y` `p P` `3p` — one register, whole lines, filled only by a yank |
 | marks | `m{a-c}` `` `{a-c} `` `'{a-c}` `d'a` `` d`a `` |
 | search | `/text` `?text` `n N` — a literal string, not a regex; wraps |
@@ -47,7 +48,7 @@ not a permanent status line. `^G` says which file, its flags, and where the
 cursor is. A file on another drive is named with its drive (`"B:TEST.TXT"`),
 the way vim names a path outside the current directory.
 
-Not here, on purpose: `f F t T ; ,` `%` `<< >>` `s S cc` `^E ^Y` `:100`
+Not here, on purpose: `%` `<< >>` `s S cc` `^E ^Y` `:100`
 (use `100G`), named registers, regular expressions, `:set` and multiple
 windows. Each omission is priced and argued in `COMMANDS.md` — the binary is
 the scarce resource, since every byte of the image comes out of the editing

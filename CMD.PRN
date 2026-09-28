@@ -5413,7 +5413,7 @@
   1CE7'   37                    	STC
   1CE8'   C9                    	RET
                                 
-  1CE9'   56 31 2E 30           SVER:	DB	'V1.0',0
+  1CE9'   56 31 2E 31           SVER:	DB	'V1.1',0
   1CED'   00                    
   1CEE'   4E 6F 20 66           SNFN:	DB	'No file name',0
   1CF2'   69 6C 65 20           
