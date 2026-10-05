@@ -761,6 +761,10 @@ MKJMP:
 	MOV	A,H
 	CMP	D
 	JNZ	MKSTAL
+	CALL	GZONE		; the screen's top line, before the cursor
+				;   moves: GPLACE measures the landing against
+				;   it, and one left over from an earlier 'G'
+				;   had it keep a window the line is not in
 	LDA	MKWHAT		; decided BEFORE the GOTO, so no register of
 	CPI	PJL		;   ours has to survive a BUF primitive
 	JZ	MKJ_GO		; ''': GPKEEP is 0, so GPLACE finds the first

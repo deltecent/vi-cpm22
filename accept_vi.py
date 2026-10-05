@@ -5283,6 +5283,37 @@ def marks_cmds():
     finally:
         e.close()
 
+    # ---- a jump to a line that is off the screen must REDRAW it.  The file
+    #      fits the window, so nothing pages and the mark survives the 'G';
+    #      the jump places its line as 'G' does, which measures the target
+    #      against the screen's top line -- and that has to be noted afresh,
+    #      not left over from the 'G'.  Each screen is held against the one a
+    #      '^L' draws: a jump that moves only the cursor leaves the two apart.
+    far = b''.join(b'line %03d %s\r\n' % (i, b'x' * 20) for i in range(1, 129))
+    for jump in ("'a", '`a'):
+        e = Editor(far)
+        try:
+            def drawn(tag, want):
+                v = e.screen(); scr = [''.join(r).rstrip() for r in v.screen[:23]]
+                check(f'{tag}: the cursor is on {want!r} ({scr[v.row][:8]!r})',
+                      scr[v.row][:8] == want)
+                e.key('\x0c')
+                v2 = e.screen(); scr2 = [''.join(r).rstrip() for r in v2.screen[:23]]
+                check(f'{tag}: the screen is what ^L draws (top {scr[0][:8]!r}, '
+                      f'^L {scr2[0][:8]!r})',
+                      scr == scr2 and (v.row, v.col) == (v2.row, v2.col))
+            e.key('8j'); e.key('ma'); e.key('G')
+            e.key(jump)
+            drawn(f'G then {jump}', 'line 009')
+            e.key('G'); e.key(jump); e.key('1G')
+            drawn(f'G {jump} then 1G', 'line 001')
+            e.key('G'); e.key('d' + jump)        # an operator over the same jump
+            # "d'a" takes lines 9 to 128 whole; "d`a" takes the span between
+            # the two points, so line 128's text joins up where line 9 began
+            drawn(f'G then d{jump}', 'line 008' if jump == "'a" else 'line 128')
+        finally:
+            e.close()
+
     # ---- the window paging away drops the mark ----
     e = Editor(make(12800))
     try:
