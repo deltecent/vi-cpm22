@@ -87,7 +87,7 @@ The seconds are the simulator's emulated clock (2 MHz 8080, 9600-baud console, t
 | | |
 |---|---|
 | BDOS entry, the word at 0006H | B606H |
-| arena, from the top of the program to the BDOS | 27065 bytes (4C4CH-B605H) |
+| arena, from the top of the program to the BDOS | 27063 bytes (4C4EH-B605H) |
 | text in memory when the file is opened | 2048 bytes |
 | undo region, taken out of the arena | 1024 bytes |
 | text in memory after `6000G` `G` `6000G` `gg` `G` | 12288, 16640, 24832, 24576, 22528 bytes |

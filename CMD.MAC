@@ -3067,8 +3067,9 @@ OPP_GO:
 	CPI	'c'
 	RNZ
 	JMP	SETINS
-OPABRT:
-	JMP	SETMOV		; not a motion -> operator cancelled, nothing drew
+OPABRT:				; not a motion -> the operator is dropped and
+	JMP	VIC_SW		;   nothing drew; its count goes with it, or the
+				;   NEXT command would run that many times
 
 ;OPENDS -- OPSLO / OPSHI = where in the file the cursor's line starts, and
 ; where the line after it does.  Whichever way a line motion then goes, one of
@@ -6764,7 +6765,8 @@ VC_CTLG:
 	STA	MSGWHT
 	MVI	A,R_MOVE
 	STA	RINTENT
-	RET
+	JMP	GETCNT		; a count typed before it is spent here, not
+				;   left for the next command
 
 CMDTAB:
 	DB	07H			; ^G -- where am I?

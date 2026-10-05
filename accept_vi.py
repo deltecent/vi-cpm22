@@ -6866,6 +6866,135 @@ def pgop_cmds():
             e.close()
 
 
+# ---------------------------------------------------------------------------
+# What a command leaves behind (issue #3).
+#
+# The tests above check each command and then stop.  A count the command did
+# not spend, a pending operator it did not drop, a stale screen or a window the
+# engine no longer agrees with all show only in the NEXT command -- 'x' after a
+# paged "'a" once deleted the rest of the line, with every jump test green,
+# because each of them followed its jump with 'G', ':w' or '^G'.
+#
+# So: after every kind of command -- the ones that work, the ones that are
+# refused, the ones dropped half-typed -- the same probe: 'x' takes exactly the
+# character under the cursor, 'j' moves exactly one line, '.' repeats that 'x',
+# '2x' takes exactly two, and '^L' draws the screen that is already there.
+# AFTER is (what the commands have in common, the commands); each list runs in
+# ONE editor on the 100 K file, every command from a line of its own, so the
+# commands also follow each other.  AFTER_FRESH are the ones that mean
+# something only as the first command typed.
+AFTER = [
+    ('a motion', ['5j', '3k', '2l', '$', '0', 'w', '3w', 'b', 'e', 'H', 'M',
+                  'L', '\x06', '\x02', '\x04', '\x15', '\r']),
+    ('a jump', ['G', 'gg', '9000G', '12G', '99999G', 'ma9000G\'a',
+                'mb100G`b', "'c", "'z", '`z', 'mz', "3'a"]),
+    ('a search or a find', ['/003100\r', '/012000\r', '/zzzz\r', 'n', 'N',
+                            '3n', '?000100\r', '/\r', 'f0', 'fz', '3fz', ';',
+                            ',', 'tz', 'F0', '3;']),
+    ('a command dropped half-typed',
+     ['7\x1b', 'd\x1b', '3d\x1b', 'dz', '3dz', 'd3z', 'y\x1b', 'yz', 'c\x1b',
+      'cz', 'r\x1b', '5r\x1b', 'g\x1b', 'gx', '3gx', 'm\x1b', "'\x1b",
+      '`\x1b', 'f\x1b', '/\x1b', ':\x1b', '5:\x1b', '7Q', '3K', '9&', '\x03',
+      '5\x03', '5\x07', '5\x0c']),
+    ('an ex command', [':nosuch\r', ':5000\r', ':s/zz/y/\r', ':1,2s/zz/y/\r',
+                       ':e\r', ':q\r', ':r NOSUCH.TXT\r',
+                       ':3000,3001w T.TXT\r', ':r T.TXT\r', ':w\r']),
+    ('a yank, a put or a refusal',
+     ['yy', '3yy', 'p', 'P', '3p', 'yj', "ma9000Gy'a", 'yG', '5000yy',
+      '5000dd', 'p']),
+    ('a change', ['x', '3x', 'dd', '3dd', 'dw', 'D', 'J', '~', 'iab\x1b',
+                  '3iab\x1b', 'aab\x1b', 'Aab\x1b', 'Iab\x1b', 'oab\x1b',
+                  'Oab\x1b', 'Rab\x1b', 'rz', 'cwab\x1b', 'Cab\x1b', 'u',
+                  'xuu', '.', '3.']),
+]
+AFTER_FRESH = ['u', '.', '3.', 'p', 'P', 'n', 'N', ';', ',', "'a", '`a', '\x0c',
+               '\x07', '\x1b']
+
+
+def after_cmds():
+    """After any command the next one is its own: 'x' takes one character,
+    'j' moves one line, '.' repeats the 'x', '2x' takes two, and the screen is
+    the one '^L' draws."""
+    def tap(e, keys):
+        """Type *keys* and wait for the editor to be back at the keyboard."""
+        for part in re.split('(\x1b)', keys):
+            if part == '\x1b':
+                escaped(e)
+            elif part:
+                e.s.send(part)
+                idle(e)
+                ex_settled(e)
+
+    def where(e):
+        """(^G's line, the screen row, the column, that row's text)."""
+        m = re.search(r'line (\d+) col (\d+)', ctrlg(e))
+        v = e.screen()
+        return (int(m.group(1)) if m else None, v.row, v.col,
+                ''.join(v.screen[v.row]).rstrip())
+
+    def less(t, col, n):
+        return t[:col] + t[col + n:]
+
+    def at(e):
+        """The cursor, off the screen as it stands: no key is typed for it."""
+        v = e.screen()
+        return v.row, v.col, ''.join(v.screen[v.row]).rstrip()
+
+    def probe(e, tag, last):
+        # the 'x' is the FIRST key after the command: a '^G' typed to find the
+        # line would itself take whatever the command left behind
+        row, col, t = at(e)
+        tap(e, 'x')
+        row1, col1, t1 = at(e)
+        check(f'{tag}: x takes the one character under the cursor '
+              f'({t!r} col {col} -> {t1!r})',
+              (row1, t1) == (row, less(t, col, 1)))
+        ln = where(e)[0]
+        check(f'{tag}: the editor answers ^G', ln is not None)
+        if ln is None:
+            return
+        tap(e, 'j')
+        ln2, row2, col2, t2 = where(e)
+        check(f'{tag}: j moves one line (line {ln} -> {ln2})',
+              ln2 == (ln if ln == last else ln + 1))
+        tap(e, '.')
+        ln3, row3, col3, t3 = where(e)
+        check(f'{tag}: . repeats the x ({t2!r} col {col2} -> {t3!r})',
+              (ln3, t3) == (ln2, less(t2, col2, 1)))
+        tap(e, '2x')
+        ln4, row4, col4, t4 = where(e)
+        check(f'{tag}: 2x takes two ({t3!r} col {col3} -> {t4!r})',
+              (ln4, t4) == (ln3, less(t3, col3, 2)))
+        scr = [''.join(r).rstrip() for r in e.screen().screen[:23]]
+        tap(e, '\x0c')
+        v = e.screen()
+        check(f'{tag}: the screen is the one ^L draws',
+              scr == [''.join(r).rstrip() for r in v.screen[:23]]
+              and (v.row, v.col) == (row4, col4))
+
+    big = make(12800)
+    line_no = 3000
+    for what, cmds in AFTER:
+        e = Editor(big)
+        try:
+            for c in cmds:
+                line_no += 20
+                tap(e, f'{line_no}G2l')
+                tap(e, c)
+                probe(e, f'after {what}, {c!r}', 12800)
+        finally:
+            e.close()
+
+    small = make(40)
+    for c in AFTER_FRESH:
+        e = Editor(small)
+        try:
+            tap(e, c)
+            probe(e, f'as the first command, {c!r}', 40)
+        finally:
+            e.close()
+
+
 def tstates(e):
     """The emulated 8080's T-state clock (2 MHz), from the simulator's monitor.
     It counts the CPU, the 9600-baud console and the BIOS's disk polling; the
@@ -7758,6 +7887,9 @@ def main():
     if not args or 'vim' in args or 'pgop' in args:
         print('\n=== operators over a motion that pages ===', flush=True)
         pgop_cmds()
+    if not args or 'vim' in args or 'after' in args:
+        print('\n=== what a command leaves behind ===', flush=True)
+        after_cmds()
     if not args or 'vim' in args or 'qfull' in args:
         print('\n=== dd / yy past the yank register ===', flush=True)
         qfull_cmds()

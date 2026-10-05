@@ -38,7 +38,7 @@ SANDBOX = os.path.join(HERE, "_fastcheck")
 # long ones rather than one straggler holding the wall clock open.  Measured
 # 2026-09-18: ops 361s, srch 269s, ins 263s ... ex 12s.  The wall time is
 # whichever single group is longest, so that is what to split next.
-GROUPS = ['ops', 'opmx', 'srch', 'subst', 'marks', 'ins', 'put', 'file', 'ndd', 'dot', 'undo', '100k',
+GROUPS = ['ops', 'opmx', 'after', 'srch', 'subst', 'marks', 'ins', 'put', 'file', 'ndd', 'dot', 'undo', '100k',
           'find', 'pgop', 'qfull', 'lnum', 'rdwr', 'brk',
           'ctrlg',
           'bs', 'goto', 'arg', 'mot', '40k', 'scrolls', '2k', 'hml', 'one',
