@@ -6143,7 +6143,15 @@ def qfull_cmds():
     the cursor, the marks and the modified flag as they were, and the register
     left empty.  It used to raise WordMaster's fatal 'QBUF FULL' and drop to
     CP/M with the work lost.  A count that does fit still goes in and comes
-    back out whole, a put of 24 K included."""
+    back out whole, a put of 22 K included.
+
+    The register's ceiling is the arena less a reserve, so every byte the image
+    grows comes off it: 2976 lines of this file fit at 18,304 bytes of VI.COM,
+    where 3000 did 512 bytes earlier.  FIT is the count the "does fit" rows
+    use, kept well under that so a few hundred bytes of code do not turn them
+    into refusals -- and each of those rows says it was not refused, because a
+    refused 'dd' then 'P', or a refused yank, leaves the file right as well."""
+    FIT = 2800
     def L(a, b):
         return b''.join(line(i) for i in range(a, b + 1))
 
@@ -6185,14 +6193,19 @@ def qfull_cmds():
 
     # ---- what does fit still goes in, and comes back out ----
     for keys, want in (
-            (['6000G', '3000dd', 'P'], big),
-            (['6000G', '3000dd', 'gg', 'P'], L(6000, 8999) + L(1, 5999) + L(9000, 12800))):
+            (['6000G', f'{FIT}dd', 'P'], big),
+            (['6000G', f'{FIT}dd', 'gg', 'P'],
+             L(6000, 5999 + FIT) + L(1, 5999) + L(6000 + FIT, 12800))):
         e = Editor(big)
         try:
             n = len(e.cap.getvalue())
+            said = []
             for k in keys:
                 e.key(k)
                 e.s.run_until_quiet(quiet=1.5, timeout=300)
+                said.append(bottom(e))
+            check(f'{" ".join(keys)}: it fits ({said!r})',
+                  'Too large to yank' not in said)
             check(f'{" ".join(keys)}: the editor is still running',
                   not PROMPT.search(e.cap.getvalue()[n:]))
             e.key(':w\r'); ex_settled(e)
@@ -6205,16 +6218,20 @@ def qfull_cmds():
     # ---- a yank whose lines run past the window takes them out and puts
     #      them back: where they came from, and the cursor where it was ----
     for keys, want, at in (
-            (['6000G', '3l', '3000yy'], big, 6000),
-            (['6000G', '3l', '3000yy', 'p'],
-             L(1, 6000) + L(6000, 8999) + L(6001, 12800), None),
+            (['6000G', '3l', f'{FIT}yy'], big, 6000),
+            (['6000G', '3l', f'{FIT}yy', 'p'],
+             L(1, 6000) + L(6000, 5999 + FIT) + L(6001, 12800), None),
             (['10000G', '3l', '2801yy'], big, 10000),
             (['10000G', '3l', '9999yy', 'gg', 'P'], L(10000, 12800) + big, None)):
         e = Editor(big)
         try:
+            said = []
             for k in keys:
                 e.key(k)
                 e.s.run_until_quiet(quiet=1.5, timeout=300)
+                said.append(bottom(e))
+            check(f'{" ".join(keys)}: it fits ({said!r})',
+                  'Too large to yank' not in said)
             if at:
                 v = e.screen(); scr = [''.join(r).rstrip() for r in v.screen[:23]]
                 check(f'{" ".join(keys)}: the cursor is where it was '

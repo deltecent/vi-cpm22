@@ -4983,7 +4983,7 @@ EE_LD:
 ;============================================================
 ; A BLOCK THROUGH A FILE  (:N,Mw name   :[N]r name)
 ;
-; The yank register lives in the text's own arena: it tops out near 27 K, and
+; The yank register lives in the text's own arena: it tops out near 23 K, and
 ; every byte it holds is a byte the window loses.  A block past that is moved
 ; the way vi has always moved one -- written to a file the user names and read
 ; back in somewhere else.  Neither command touches the register or the arena:

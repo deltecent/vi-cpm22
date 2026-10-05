@@ -254,7 +254,8 @@ repaint.
 **The yank register is WordMaster's Q-buffer.** It is a second gap buffer inside
 the arena, part of the pointer row, so it slides with the gap and grows through
 the same `MKGAP` machinery as the text. Its limit is the arena less `RESVMEM`,
-about 27 K. WordMaster has no copy without delete, so the copy is appended
+about 23 K with a 56 K CP/M -- and every byte the image grows comes off it.
+WordMaster has no copy without delete, so the copy is appended
 (`QCPYN`, BUF.MAC):
 
 - **A yank copies the lines where they lie** (`YNCOPY` for `yy`, `YNSPAN` for

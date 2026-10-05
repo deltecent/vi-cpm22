@@ -148,7 +148,7 @@ YANK AND PUT ---------------------------------------------------------------
     3p              put three copies
 
 There is one register and it holds whole lines.  A yank fills it and so
-does dd; no other delete does.  It holds about 27 K: a dd or yy of more
+does dd; no other delete does.  It holds about 23 K: a dd or yy of more
 than that is refused with "Too large to yank" and changes nothing.  To
 delete more, use dG, d{n}G or d'a, which keep nothing.  To MOVE more,
 write the lines to a file and read them back in where they belong:
