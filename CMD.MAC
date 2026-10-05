@@ -796,9 +796,9 @@ MKPAGE:
 	CALL	CNTTST
 	JNZ	MKPAGE
 	CALL	MKWIN		; the file ran out: that was its last step
-	RC
-	LXI	H,0FFFFH	; (not expected) past the end: GOTO clamps it
-	RET
+	JC	CLRCNT
+	LXI	H,0FFFFH	; the very end of the text, which MKWIN does not
+	JMP	CLRCNT		;   count as in the window: GOTO clamps it
 
 ;MKLOAD -- MKPOS = the 3-byte file position at HL.
 MKLOAD:
@@ -3994,6 +3994,18 @@ YKGO:
 	LHLD	YOFF		;   survive this -- the put-back below can page
 	CALL	SUBHD		;   the window's top out and shift every one of
 	SHLD	YCOL		;   them -- but a distance within the lines does
+	CALL	CUROFF		; ... and where in the FILE they start: the take
+	PUSH	H		;   pages the window on when the count's lines
+	LHLD	YPT		;   run past it, and YPT, an offset into the
+	XCHG			;   window as it was, then names other text
+	POP	H
+	CALL	SUBHD
+	XCHG			; DE = how far behind the cursor they start
+	CALL	CURFP
+	MVI	B,0
+	CALL	SUB24
+	SHLD	YPFP
+	STA	YPFP+2
 	LDA	MODF
 	STA	YMODF
 	LDA	DOTCHG		; ... and the '.' recorder's own change flag:
@@ -4023,36 +4035,29 @@ YKGO:
 				;   register back after THAT spliced whatever an
 				;   earlier yank had left in it into the file.
 				;   vim refuses it too, register untouched.
-	LHLD	YPT
-	CALL	GOTO
-	CALL	QGET		; and straight back in
-	;--- Putting them back can PAGE: QGET splices the register through
-	;    INSBLK, whose MKGAP reaches MKROOM when the arena is tight, and a
-	;    spill writes the window's top out to disk -- which moves TXTBEG and
-	;    shifts every logical offset under us, YOFF among them.  ('500yy' at
-	;    line 2500 of a 40 K file spills 48 records and used to land the
-	;    cursor 573 lines below where it started; a yank moves the cursor
-	;    nowhere.)  So the cursor is found again from the lines THEMSELVES:
-	;    QGET leaves it just past them, so they start at the cursor less the
-	;    register's length, and the cursor was YCOL bytes into them.  Both
-	;    terms are read AFTER the paging, so neither can be stale. ---
-	CALL	CUROFF		; where QGET left it: just past the lines
-	SHLD	YBLK
-	LHLD	QBEG
-	XCHG
-	LHLD	QEND
-	CALL	SUBHD		; HL = the register's length = what went back
-	XCHG
-	LHLD	YBLK
-	CALL	SUBHD		; HL = where those lines start NOW
+	LXI	H,YPFP		; back to where they came from, by its place in
+	CALL	MKLOAD		;   the file.  ('3000yy' at line 6000 of a 100 K
+	CALL	MKPAGE		;   file pages 185 lines on while it takes them,
+	CALL	GOTO		;   and going back by the old offset put all 24 K
+	CALL	QGET		;   of them in 185 lines below where they belong.)
+	;--- Putting them back can PAGE as well: QGET splices the register
+	;    through INSBLK, whose MKGAP reaches MKROOM when the arena is tight,
+	;    and a spill writes the window's top out to disk.  ('500yy' at line
+	;    2500 of a 40 K file spills 48 records and used to land the cursor
+	;    573 lines below where it started; a yank moves the cursor nowhere.)
+	;    So the cursor is found the same way: the lines' place in the file,
+	;    and YCOL into them. ---
+YK_FIN:				; (nothing came out: nothing went back, and the
+	LHLD	YPFP		;   cursor is still owed its place)
 	XCHG
 	LHLD	YCOL
-	DAD	D		; ... and the cursor is YCOL into them
+	DAD	D
+	SHLD	MKPOS
+	LDA	YPFP+2
+	ACI	0
+	STA	MKPOS+2
+	CALL	MKPAGE
 	CALL	GOTO
-	JMP	YK_RST
-YK_FIN:				; nothing came out, so nothing was put back and
-	LHLD	YOFF		;   no offset can have shifted: the cursor is
-	CALL	GOTO		;   where it was
 YK_RST:
 	LHLD	YLDLT
 	SHLD	LNDLT		; nothing moved: the cursor is on the row it was
@@ -6580,7 +6585,7 @@ YACT:	DW	0		; how this yank takes its lines (VD_DD / YSPAN)
 YTGT:	DW	0		; YSPAN: the text's length once the span is out
 YWAS:	DW	0		; ... and its length BEFORE the lines came out
 YCOL:	DW	0		; ... how far into them the cursor sat
-YBLK:	DW	0		; ... and where they ended when they came back
+YPFP:	DB	0,0,0		; ... and where in the file they start
 ;--- the yank that copies instead (YNCOPY / YNSPAN) ---
 YNPG:	DW	0		; the window the yank started in (YNDONE's paint)
 YNCNT:	DW	0		; YNLINE: the lines it still wants

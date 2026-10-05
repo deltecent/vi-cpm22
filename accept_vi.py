@@ -5727,6 +5727,35 @@ def qfull_cmds():
         finally:
             e.close()
 
+    # ---- a yank whose lines run past the window takes them out and puts
+    #      them back: where they came from, and the cursor where it was ----
+    for keys, want, at in (
+            (['6000G', '3l', '3000yy'], big, 6000),
+            (['6000G', '3l', '3000yy', 'p'],
+             L(1, 6000) + L(6000, 8999) + L(6001, 12800), None),
+            (['10000G', '3l', '2801yy'], big, 10000),
+            (['10000G', '3l', '9999yy', 'gg', 'P'], L(10000, 12800) + big, None)):
+        e = Editor(big)
+        try:
+            for k in keys:
+                e.key(k)
+                e.s.run_until_quiet(quiet=1.5, timeout=300)
+            if at:
+                v = e.screen(); scr = [''.join(r).rstrip() for r in v.screen[:23]]
+                check(f'{" ".join(keys)}: the cursor is where it was '
+                      f'({scr[v.row]!r}, {v.col})',
+                      scr[v.row] == txt(at) and v.col == 3)
+                g = ctrlg(e)
+                check(f'{" ".join(keys)}: nothing is changed ({g!r})',
+                      'Modified' not in g and f'line {at} ' in g)
+                e.key('x'); e.key('u')
+            e.key(':w\r'); ex_settled(e)
+            got = saved_bytes(e)
+            check(f'{" ".join(keys)}: byte-exact ({len(got)} bytes, '
+                  f'{len(want)} wanted)', got == want)
+        finally:
+            e.close()
+
 
 def disk_full():
     """A fatal disk error leaves the editor the way a quit does: the terminal

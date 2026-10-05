@@ -161,8 +161,8 @@ move would break:
               pointer row, text + gap, Q-buffer (the yank register), undo region
     BUFEND  = BDOS base - 700H - 1
 
-In this build: the image is 17629 bytes, the `.COM` file 17664 bytes (138
-records), the reserve block 803 bytes (`45DDH`–`48FFH`), and the stack 128
+In this build: the image is 17652 bytes, the `.COM` file 17664 bytes (138
+records), the reserve block 803 bytes (`45F4H`–`4916H`), and the stack 128
 bytes. **The size that matters is a 4 K BLOCK BOUNDARY**, because that is what
 the 8 MB disk allocates in: 16384 bytes occupy four blocks and one byte more
 occupies five. This build is past that line by design (`f F t T ; ,` would not
@@ -257,6 +257,9 @@ about 27 K. WordMaster has no copy without delete, so the copy is appended
   the changed flag, `.`, undo and the marks still while it runs, and puts
   nothing back when nothing was taken. Without that check, a refused yank would
   splice a stale register into the file.
+  The take pages the window on when the lines run past it, and the put-back can
+  spill, so both where the lines go back and where the cursor lands are kept as
+  places in the file (`YPFP`), never as offsets into the window.
 - **`dd` deletes forward only**, from the start of the line, because `QCOPY`
   always reads from `GAPEND`. A backward delete cannot reach the register.
 - **Lines the register cannot hold are refused, not fatal.** WordMaster's
