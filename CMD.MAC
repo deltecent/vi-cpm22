@@ -801,6 +801,16 @@ MKPAGE:
 	LXI	H,0FFFFH	; the very end of the text, which MKWIN does not
 	JMP	CLRCNT		;   count as in the window: GOTO clamps it
 
+;BACKTO -- back to the 3-byte file position at HL, paging to it: where a
+;command that came to nothing started.  The place has to be kept as a file
+;position -- a sweep of the whole file leaves the window at the far end of
+;it, and an offset into the window it started in means nothing there.
+BACKTO:
+	CALL	MKLOAD
+	CALL	CLRCNT
+	CALL	MKPAGE
+	JMP	GOTO
+
 ;MKLOAD -- MKPOS = the 3-byte file position at HL.
 MKLOAD:
 	MOV	E,M
@@ -6035,8 +6045,8 @@ SUBGO:
 	CALL	GZONE
 	LHLD	LNDLT
 	SHLD	SLDLTS		; the walk moves the cursor; a substitute that
-	CALL	CUROFF		;   finds nothing puts both back, as the
-	SHLD	SOFFS		;   search's SN_BAD does
+	LXI	H,SOFFS		;   finds nothing puts both back, as the
+	CALL	FPSTO		;   search's SN_BAD does
 	XRA	A
 	STA	SANY
 	LXI	H,0
@@ -6112,8 +6122,8 @@ SUB_PL:
 				;   at the moment the reader asks for the undo
 				;   and can still act on the answer.
 SUBNFD:
-	LHLD	SOFFS
-	CALL	GOTO
+	LXI	H,SOFFS
+	CALL	BACKTO
 	LHLD	SLDLTS
 	SHLD	LNDLT		; nothing changed: the row the cursor was on
 	LXI	H,SNOTFD
@@ -6280,8 +6290,8 @@ SRCHN:
 	LHLD	LNDLT
 	SHLD	SLDLT		; the sweep moves the cursor with PUTCUR, which
 				;   does not maintain LNDLT (GOTO does)
-	CALL	CUROFF
-	SHLD	SOFF
+	LXI	H,SOFF
+	CALL	FPSTO
 SN_LP:
 	CALL	SRCHGO
 	JC	SN_BAD
@@ -6297,9 +6307,8 @@ SN_LP:
 	STA	GPKEEP		; land on the match, not the first non-blank
 	JMP	GPLACE		; (which sets LNDLT itself)
 SN_BAD:
-	CALL	CLRCNT
-	LHLD	SOFF
-	CALL	GOTO
+	LXI	H,SOFF
+	CALL	BACKTO
 	LHLD	SLDLT
 	SHLD	LNDLT		; nothing moved: the row the cursor was on
 	LXI	H,SNOTFD
@@ -6941,7 +6950,7 @@ YPFP:	DB	0,0,0		; ... and where in the file they start
 YNPG:	DW	0		; the window the yank started in (YNDONE's paint)
 YNCNT:	DW	0		; YNLINE: the lines it still wants
 SCNT:	DW	0		; searches still to do (the count)
-SOFF:	DW	0		; where the cursor was when the search began
+SOFF:	DB	0,0,0		; where in the FILE the search began
 SLDLT:	DW	0		; ... and LNDLT, for the search that fails
 SSKIP:	DB	0		; skip the character under the cursor (not
 				;   on the wrapped pass)
@@ -6969,7 +6978,7 @@ RWPTR:	DB	0		; ':N,Mw' the next free byte of the record at
 RWERR:	DB	0		; ':N,Mw' a record would not go: the disk is full
 RDANY:	DB	0		; ':r' something has been read in
 RDBRK:	DB	0		; ':r' the line above wants a line end first
-SOFFS:	DW	0		; ':s' the cursor, for a substitute that
+SOFFS:	DB	0,0,0		; ':s' the cursor's place in the file, for one that
 SLDLTS: DW	0		;   changes nothing, and its LNDLT
 SREPLN: DB	0		; ':s' the replacement's length, kept
 SREPL:	DS	SREPMX+1	;   just below it: WM's RDSTR layout,

@@ -2891,6 +2891,67 @@ def ex_settled(e, tries=40):
         e.s.run_until_quiet(timeout=40)
 
 
+def idle(e, confirms=4, slices=20000):
+    """Run the guest until it is waiting on the keyboard.  ``run_until_quiet``
+    takes a slice that timed out drawing nothing for a settled one, and a
+    command paging through 100 K draws nothing for most of a minute; only
+    slices that stop IDLE count here, several in a row because an editor
+    between two phases of one command idles briefly too."""
+    n = 0
+    for _ in range(slices):
+        r = e.s._run()
+        if r.get('stopped') == 'idle' and not r.get('output'):
+            n += 1
+            if n >= confirms:
+                return
+        else:
+            n = 0
+    raise RuntimeError('the guest never came back to the keyboard')
+
+
+def stays_put(e, keys, msg, ln, tag):
+    """*keys* page through the file and come to nothing: *msg* on the bottom
+    row, the screen as it was -- and the cursor really on line *ln*, which the
+    screen cannot show: nothing was repainted, so it would look right with the
+    cursor anywhere.  '^G' says where it is, and a '^L' has to draw the same
+    screen again from the text."""
+    v0 = e.screen()
+    scr0 = [''.join(r) for r in v0.screen]
+    e.s.send(keys)
+    idle(e)
+    v = e.screen()
+    scr = [''.join(r) for r in v.screen]
+    check(f'{tag}: {keys!r} shows {msg!r} ({bottom(e)!r})', bottom(e) == msg)
+    check(f'{tag}: {keys!r} keeps the screen and the cursor',
+          scr[:23] == scr0[:23] and (v.row, v.col) == (v0.row, v0.col))
+    e.s.send('\x07')
+    idle(e)
+    check(f'{tag}: {keys!r} leaves the cursor on line {ln} ({bottom(e)!r})',
+          f'line {ln} ' in bottom(e))
+    e.s.send('\x0c')
+    idle(e)
+    v = e.screen()
+    scr = [''.join(r) for r in v.screen]
+    check(f'{tag}: {keys!r} and a repaint draws the same screen',
+          scr[:23] == scr0[:23] and (v.row, v.col) == (v0.row, v0.col))
+
+
+def srch_cmds():
+    """A search that finds nothing puts the cursor back where it started, in
+    the FILE: the sweep has paged the window to the far end and round again by
+    then, so the place cannot be kept as an offset into the window."""
+    e = Editor(make(12800))
+    try:
+        for start, keys in ((6000, '/zzzz\r'), (6000, '?zzzz\r'),
+                            (100, '/zzzz\r'), (12700, '?zzzz\r')):
+            e.s.send(f'{start}G')
+            idle(e)
+            stays_put(e, keys, 'Pattern not found: zzzz', start,
+                      f'srch miss from {start}')
+    finally:
+        e.close()
+
+
 # VIM_CTRLG -- what vim 9.1's ^G reports, recorded by vimref.py ('ctrlg')
 # BEFORE any of this was written: the cursor's line, its BYTE column and its
 # SCREEN column, all 1-based as ^G prints them.  vim writes one number when the
@@ -3200,6 +3261,17 @@ def subst_cmds():
         # a range walked through a paged file and found nothing: nothing moves
         e.key('200G')
         refused(e, ':100,105s/zz/Q/\r', 'Pattern not found: zz', 'subst ranged miss')
+    finally:
+        e.close()
+    # --- ... and so does a miss over a file the walk has to page through ---
+    e = Editor(make(12800))
+    try:
+        e.s.send('6000G')
+        idle(e)
+        stays_put(e, ':%s/zzzz/Q/\r', 'Pattern not found: zzzz', 6000,
+                  'subst paged miss')
+        stays_put(e, ':100,200s/zzzz/Q/\r', 'Pattern not found: zzzz', 6000,
+                  'subst paged ranged miss')
     finally:
         e.close()
     # --- a miss on the cursor's line leaves the COLUMN alone too ---
@@ -6374,6 +6446,7 @@ def main():
     if not args or 'vim' in args or 'srch' in args:
         print('\n=== / ? n N vs vim ===', flush=True)
         srch_like_vim()
+        srch_cmds()
         paint_cost()
     if not args or 'vim' in args or 'ops' in args:
         print('\n=== o O J ~ dw cw D  ^L vs vim ===', flush=True)
