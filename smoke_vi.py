@@ -13,6 +13,7 @@ Two driver capabilities make full-screen driving work (see mcpdrive.py):
     keyboard (the screen has settled)
 """
 import os
+import re
 import sys
 import hashlib
 import io
@@ -160,12 +161,17 @@ class Editor:
         return (self.s.mem(SYM['NROWS'])[0], self.s.mem(SYM['NCOLS'])[0])
 
     def _ensure_ccp(self):
+        """Leave the guest at the CP/M prompt, quitting the editor if it is
+        still up.  A <CR> answers which: the CCP prints its prompt again, the
+        editor only moves the cursor.  The answer is read when the guest has
+        gone quiet -- NOT by waiting for a prompt until a timeout, which is
+        what this did: with the editor up no prompt can come, so every call
+        sat out the whole three seconds, and 559 of the suite's 1019 editors
+        are read back this way -- 28 minutes of the 47 the suite's groups
+        took between them were that wait."""
         self.s.send("\r")
-        try:
-            self.s.expect(self.s.prompt, timeout=3)
+        if re.search(self.s.prompt, self.s.run_until_quiet(timeout=40)):
             return
-        except Exception:
-            pass
         self.s.send("\x1b\x1b:q!\r")
         self.s.expect(self.s.prompt, timeout=20)
 
