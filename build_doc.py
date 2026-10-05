@@ -97,6 +97,9 @@ MOVING ---------------------------------------------------------------------
 
 The arrow keys work as h j k l, and PgUp / PgDn as ^B / ^F.
 
+^C stops a G, a gg or a search that is taking too long, and puts the
+cursor back where it was: see LARGE FILES.
+
 f F t T and their repeats look on THIS LINE only, take counts (3fx), and
 ring the bell without moving when the character is not there.
 
@@ -333,6 +336,13 @@ def figures():
                        ("u after dd G", "Cannot undo: change has paged out")):
         if cell(name, 2) != said:
             missing.append(f"{name} (which no longer says {said!r})")
+    for name, said in (("G from the top, ^C 10 s into it", "Interrupted"),
+                       ("/zzzz from line 6000, ^C 10 s into it",
+                        "Interrupted"),
+                       ("/zzzz from line 6000, never found",
+                        "Pattern not found: zzzz")):
+        if cell(name, 2) != said:
+            missing.append(f"{name} (which no longer says {said!r})")
     for name in ("u after 100dd", "2800dd (22 K)", "2800yy (22 K)",
                  "yG (54 K)"):
         if cell(name, 2):
@@ -364,7 +374,8 @@ The times are for a 100 K file of 12800 short lines, on a 2 MHz 8080 and a
 9600-baud terminal.  They leave out the drive's head seeks and the wait
 for a sector to come round, so on a real drive every time over a second
 or two is LONGER than shown.  Nothing is drawn while a long command runs.
-The editor has not hung; the cursor comes back when it is done.
+The editor has not hung; the cursor comes back when it is done, and ^C
+stops a move or a search before then (see below).
 
 The limits:
 
@@ -404,6 +415,18 @@ Slow, because the file has to go through the window:
 {two(':w', ':w, nothing changed')}   all of it, however little changed
 {two(':e! at line 6000', ':e! after x at line 6000')}   {t(':e! after x at the top')} at line 1
 {two(':%s/0/1/', ':%s/0/1/ (12800 lines)')}   every line; over 100 lines, {t(':6000,6100s/0/1/')}
+
+^C stops a move or a search -- G, gg, {{n}}G, 'a, `a, / ? n and N -- and
+says "Interrupted".  The cursor and the screen go back to where the
+command began, as they do when a search finds nothing, and anything typed
+ahead is dropped.  Going back has to page too, so it is not instant:
+
+{two('G from line 1, ^C at 10 s', 'G from the top, ^C 10 s into it')}   in all
+{two('/text, not in the file', '/zzzz from line 6000, never found')}
+{two('  ... ^C at 10 s', '/zzzz from line 6000, ^C 10 s into it')}   in all
+
+A command that changes the text is not stopped: dG, :s, a put and :w run
+to the end, and the ^C is taken afterwards as a key that does nothing.
 
 Going BACK costs more once something has been changed: gg from the last
 line is {t('gg from the end, after x there')} after an x there, because the text passed over

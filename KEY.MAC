@@ -30,13 +30,14 @@
 ; whose BCONST always returns 0: KBPUMP pumps nothing, KBTAKE finds it empty, and
 ; KBGETB falls through to the blocking BCONIN exactly as before.
 ;------------------------------------------------------------
-; EXPORTS: GETKEY, KBRDY, KBPOLL     EXTRNS: BCONST, BCONIN
+; EXPORTS: GETKEY, KBRDY, KBPOLL, KBBRK, KBFLSH     EXTRNS: BCONST, BCONIN
 ;============================================================
 	INCLUDE VI.INC
 
 	EXTRN	KBRING			; RSV.MAC -- the ring, above the image
 
 	PUBLIC	GETKEY, KBRDY, KBPOLL
+	PUBLIC	KBBRK, KBFLSH
 	EXTRN	BCONST, BCONIN
 
 	CSEG
@@ -249,6 +250,44 @@ KBPOLL:
 	POP	H
 	POP	D
 	POP	B
+	RET
+
+; KBBRK - is a ^C waiting?  Pumps the ring, then looks through what it holds:
+; NZ and A=0FFH if a ^C is there -- and the ring is emptied, the ^C and all
+; that was typed round it -- else Z.  A long command that can be abandoned
+; asks this as it pages (CMD.MAC CNTTST).  The ring is searched, not a flag
+; kept as the bytes come in, so a ^C typed when nothing was running is only
+; ever a key: it is taken in its turn like any other.  Clobbers HL,DE,BC.
+KBBRK:
+	CALL	KBPUMP
+	LDA	KBTAIL
+	MOV	C,A
+	LDA	KBHEAD
+KBK_LP:
+	CMP	C
+	RZ			; looked at all of it: none
+	MOV	E,A
+	MVI	D,0
+	LXI	H,KBRING
+	DAD	D		; HL = &KBRING[index]
+	INR	A
+	ANI	KBRSIZ-1
+	MOV	B,A		; B = the next index
+	MOV	A,M
+	CPI	CTRLC
+	MOV	A,B
+	JNZ	KBK_LP
+	MOV	A,C
+	STA	KBHEAD		; head = tail: empty
+	ORI	0FFH
+	RET
+
+; KBFLSH - throw away everything typed so far: what the ring holds and what
+; the BIOS still has waiting.  Clobbers HL,DE,BC,A.
+KBFLSH:
+	CALL	KBPUMP
+	LDA	KBTAIL
+	STA	KBHEAD
 	RET
 
 ; KBPUMP - producer: move every byte the BIOS already has into the ring, without

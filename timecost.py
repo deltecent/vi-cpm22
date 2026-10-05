@@ -51,7 +51,7 @@ from smoke_vi import Editor, SYM                           # noqa: E402
 CLOCK_HZ = 2e6
 NLINES = 12800
 BIG = b"".join(b"%06d\r\n" % i for i in range(1, NLINES + 1))
-ESC, CR = "\x1b", "\r"
+ESC, CR, CTRLC = "\x1b", "\r", "\x03"
 
 # (section, name, keys typed first, keys measured)
 ROWS = [
@@ -69,6 +69,12 @@ ROWS = [
     ("Moving", "`'a` to line 100 from line 6000",
      ["100G", "ma", "6000G"], ["'a"]),
     ("Moving", "`^G` at the end", ["G"], ["\x07"]),
+    ("Moving", "`G` from the top, `^C` 10 s into it", [],
+     ["G", (10, CTRLC)]),
+    ("Moving", "`/zzzz` from line 6000, never found", ["6000G"],
+     ["/zzzz" + CR]),
+    ("Moving", "`/zzzz` from line 6000, `^C` 10 s into it", ["6000G"],
+     ["/zzzz" + CR, (10, CTRLC)]),
     ("Moving", "`/012000` from the top", [], ["/012000" + CR]),
     ("Moving", "`/000100` from line 6000 (wraps)", ["6000G"],
      ["/000100" + CR]),
@@ -152,10 +158,22 @@ def settle(e, confirms=4, slices=20000):
     raise RuntimeError("the guest never came back to the keyboard")
 
 
+def run_for(e, seconds):
+    """Let the guest run for *seconds* of its own clock, mid-command."""
+    until = tstates(e) + int(seconds * CLOCK_HZ)
+    while tstates(e) < until:
+        e.s._run(timeout_ms=5)
+
+
 def type_(e, keys):
-    for k in keys:
+    for i, k in enumerate(keys):
+        if isinstance(k, tuple):            # (seconds, key): typed that far
+            run_for(e, k[0])                #   into the command before it
+            k = k[1]
         was = bottom(e) if k == ESC else None
         e.s.send(k)
+        if i + 1 < len(keys) and isinstance(keys[i + 1], tuple):
+            continue                        # ... which is still running
         settle(e)
         # A lone ESC is only an ESC once GETKEY's timeout has run, and the
         # guest idles on the keyboard all the while: wait for the mode
@@ -186,7 +204,8 @@ def measure(setup, keys):
         chars = len(e.cap.getvalue())
         t = tstates(e)
         type_(e, keys)
-        took = tstates(e) - t - idle * len(keys)        # ... per key typed
+        waits = sum(not isinstance(k, tuple) for k in keys)
+        took = tstates(e) - t - idle * waits            # ... per key waited on
         return (max(took, 0) / CLOCK_HZ, len(e.cap.getvalue()) - chars,
                 bottom(e))
     finally:

@@ -84,6 +84,7 @@
   000A                   C      LF	EQU	0AH		; line feed  -- the line TERMINATOR
   000D                   C      CR	EQU	0DH		; carriage return -- decoration before LF
   001B                   C      ESC	EQU	1BH		; escape
+  0003                   C      CTRLC	EQU	03H		; ^C -- abandons a search or a long move
   007F                   C      DEL	EQU	7FH		; rubout / delete
   001A                   C      CPMEOF	EQU	1AH		; CP/M end-of-file marker (Ctrl-Z)
                          C      
@@ -115,10 +116,10 @@
   0003                   C      EM_EX	EQU	3		; ex command line (transient, inside VC_EX)
                          C      
                          C      ; THE MESSAGE THE BOTTOM ROW STILL OWES (MSGWHT).  A message is drawn after the
-                         C      ; frame, never during the command, because a full repaint blanks that row.
 	MACRO-80 3.44	09-Dec-81	PAGE	1-2
 
 
+                         C      ; frame, never during the command, because a full repaint blanks that row.
   0000                   C      MW_NON	EQU	0		; nothing to say
   0001                   C      MW_FIL	EQU	1		; the file just opened
   0002                   C      MW_WRT	EQU	2		; ':w' wrote it
@@ -174,10 +175,10 @@
                                 ;--- Sizes ------------------------------------------------------------------
                                 ;UNDREC is URSIZE*URMAX in BUF.MAC, which does not include VI.INC.  The CHECK
                                 ;line is read by build_vi.py, which evaluates the expression against BUF.MAC's
-                                ;own equates and fails the build if the two ever drift apart.
 	MACRO-80 3.44	09-Dec-81	PAGE	1-3
 
 
+                                ;own equates and fails the build if the two ever drift apart.
                                 ;CHECK BUF.MAC URSIZE*URMAX = 168
   00A8                          RVUNDN	EQU	168		; UNDREC:  BUF.MAC URSIZE*URMAX
   0080                          RVSTKN	EQU	128		; VISTK:   64 was enough until '.' replayed a
@@ -241,30 +242,30 @@ Symbols:
 0005 	BDOS            0007 	BEL             0001 	BF_CONIN        
 0002 	BF_CONOUT       000B 	BF_CONST        0019 	BF_CURDSK       
 0009 	BF_PRTSTR       0008 	BS              0080 	CMDTAIL         
-001A 	CPMEOF          000D 	CR              007F 	DEL             
-005C 	DFTFCB          0100I'	DOTBUF          0080 	DOTMAX          
-0080I'	DOTSCR          0000 	EM_CMD          0003 	EM_EX           
-0001 	EM_INS          0002 	EM_REP          001B 	ESC             
-01F4 	ESCTMO          0195I'	EXBUF           0028 	EXMAX           
-0180I'	FNAME           01BEI'	KBRING          0020 	KBRSIZ          
-0001 	KT_ACT          0002 	KT_CHAR         0000 	KT_NONE         
-000A 	LF              0003 	MKMAX           0317I'	MKSAV           
-0004 	MKSIZ           030BI'	MKTAB           0004 	MW_BIG          
-0003 	MW_CTG          0001 	MW_FIL          0000 	MW_NON          
-0002 	MW_WRT          0000 	NUL             018FI'	PLUSB           
-0000'	RSVBAS          0323I'	RSVTOP          0100 	RVDOTB          
-0080 	RVDOTS          0195 	RVEXB           0180 	RVFNM           
-000C 	RVFNMN          01BE 	RVKBR           0317 	RVMKS           
-030B 	RVMKT           018F 	RVPLS           0006 	RVPLSN          
-01E2 	RVSEC           0080 	RVSECN          0323 	RVSIZE          
-0000 	RVSTK           0080 	RVSTKN          0263 	RVUND           
-00A8 	RVUNDN          01DE 	RVWRT           0003 	RVWRTN          
-018C 	RVZTP           0003 	RVZTPN          0003 	R_DLIN          
-0000 	R_FULL          0004 	R_ICH           0005 	R_ILIN          
-0006 	R_JOIN          0002 	R_LINE          0001 	R_MOVE          
-01E2I'	SECBUF          0009 	TAB             0008 	TABWID          
-0263I'	UNDREC          0080I'	VISTK           0000 	WBOOT           
-01DEI'	WRTYP           018CI'	ZTOP            
+001A 	CPMEOF          000D 	CR              0003 	CTRLC           
+007F 	DEL             005C 	DFTFCB          0100I'	DOTBUF          
+0080 	DOTMAX          0080I'	DOTSCR          0000 	EM_CMD          
+0003 	EM_EX           0001 	EM_INS          0002 	EM_REP          
+001B 	ESC             01F4 	ESCTMO          0195I'	EXBUF           
+0028 	EXMAX           0180I'	FNAME           01BEI'	KBRING          
+0020 	KBRSIZ          0001 	KT_ACT          0002 	KT_CHAR         
+0000 	KT_NONE         000A 	LF              0003 	MKMAX           
+0317I'	MKSAV           0004 	MKSIZ           030BI'	MKTAB           
+0004 	MW_BIG          0003 	MW_CTG          0001 	MW_FIL          
+0000 	MW_NON          0002 	MW_WRT          0000 	NUL             
+018FI'	PLUSB           0000'	RSVBAS          0323I'	RSVTOP          
+0100 	RVDOTB          0080 	RVDOTS          0195 	RVEXB           
+0180 	RVFNM           000C 	RVFNMN          01BE 	RVKBR           
+0317 	RVMKS           030B 	RVMKT           018F 	RVPLS           
+0006 	RVPLSN          01E2 	RVSEC           0080 	RVSECN          
+0323 	RVSIZE          0000 	RVSTK           0080 	RVSTKN          
+0263 	RVUND           00A8 	RVUNDN          01DE 	RVWRT           
+0003 	RVWRTN          018C 	RVZTP           0003 	RVZTPN          
+0003 	R_DLIN          0000 	R_FULL          0004 	R_ICH           
+0005 	R_ILIN          0006 	R_JOIN          0002 	R_LINE          
+0001 	R_MOVE          01E2I'	SECBUF          0009 	TAB             
+0008 	TABWID          0263I'	UNDREC          0080I'	VISTK           
+0000 	WBOOT           01DEI'	WRTYP           018CI'	ZTOP            
 
 
 

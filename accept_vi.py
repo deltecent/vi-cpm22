@@ -5744,6 +5744,158 @@ def tstates(e):
     return int(re.search(r'\((\d+) T-states\)', out).group(1))
 
 
+def run_for(e, seconds):
+    """Let the guest run for *seconds* of its own clock, mid-command."""
+    until = tstates(e) + int(seconds * 2e6)
+    while tstates(e) < until:
+        e.s._run(timeout_ms=100)
+
+
+def brk_cmds():
+    """'^C' abandons a search or a long move: the cursor and the screen go back
+    to where the command started, the bottom row says so, and whatever was
+    typed ahead is thrown away with it.  Only commands that change no text are
+    stopped; a delete that pages runs to its end, '^C' or not."""
+    big = make(12800)
+
+    def start(e, ln):
+        e.s.send(f'{ln}G')
+        idle(e)
+
+    def cancel(e, keys, ln, tag, after=4.0, ahead='', limit=30):
+        """*keys* from line *ln*, '^C' *after* seconds into them."""
+        v0 = e.screen()
+        scr0 = [''.join(r) for r in v0.screen]
+        idle(e)
+        t0 = tstates(e)
+        e.s.send(keys)
+        run_for(e, after)
+        e.s.send(ahead + '\x03')
+        idle(e)
+        took = (tstates(e) - t0) / 2e6
+        v = e.screen()
+        scr = [''.join(r) for r in v.screen]
+        check(f'{tag}: {keys!r} ^C says so ({bottom(e)!r})',
+              bottom(e) == 'Interrupted')
+        check(f'{tag}: {keys!r} ^C keeps the screen and the cursor',
+              scr[:23] == scr0[:23] and (v.row, v.col) == (v0.row, v0.col))
+        check(f'{tag}: {keys!r} ^C is back in {took:.1f} s ({limit} allowed)',
+              took < limit)
+        e.s.send('\x07')
+        idle(e)
+        check(f'{tag}: {keys!r} ^C leaves the cursor on line {ln} '
+              f'({bottom(e)!r})', f'line {ln} ' in bottom(e))
+        e.s.send('\x0c')
+        idle(e)
+        v = e.screen()
+        scr = [''.join(r) for r in v.screen]
+        check(f'{tag}: {keys!r} ^C and a repaint draws the same screen',
+              scr[:23] == scr0[:23] and (v.row, v.col) == (v0.row, v0.col))
+
+    # --- the moves and the searches, each stopped part of the way there.
+    #     Uncancelled these take 22 to 65 s (TIMECOST.md). ---
+    e = Editor(big)
+    try:
+        start(e, 6000)
+        e.s.send('ma')
+        idle(e)
+        cancel(e, 'G', 6000, 'brk G')
+        cancel(e, 'gg', 6000, 'brk gg')
+        cancel(e, '12000G', 6000, 'brk 12000G')
+        cancel(e, '/zzzz\r', 6000, 'brk /')
+        cancel(e, '?zzzz\r', 6000, 'brk ?')
+        cancel(e, 'n', 6000, 'brk n')
+        cancel(e, 'N', 6000, 'brk N')
+        # ... in the pass AFTER the wrap, which is a second sweep
+        cancel(e, '/zzzz\r', 6000, 'brk / wrapped', after=40.0, limit=110)
+        # the editor is whole afterwards: the same commands, left to finish
+        e.s.send('/012000\r')
+        idle(e)
+        v = e.screen()
+        got = ''.join(v.screen[v.row]).rstrip()
+        check(f'brk: a search left alone still finds its line ({got!r})',
+              got == txt(12000))
+        cancel(e, "'a", 12000, "brk 'a")
+        cancel(e, '`a', 12000, 'brk `a')
+        e.s.send("'a")
+        idle(e)
+        v = e.screen()
+        got = ''.join(v.screen[v.row]).rstrip()
+        check(f"brk: 'a left alone still goes to its mark ({got!r})",
+              got == txt(6000))
+        # --- what was typed ahead goes with it: an 'x' before the ^C and one
+        #     while the window pages back are both dropped ---
+        v0 = e.screen()
+        e.s.send('G')
+        run_for(e, 4.0)
+        e.s.send('xx\x03')
+        run_for(e, 0.5)
+        e.s.send('x')
+        idle(e)
+        check(f"brk: G xx^C x says Interrupted ({bottom(e)!r})",
+              bottom(e) == 'Interrupted')
+        e.s.send('\x07')
+        idle(e)
+        check(f"brk: G xx^C x changed nothing ({bottom(e)!r})",
+              'line 6000 ' in bottom(e) and '[+]' not in bottom(e)
+              and 'Modified' not in bottom(e))
+        # ... and a key typed once it is back is a key again
+        e.s.send('j')
+        idle(e)
+        v = e.screen()
+        got = ''.join(v.screen[v.row]).rstrip()
+        check(f'brk: j afterwards moves a line ({got!r})', got == txt(6001))
+        check('brk: nothing was changed (:q exits)', at_ccp(e, ':q\r'))
+    finally:
+        e.close()
+
+    # --- a command that changes text is NOT stopped: 'dG' takes its lines ---
+    e = Editor(big)
+    try:
+        start(e, 6000)
+        e.s.send('dG')
+        run_for(e, 4.0)
+        e.s.send('\x03')
+        idle(e)
+        check(f"brk: dG ^C is not interrupted ({bottom(e)!r})",
+              bottom(e) != 'Interrupted')
+        e.s.send('\x07')
+        idle(e)
+        check(f"brk: dG ^C still deleted to the end ({bottom(e)!r})",
+              'line 5999 ' in bottom(e))
+        e.s.send(':w\r')
+        idle(e)
+        got = saved_bytes(e)
+        check(f'brk: dG ^C saved {len(got)} bytes, the first 5999 lines',
+              got == big[:5999 * 8])
+    finally:
+        e.close()
+
+    # --- '^C' with nothing running is no cancel waiting to happen: the next
+    #     move goes where it is sent ---
+    e = Editor(big)
+    try:
+        e.s.send('\x03')
+        idle(e)
+        e.s.send('300G')
+        idle(e)
+        v = e.screen()
+        got = ''.join(v.screen[v.row]).rstrip()
+        check(f'brk: ^C at rest, then 300G goes to line 300 ({got!r})',
+              got == txt(300) and bottom(e) != 'Interrupted')
+        # ... and one that arrives after a short move is done cancels nothing
+        e.s.send('310G')
+        idle(e)
+        e.s.send('\x03')
+        idle(e)
+        v = e.screen()
+        got = ''.join(v.screen[v.row]).rstrip()
+        check(f'brk: 310G then ^C stays on line 310 ({got!r})',
+              got == txt(310) and bottom(e) != 'Interrupted')
+    finally:
+        e.close()
+
+
 def lnum_cmds():
     """The line feeds behind the window are COUNTED as the pager moves them
     (PAGE.MAC TOPLF), so the cursor's line number never costs a disk read:
@@ -6481,6 +6633,9 @@ def main():
     if not args or 'vim' in args or 'lnum' in args:
         print('\n=== the line number, kept as the window pages ===', flush=True)
         lnum_cmds()
+    if not args or 'vim' in args or 'brk' in args:
+        print('\n=== ^C abandons a search or a long move ===', flush=True)
+        brk_cmds()
     if not args or 'vim' in args or 'find' in args:
         print('\n=== f F t T ; , vs vim ===', flush=True)
         find_like_vim()

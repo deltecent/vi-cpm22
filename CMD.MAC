@@ -39,6 +39,7 @@
 	PUBLIC	CMDTAB, OPCTAB			; the two tables build_vi.py pairs up
 
 	EXTRN	GETKEY				; KEY.MAC
+	EXTRN	KBBRK, KBFLSH			; KEY.MAC -- a ^C waiting / drop type-ahead
 	EXTRN	OPENZ				; PAGE.MAC -- open + load (cold)
 	EXTRN	TFCB, WRTO, TEXIST, DISCRD, CNTLF ; PAGE.MAC -- :w name, :e
 	EXTRN	REOPEN, SEEKTO			; PAGE.MAC -- :w keeps editing
@@ -99,6 +100,8 @@
 ;replays.  Both are no-ops while '.' is itself replaying.  CDMODE is the mode
 ;dispatch proper.
 CMDDIS:
+	XRA	A		; no command is ever left open to a ^C by the
+	STA	BRKARM		;   one before it (BRKON)
 	CALL	DOTPRE
 	CALL	CDMODE
 	JMP	DOTPOST
@@ -770,7 +773,10 @@ MKJ_GO:
 				;   moves: GPLACE measures the landing against
 				;   it, and one left over from an earlier 'G'
 				;   had it keep a window the line is not in
+	CALL	BRKON		; ... and a ^C may stop it from here on
 	CALL	MKPAGE		; HL = the mark's offset in the window
+	CALL	BRKOFF		; (A only)
+	JC	BRKBAK
 	LDA	MKWHAT
 	CPI	PJL
 	JZ	MKJ_LN		; ''': GPKEEP is 0, so GPLACE finds the first
@@ -1333,6 +1339,9 @@ GC_HAVE:
 ;preserves the ORA-set Z flag (PAGE.MAC POLLBRK, as WM, brackets its body in
 ;PUSH/POP PSW), so the caller sees the count's Z.
 CNTTST:				; WM 1175
+	LDA	BRKARM
+	ORA	A
+	CNZ	BRKTST		; a ^C spends the count: every loop stops here
 	PUSH	H
 	LHLD	CMDCNT
 	LDA	AUXCNT		; low byte of the auxiliary count (WM's L271E)
@@ -1340,6 +1349,85 @@ CNTTST:				; WM 1175
 	ORA	L
 	POP	H
 	JMP	POLLBRK
+
+;============================================================
+; ^C -- abandon a search or a long move.
+;
+; Every loop that pages asks CNTTST whether to go on, so that is where a ^C is
+; looked for: it zeroes the count, and the loop ends the way it ends when the
+; count runs out.  Nothing is half done, because the commands that can be
+; stopped change nothing -- BRKON arms the test only with no operator pending,
+; and only 'G' 'gg' the mark jumps and the searches call it.  A 'dd' count, a
+; ':s', a put or a write asks the same CNTTST and is never stopped.
+;
+; The command then goes back to where it started (BRKBAK), as a search that
+; found nothing does: the screen was not repainted, so it is already right.
+; Going back pages, and that is not stopped by a second ^C.
+;============================================================
+
+;BRKON -- a command that may page a long way is starting: keep the place it
+; started from (the cursor's position in the file, and LNDLT for its row), and
+; arm the ^C test unless an operator is waiting for this motion.
+BRKON:
+	LXI	H,SOFF
+	CALL	FPSTO
+	LHLD	LNDLT
+	SHLD	SLDLT
+	XRA	A
+	STA	BRKHIT
+	LDA	PSAVE
+	ORA	A
+	RNZ			; 'dG' changes text: it runs to its end
+	INR	A
+	STA	BRKARM
+	RET
+
+;BRKTST -- CNTTST's question while armed.  Keeps BC, DE, HL.
+BRKTST:
+	PUSH	B
+	PUSH	D
+	PUSH	H
+	CALL	KBBRK
+	JZ	BT_NO
+	STA	BRKHIT		; (A = FFH)
+	XRA	A
+	STA	BRKARM		; the way back is not stopped in its turn
+	STA	AUXCNT
+	LXI	H,0
+	SHLD	CMDCNT
+BT_NO:
+	POP	H
+	POP	D
+	POP	B
+	RET
+
+;BRKOFF -- the move is over: disarm.  NOTE: falls into BRKQ.
+BRKOFF:
+	XRA	A
+	STA	BRKARM
+;BRKQ -- CY iff a ^C stopped it.
+BRKQ:
+	LDA	BRKHIT
+	ORA	A
+	RZ
+	STC
+	RET
+
+;RSTPL -- back to the place BRKON kept, on the row it was on.
+RSTPL:
+	LXI	H,SOFF
+	CALL	BACKTO
+	LHLD	SLDLT
+	SHLD	LNDLT
+	RET
+
+;BRKBAK -- stopped: back to the start, drop whatever was typed meanwhile (it
+; was meant for a result that is not coming), and say so.  CY, as EXERR.
+BRKBAK:
+	CALL	RSTPL
+	CALL	KBFLSH
+	LXI	H,SINTR
+	JMP	EXERR
 
 ;CLASSF -- A(byte) -> A = char class.  0 = whitespace, 1 = word, 2 = other.
 ; WBIG=1 collapses word/other into class 1 (big-word: non-ws is one class).
@@ -2585,18 +2673,23 @@ VC_REDR:
 VC_G:
 	CALL	SETMOV
 	CALL	GZONE		; the screen's top line, before the move
+	CALL	BRKON		; ... and a ^C may stop it from here on
 	LHLD	CMDCNT
 	MOV	A,H
 	ORA	L
 	JNZ	VG_N
 	XRA	A		; forward
 	CALL	MVLMAX		; whole file: cursor to EOF
+	CALL	BRKOFF
+	JC	BRKBAK
 	CALL	LASTLN		; vi G lands on the start of the LAST line
 	JMP	GPLACE
 VG_N:
 	CALL	GETCNT		; HL = target line (1-based)
 VG_LN:
 	CALL	GOLN
+	CALL	BRKOFF
+	JC	BRKBAK
 	JMP	GPLACE
 
 ;GOLN -- to the start of line HL (1-based), without G's window placement: the
@@ -2636,6 +2729,7 @@ VC_LG:
 	RET
 VLG_GG:
 	CALL	GZONE
+	CALL	BRKON
 	CALL	GETCNT		; HL = target line (no count: 1)
 	JMP	VG_LN
 
@@ -5794,6 +5888,7 @@ SINV:	DB	'Invalid file name',0
 STRL:	DB	'Trailing chars: ',0
 SNOT:	DB	'Invalid command: ',0
 SNOTFD: DB	'Pattern not found: ',0
+SINTR:	DB	'Interrupted',0
 SNOPAT: DB	'No previous search pattern',0
 SUNDW:	DB	'Cannot undo: change has paged out',0
 SUNDB:	DB	'Too large to undo',0
@@ -6287,11 +6382,9 @@ VN_GO:
 ; message wants the screen left alone, which is what EXERR's R_MOVE is for.
 SRCHN:
 	CALL	GZONE		; the screen's top line, before the cursor moves
-	LHLD	LNDLT
-	SHLD	SLDLT		; the sweep moves the cursor with PUTCUR, which
-				;   does not maintain LNDLT (GOTO does)
-	LXI	H,SOFF
-	CALL	FPSTO
+	CALL	BRKON		; where it started (the sweep moves the cursor
+				;   with PUTCUR, which does not maintain LNDLT;
+				;   GOTO does), and a ^C may stop it
 SN_LP:
 	CALL	SRCHGO
 	JC	SN_BAD
@@ -6303,14 +6396,14 @@ SN_LP:
 	JNZ	SN_LP
 	CALL	CLRCNT		; the sweep left CMDCNT wide open (and DIRFLG
 				;   backward): WM clears both per command
+	CALL	BRKOFF
 	MVI	A,1
 	STA	GPKEEP		; land on the match, not the first non-blank
 	JMP	GPLACE		; (which sets LNDLT itself)
 SN_BAD:
-	LXI	H,SOFF
-	CALL	BACKTO
-	LHLD	SLDLT
-	SHLD	LNDLT		; nothing moved: the row the cursor was on
+	CALL	BRKOFF
+	JC	BRKBAK		; stopped, which is not the same as not found
+	CALL	RSTPL		; nothing moved: the row the cursor was on
 	LXI	H,SNOTFD
 	CALL	EXERR
 	LXI	H,SRCHST
@@ -6325,6 +6418,8 @@ SRCHGO:
 	STA	SSKIP		; this pass starts one past the cursor
 	CALL	SRCHW
 	RNC
+	CALL	BRKQ
+	RC			; stopped: no second pass
 	LDA	SDIRE
 	CMA
 	CALL	MVLMAX		; to the end the wrapped pass starts from
@@ -6349,6 +6444,8 @@ SRCHW:
 	XRA	A
 	STA	AUXCNT
 SW_LP:
+	CALL	BRKQ		; a ^C spent the count, here or on the way to
+	RC			;   the wrapped pass: SCRLST no longer pages
 	CALL	SRCH1
 	RNC
 	CALL	SCRLST
@@ -6950,8 +7047,11 @@ YPFP:	DB	0,0,0		; ... and where in the file they start
 YNPG:	DW	0		; the window the yank started in (YNDONE's paint)
 YNCNT:	DW	0		; YNLINE: the lines it still wants
 SCNT:	DW	0		; searches still to do (the count)
-SOFF:	DB	0,0,0		; where in the FILE the search began
-SLDLT:	DW	0		; ... and LNDLT, for the search that fails
+SOFF:	DB	0,0,0		; BRKON: where in the FILE the command began
+SLDLT:	DW	0		; ... and LNDLT: for a search that fails, and
+				;   any move a ^C stops
+BRKARM: DB	0		; nonzero: CNTTST looks for a ^C
+BRKHIT: DB	0		; nonzero: one was found, and the count spent
 SSKIP:	DB	0		; skip the character under the cursor (not
 				;   on the wrapped pass)
 

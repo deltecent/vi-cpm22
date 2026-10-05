@@ -1,7 +1,7 @@
 # VI — a vi-style editor for CP/M 2.2 on the 8080
 
 `VI.COM` is a screen editor for CP/M 2.2 that behaves like vi. It runs on a
-plain 8080 in a 56 K TPA, it is 18,304 bytes, and it edits files far larger
+plain 8080 in a 56 K TPA, it is 18,560 bytes, and it edits files far larger
 than memory — 100 K files are ordinary — by paging text to and from disk.
 
 vim 9.1 is the reference for behaviour. A command is not finished here until it
@@ -66,7 +66,9 @@ costs depends on whether it has to page. A move inside the window is as quick
 as in a small file; `G` from the top of 100 K takes 46 seconds and `:w` takes
 51, and a real drive adds its seeks to both. Some big commands are refused
 rather than attempted (a `dd` or `yy` of more than the 23 K the yank register
-holds), and a change of more than 1024 bytes cannot be undone.
+holds), and a change of more than 1024 bytes cannot be undone. `^C` stops a
+move or a search that is taking too long and puts the cursor back where it
+was.
 
 The **LARGE FILES** section of [`VI.DOC`](VI.DOC) says which commands are
 quick, which are slow, which refuse, and what to use instead — `d{n}G` for a

@@ -38,6 +38,7 @@ TAB	EQU	09H		; horizontal tab
 LF	EQU	0AH		; line feed  -- the line TERMINATOR
 CR	EQU	0DH		; carriage return -- decoration before LF
 ESC	EQU	1BH		; escape
+CTRLC	EQU	03H		; ^C -- abandons a search or a long move
 DEL	EQU	7FH		; rubout / delete
 CPMEOF	EQU	1AH		; CP/M end-of-file marker (Ctrl-Z)
 
