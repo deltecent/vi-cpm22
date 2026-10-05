@@ -92,8 +92,10 @@ GROUPS = {
     'ctrlg': ('VIM_CTRLG', None),
     'marks': ('VIM_MARKS', None),
     'find': ('VIM_FIND', None),
+    'rdwr': ('VIM_RDWR', None),
 }
-TEXT = {'ins', 'ops', 'put', 'srch', 'dot', 'undo', 'subst', 'marks', 'find'}  # rows carrying text + a file hash
+TEXT = {'ins', 'ops', 'put', 'srch', 'dot', 'undo', 'subst', 'marks', 'find',
+        'rdwr'}  # rows carrying text + a file hash
 
 # Rows the final-line-end fold must NOT be applied to.  The fold exists because
 # this editor writes a file back as it read it, without the line end vim
@@ -102,7 +104,10 @@ TEXT = {'ins', 'ops', 'put', 'srch', 'dot', 'undo', 'subst', 'marks', 'find'}  #
 # terminator and a restored final line end are the same byte, so without it the
 # line could not exist).  For these the editor writes exactly what vim wrote,
 # so the hash is taken over vim's output whole.
-NOFOLD = {('nl', ('G', 'oX\x1b')), ('mt', ('oX\x1b',))}
+NOFOLD = {('nl', ('G', 'oX\x1b')), ('mt', ('oX\x1b',)),
+          # ... and where a file that ENDS with a line end is read in below the
+          # last line, the text ends with that file's own line end
+          ('rw', (':5,7w! R.TXT\r', 'G', ':r R.TXT\r'))}
 
 
 def accept():
@@ -114,6 +119,7 @@ def accept():
             if not (isinstance(n, ast.ImportFrom) and n.module == 'smoke_vi')
             and not isinstance(n, ast.If)]          # not the __main__ tail
     ns = dict.fromkeys(['Editor', 'SYM', 'rows', 'HERE', 'TEMPLATE', 'WORK'])
+    ns['HERE'] = HERE               # accept_vi.py reads CMD.MAC's version from it
     exec(compile(ast.Module(body=body, type_ignores=[]), 'accept_vi.py', 'exec'), ns)
     return ns
 
@@ -142,6 +148,7 @@ def content(name):
         _HML.update(A['subst_files']())             # + rep
         _HML.update(A['marks_files']())             # + mk
         _HML.update(A['find_files']())              # + fd
+        _HML.update(A['rdwr_files']())              # + rw
     if name in _HML:
         return lf(_HML[name])
     if name == 'indent':
@@ -179,6 +186,8 @@ def run(path, keys, timeout=30, rec=REC, wrote=None, arg=None, start=False,
     pid, fd = pty.fork()
     if pid == 0:                                    # the child is vim itself
         os.environ['TERM'] = 'vt100'
+        os.chdir(d)                 # a ':w {file}' in the keys lands in the
+                                    #   work directory, not in the repo
         os.execvp('vim', ['vim', '-n', '-u', 'NONE', '-N', '-i', 'NONE',
                           '--cmd', 'set nowrap',
                           '-c', 'let g:r=[]', '-c', 'set lines=24 columns=80']
@@ -233,7 +242,7 @@ def replay(group, work):
             continue
         wrote = os.path.join(work, 'wrote.txt')
         got = run(path, [':set nowrap\r'] + list(keys), rec=RECT, wrote=wrote,
-                  sync=USYNC if group in ('undo', 'subst') else '')[1:]
+                  sync=USYNC if group in ('undo', 'subst', 'rdwr') else '')[1:]
         with open(wrote, 'rb') as fh:
             out = fh.read()         # already CRLF: the write set 'ff=dos'
         if (not content(str(f)).endswith(b'\n') and out.endswith(b'\r\n')

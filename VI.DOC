@@ -103,7 +103,13 @@ YANK AND PUT ---------------------------------------------------------------
 There is one register and it holds whole lines.  A yank fills it and so
 does dd; no other delete does.  It holds about 27 K: a dd or yy of more
 than that is refused with "Too large to yank" and changes nothing.  To
-delete more, use dG, d{n}G or d'a, which keep nothing.
+delete more, use dG, d{n}G or d'a, which keep nothing.  To MOVE more,
+write the lines to a file and read them back in where they belong:
+
+    :100,900w TMP.TXT       lines 100 to 900 to a file ('!' to overwrite)
+    100G  d900G             delete them
+    :r TMP.TXT              read the file in below this line
+    :0r TMP.TXT             ... or above line 1,  :50r  below line 50
 
 
 MARKS ----------------------------------------------------------------------
@@ -149,6 +155,8 @@ FILES AND QUITTING ---------------------------------------------------------
 
     :w              write
     :w FILE.TXT     write to another file  ('!' to overwrite it)
+    :5,9w FILE.TXT  write only lines 5 to 9 to a file
+    :r FILE.TXT     read a file in below this line
     :q              quit   (refused if the text was changed)
     :q!             quit, and throw the changes away
     :wq             write, then quit
@@ -181,4 +189,4 @@ NOT IN THIS VI -------------------------------------------------------------
 
 A count before an insert (3ix) is ignored: it inserts once.  So is a count
 on r and ~.
-
+

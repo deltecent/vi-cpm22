@@ -54,6 +54,7 @@
 	EXTRN	UNDBAD				; ... and 'too big to capture'
 	EXTRN	UNDCLR				; ... nothing to undo
 	EXTRN	UNDHER				; ... where this change starts
+	EXTRN	INSBLK, UNDINS			; BUF.MAC -- a block in at the cursor (':r')
 	EXTRN	UNDCUR				; ... the cursor it restores
 	EXTRN	BCONOU				; SCRN.MAC -- console out (miss bell)
 	EXTRN	EXPRM, EXRUB, OUTCH		; SCRN.MAC -- ':' / '/' line echo
@@ -3606,10 +3607,7 @@ ATCEND:
 ;OPNBRK -- put a line break (CR,LF) in at the cursor, which ends a line further
 ; down.  The insert-mode <CR>, 'r<CR>' and o/O all open a line this way.
 OPNBRK:
-	MVI	A,CR
-	CALL	PUTGAP
-	MVI	A,LF
-	CALL	PUTGAP
+	CALL	PUTBRK
 	LHLD	LNDLT		; the cursor is a line further down
 	INX	H
 	SHLD	LNDLT
@@ -4761,6 +4759,8 @@ VZ_ZZ:
 ;   :x [name]   write only a changed text, then quit
 ;   :e [name]   edit that file, or the buffer's own again at the same line;
 ;               a changed text needs '!'
+;   :N,Mw name  write lines N to M to a file of their own (EX_WR)
+;   :[N]r name  read a file in below the cursor's line, or line N (EX_R)
 ;   :ve         the version, on the bottom row
 ; vim, NOT WordMaster: vim's commands and messages (without the Enn number),
 ; shown on the bottom row when a command fails.  A buffer without a name (no
@@ -4825,9 +4825,14 @@ EX_TF:
 	POP	H
 	CPI	EO_S
 	JZ	EX_S		; ':s' reads the rest of the line itself
+	CPI	EO_W
+	JZ	EX_RG		; ':N,Mw name' takes a range
+	CPI	EO_R
+	JZ	EX_RG		; ... and ':Nr name' a line
 	LDA	SRNGF
 	ORA	A
 	JNZ	EX_NOT		; a range on a command that does not take one
+EX_RG:
 	;--- '!', then the file name ---
 	MOV	A,M
 	SUI	'!'
@@ -4854,8 +4859,17 @@ EX_RUN:
 	JZ	EX_Q
 	CPI	EO_V
 	JZ	EX_V
+	CPI	EO_R
+	JZ	EX_R
 	CPI	EO_X
-	JNZ	EX_W
+	JZ	EX_XM
+	CPI	EO_W
+	JNZ	EX_W		; :wq
+	LDA	SRNGF		; (tested here and not in EX_W: ZZ comes in
+	ORA	A		;   there with whatever range the last ':' left)
+	JNZ	EX_WR		; ':N,Mw name': those lines only
+	JMP	EX_W
+EX_XM:
 	LDA	MODF		; :x writes only a changed text
 	ORA	A
 	JZ	EX_Q
@@ -4900,6 +4914,7 @@ EX_WK:
 	LDA	WPBYT
 	CALL	SEEKTO		; HL = the old position in the new window
 	CALL	GOTO
+EX_WRW:
 	LXI	H,0
 	SHLD	LNDLT
 	LDA	WPROW
@@ -4964,6 +4979,337 @@ EE_LD:
 	CC	LASTLN		; past the last line: onto it
 	CALL	ZSAVE
 	JMP	GP_MID
+
+;============================================================
+; A BLOCK THROUGH A FILE  (:N,Mw name   :[N]r name)
+;
+; The yank register lives in the text's own arena: it tops out near 27 K, and
+; every byte it holds is a byte the window loses.  A block past that is moved
+; the way vi has always moved one -- written to a file the user names and read
+; back in somewhere else.  Neither command touches the register or the arena:
+; both stream through the pager a record at a time, so the size is the disk's
+; to limit, and the block outlives ':e' besides.
+;
+; Both use TFCB and the default record at 0080H, which nothing else holds once
+; ARGSCN has read the command line out of it.  The pager points the DMA at the
+; text it is moving, so TFDOS sets it back before every call of its own.
+;
+; Recorded from vim before any of this was written (VIM_RDWR, accept_vi.py):
+;   - a ranged write moves nothing: the cursor and the window are as they were.
+;   - ':r' puts the text in BELOW the cursor's line and lands on the first line
+;     read, on its first non-blank; ':Nr' below line N, ':0r' above line 1.
+;     The window is placed as a jump to that line is (GZONE / GPLACE).
+;   - a file that ends without a line end still reads in as whole lines, and
+;     below a last line that has no line end the missing break goes in first.
+;   - a file that is not there, or a line the text has not got, changes
+;     nothing and moves nothing.
+; Where this is NOT vim (COMMANDS.md has each): the ranged write never goes to
+; the buffer's own file, '!' or not -- the pager is still reading it; ':r'
+; with no name reads nothing; and a write whose last line is past the end of
+; the text stops at the end instead of refusing.
+;============================================================
+
+;TFDOS -- BDOS function C on TFCB, its record the one at 0080H.  A = the answer.
+TFDOS:
+	PUSH	B
+	LXI	D,CMDTAIL
+	MVI	C,1AH		; set the DMA
+	CALL	BDOS
+	POP	B
+	LXI	D,TFCB
+	JMP	BDOS
+
+;EXRNG -- SLINES = the lines in the range SRNG1..SRNG2.  CY: there is no line
+; 0, and a range that runs backwards is refused (vim offers to swap it).
+EXRNG:
+	LHLD	SRNG1
+	MOV	A,H
+	ORA	L
+	STC
+	RZ
+	LHLD	SRNG2
+	XCHG
+	LHLD	SRNG1
+	CALL	CMP16		; CY iff SRNG2 < SRNG1
+	RC
+	XCHG			; HL = the last line, DE = the first
+	CALL	SUBHD
+	INX	H
+	SHLD	SLINES
+	ORA	A		; (SUBHD's DAD leaves the carry set)
+	RET
+
+;GOLNX -- GOLN, and Z iff the text HAS a line HL: GOLN stops on the last line
+; when it has not.
+GOLNX:
+	PUSH	H
+	CALL	GOLN
+	CALL	CNTLF
+	INX	H		; the line the cursor came to rest on
+	POP	D
+	JMP	CMP16
+
+;EXSAVP / EXRSTP -- where the cursor is, as a place in the FILE and a row on
+; the screen, and back to it: the window may page any distance in between.
+EXSAVP:
+	CALL	CURRW
+	STA	WPROW
+	LXI	H,MKPOS
+	JMP	FPSTO
+EXRSTP:
+	CALL	CLRCNT
+	CALL	MKPAGE		; page until that place is in the window again
+	CALL	GOTO
+	JMP	EX_WRW		; ... and its line back on its row
+
+;PUTBRK -- a line end (CR, LF) in at the cursor.
+PUTBRK:
+	MVI	A,CR
+	CALL	PUTGAP
+	MVI	A,LF
+	JMP	PUTGAP
+
+;EX_WR -- ':N,Mw name': lines N to M to a file of their own.  The walk is WM's
+; whole-file line move (GOLINE to the window's edge, SCRLST to page a step) with
+; the text it steps over copied out on the way, so it costs what moving there
+; costs.  A file of that name is refused without '!'; the buffer's own always.
+EX_WR:
+	LDA	EXARG
+	ORA	A
+	JZ	MSGNFN		; No file name
+	CALL	ISOWN
+	JZ	EXW_OW
+	CALL	TEXIST
+	STA	RWERR		; nonzero: a file of that name is there
+	JZ	EXW_GO
+	LDA	EXBANG
+	ORA	A
+	JNZ	MSGEXI		; File exists (! to force)
+EXW_GO:
+	CALL	EXRNG
+	JC	EXW_BD
+	CALL	EXSAVP
+	LHLD	SRNG1
+	CALL	GOLNX
+	JNZ	EXW_NL		; the text has no line N
+	LDA	RWERR		; a delete scans the whole directory, there or
+	ORA	A		;   not: only when TEXIST found one
+	MVI	C,13H
+	CNZ	TFDOS		; delete what is there
+	MVI	C,16H
+	CALL	TFDOS		; ... and make it
+	INR	A
+	JZ	EXW_FL		; no directory entry left
+	MVI	A,80H
+	STA	RWPTR
+	XRA	A
+	STA	RWERR
+	LHLD	SLINES
+	CALL	SETC0		; that many lines, forward
+EXW_LP:
+	CALL	GOLINE		; HL = as far as the window holds of them
+	PUSH	H
+	XCHG
+	LHLD	GAPEND
+	CALL	RWOUT		; the text from the cursor to there
+	POP	H
+	LDA	RWERR
+	ORA	A
+	JNZ	EXW_EN
+	CALL	SCRLST		; the cursor up to it, and page a step
+	CALL	CNTTST
+	JNZ	EXW_LP
+EXW_PD:				; the last record is padded out with ^Z
+	LDA	RWPTR
+	CPI	80H
+	JZ	EXW_EN
+	MVI	A,CPMEOF
+	CALL	RWPUT
+	JMP	EXW_PD
+EXW_EN:
+	MVI	C,10H
+	CALL	TFDOS		; close
+	LDA	RWERR
+	ORA	A
+	JNZ	EXW_FL
+	CALL	EXRSTP
+	MVI	A,MW_WRT	; '"NAME" written', as ':w name' says it
+	STA	MSGWHT
+	JMP	SETMOV		; nothing on the screen has changed
+EXW_FL:				; no room: the part written is not left behind
+	MVI	C,13H
+	CALL	TFDOS
+	CALL	EXRSTP
+	LXI	H,SDFUL
+	JMP	EXERR
+EXW_NL:
+	CALL	EXRSTP
+EXW_BD:
+	LXI	H,SRNGE
+	JMP	EXERR
+EXW_OW:
+	LXI	H,SEXI
+	JMP	EXERR
+
+;RWOUT -- the text from HL up to DE into the record, written out as it fills.
+RWOUT:
+	CALL	CMP16
+	RZ
+	MOV	A,M
+	INX	H
+	CALL	RWPUT
+	JMP	RWOUT
+
+;RWPUT -- A into the record at 0080H; a full one is written to TFCB.  Keeps
+; DE and HL.  A write that fails sets RWERR (which EX_WR also borrows, before
+; the walk, to remember that the file was there).
+RWPUT:
+	PUSH	H
+	PUSH	PSW
+	LDA	RWPTR
+	MOV	L,A
+	MVI	H,0
+	POP	PSW
+	MOV	M,A
+	INR	L		; Z: that was the record's last byte
+	MOV	A,L
+	JNZ	RWP_ST
+	PUSH	D
+	MVI	C,15H
+	CALL	TFDOS		; write it
+	POP	D
+	ORA	A
+	JZ	RWP_OK
+	STA	RWERR
+RWP_OK:
+	MVI	A,80H
+RWP_ST:
+	STA	RWPTR
+	POP	H
+	RET
+
+;EX_R -- ':r name' / ':Nr name': the file in below the cursor's line, or line
+; N.  Each record goes in at the cursor through INSBLK, so the window pages out
+; behind it exactly as it does behind typing; ^Z ends the file and bit 7 is
+; masked, as the loader has it (PAGE.MAC CLNSEC).  A read of more than the undo
+; region holds is one 'u' answers 'Too large to undo' to, like any other.
+; MODF is set by hand, not MARKMOD: that also sets DOTCHG, and '.' does not
+; repeat a ':r' in vim either.
+EX_R:
+	LDA	EXARG
+	ORA	A
+	JZ	MSGNFN		; No file name
+	MVI	C,0FH
+	CALL	TFDOS		; open
+	INR	A
+	JZ	ER_NOF
+	CALL	GZONE		; the screen's top line, before anything moves
+	CALL	EXSAVP
+	LDA	SRNGF
+	ORA	A
+	JZ	ER_NXT		; no line given: below the cursor's
+	LHLD	SRNG2
+	MOV	A,H
+	ORA	L
+	JNZ	ER_LN
+	INX	H
+	CALL	GOLN		; ':0r': above line 1 ...
+	XRA	A		;   which never wants a line end put in first
+	JMP	ER_BRK
+ER_LN:
+	CALL	GOLNX
+	JNZ	EXW_NL		; the text has no line N
+ER_NXT:
+	LXI	H,1
+	XRA	A
+	CALL	MVLIND		; the start of the next line, or the text's end
+	;--- below a last line that has no line end, the break goes in first; an
+	;    empty buffer still has its one empty line, and the text goes below it
+	CALL	ATEOF
+	MVI	A,0
+	JNC	ER_BRK		; text follows
+	LHLD	GAPBEG
+	XCHG
+	LHLD	TXTBEG
+	CALL	CMP16
+	MVI	A,1
+	JZ	ER_BRK		; nothing before the cursor either
+	DCX	D
+	LDAX	D
+	SUI	LF		; A = 0 when the last line is terminated
+ER_BRK:
+	STA	RDBRK
+	CALL	CLRCNT		; forward, so the window pages out BEHIND
+	XRA	A
+	STA	RDANY
+ER_LP:
+	MVI	C,14H
+	CALL	TFDOS		; the next record
+	ORA	A
+	JNZ	ER_END
+	LXI	H,CMDTAIL
+	MVI	C,0
+ER_SC:				; C = its bytes, up to a ^Z
+	MOV	A,M
+	CPI	CPMEOF
+	JZ	ER_GOT
+	INX	H
+	INR	C
+	JP	ER_SC		; (minus: all 128)
+ER_GOT:
+	MOV	A,C
+	ORA	A
+	JZ	ER_END
+	PUSH	B
+	LDA	RDANY
+	ORA	A
+	CZ	ER_1ST
+	POP	B
+	MVI	B,0
+	LXI	D,CMDTAIL
+	PUSH	B
+	CALL	INSBLK
+	POP	B
+	CALL	UNDINS		; ... for 'u', and for the marks
+	MOV	A,C
+	RAL
+	JC	ER_LP		; a full record: there may be more
+ER_END:
+	LDA	RDANY
+	ORA	A
+	JZ	ER_PL		; nothing in the file: nothing has changed
+	CALL	ATEOF
+	JC	ER_MD		; the text now ends as the file read ends
+	LHLD	GAPBEG
+	DCX	H
+	MOV	A,M
+	CPI	LF
+	CNZ	PUTBRK		; text follows: what was read ends a line
+ER_MD:
+	MVI	A,1
+	STA	MODF
+	CALL	MKPAGE		; back to the first line read
+	CALL	GOTO
+ER_PL:
+	CALL	ATEOF
+	CC	LASTLN		; (nothing read, at the end: the last line)
+	CALL	CLRCNT
+	CALL	GPLACE		; first non-blank, the window placed as 'G'
+	JMP	SETFUL		; GPLACE asks for R_MOVE when the line is on the
+				;   screen already, and the text below it moved
+;ER_1ST -- the first bytes are about to go in (A = 0): the break before them
+; if one is wanted, and where they start, for the cursor to come back to.
+ER_1ST:
+	INR	A
+	STA	RDANY
+	LDA	RDBRK
+	ORA	A
+	CNZ	PUTBRK
+	LXI	H,MKPOS
+	JMP	FPSTO
+ER_NOF:
+	LXI	H,SNOPN
+	JMP	EXERT
 
 ;WRCHK -- the target of a write into TFCB: the file name given, else the
 ; buffer's own.  A = 1 (keep a backup) when it is the buffer's own file.  CY
@@ -5451,6 +5797,9 @@ SLINE:	DB	' line ',0
 SCOLM:	DB	' col ',0
 SNOLIN: DB	' --Buffer empty--',0
 SWRIT:	DB	' written',0
+SNOPN:	DB	'Can''t open file ',0
+SRNGE:	DB	'Invalid range',0
+SDFUL:	DB	'Disk full',0
 
 ;EXTAB -- the ex commands: DB first letter, second letter (0: none), EXOP.
 EO_W	EQU	1
@@ -5460,6 +5809,7 @@ EO_X	EQU	4
 EO_E	EQU	5
 EO_S	EQU	6
 EO_V	EQU	7
+EO_R	EQU	8
 EXTAB:
 	DB	'w',0,EO_W
 	DB	'q',0,EO_Q
@@ -5468,6 +5818,7 @@ EXTAB:
 	DB	'e',0,EO_E
 	DB	's',0,EO_S
 	DB	'v','e',EO_V
+	DB	'r',0,EO_R
 	DB	0
 
 ;============================================================
@@ -5694,19 +6045,8 @@ SUBGO:
 	ORA	A
 	JZ	SUB_1L
 	;--- ':N,Ms' / ':%s': to the range's first line, then walk it ---
-	LHLD	SRNG1
-	MOV	A,H
-	ORA	L
-	JZ	SUBBAD		; ':0s' -- there is no line 0
-	LHLD	SRNG2
-	XCHG
-	LHLD	SRNG1
-	CALL	CMP16		; CY iff SRNG2 < SRNG1
-	JC	SUBBAD		; backwards: vim offers to swap, this refuses
-	XCHG			; HL = the last line, DE = the first
-	CALL	SUBHD
-	INX	H		; HL = the lines in the range
-	SHLD	SLINES
+	CALL	EXRNG		; SLINES = the lines in the range
+	JC	SUBBAD
 	LHLD	SRNG1
 	CALL	GOLN
 	JMP	SUBLP
@@ -6623,7 +6963,12 @@ SGFLAG: DB	0		; ':s' the 'g' flag
 SANY:	DB	0		; ':s' something in the range has changed
 SLCHG:	DB	0		; ':s' this line changed
 SBACK:	DW	0		; ':s' lines walked past the last change
-SLINES: DW	0		; ':s' lines of the range still to do
+SLINES: DW	0		; ':s' / ':N,Mw' lines of the range still to do
+RWPTR:	DB	0		; ':N,Mw' the next free byte of the record at
+				;   0080H, as that address's low byte
+RWERR:	DB	0		; ':N,Mw' a record would not go: the disk is full
+RDANY:	DB	0		; ':r' something has been read in
+RDBRK:	DB	0		; ':r' the line above wants a line end first
 SOFFS:	DW	0		; ':s' the cursor, for a substitute that
 SLDLTS: DW	0		;   changes nothing, and its LNDLT
 SREPLN: DB	0		; ':s' the replacement's length, kept

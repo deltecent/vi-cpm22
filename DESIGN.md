@@ -169,8 +169,8 @@ move would break:
               pointer row, text + gap, Q-buffer (the yank register), undo region
     BUFEND  = BDOS base - 700H - 1
 
-In this build: the image is 17687 bytes, the `.COM` file 17792 bytes (139
-records), the reserve block 803 bytes (`4617H`–`4939H`), and the stack 128
+In this build: the image is 18273 bytes, the `.COM` file 18304 bytes (143
+records), the reserve block 803 bytes (`4861H`–`4B83H`), and the stack 128
 bytes. **The size that matters is a 4 K BLOCK BOUNDARY**, because that is what
 the 8 MB disk allocates in: 16384 bytes occupy four blocks and one byte more
 occupies five. This build is past that line by design (`f F t T ; ,` would not
@@ -277,6 +277,20 @@ about 27 K. WordMaster has no copy without delete, so the copy is appended
   the marks from `MKSAV` (a `dd` has closed them up by then), drops the
   part-captured undo, empties the register and says "Too large to yank". A
   yank reaches it under `YKGO`, which already holds the marks and undo still.
+- **A block the register cannot hold goes through a file.** `:N,Mw name`
+  writes lines N to M to a file of their own and `:r name` reads one in below
+  the cursor's line, so the answer to a refused `dd` is `:N,Mw TMP`, `d{n}G`,
+  move, `:r TMP`. Neither touches the register or the arena. The write is
+  WordMaster's whole-file line move (`GOLINE` to the window's edge, `SCRLST`
+  to page a step) with the text it steps over copied out on the way; the read
+  splices each record in at the cursor through `INSBLK`, so the window pages
+  out behind it as it does behind typing. Both use `TFCB` and the default
+  record at `0080H`, which is free once `ARGSCN` has read the command line out
+  of it; the pager points the DMA at the text it moves, so `TFDOS` sets it back
+  before each call. The cursor's place is kept across both as a position in
+  the FILE (`EXSAVP` / `MKPAGE`), since the window may page any distance. There
+  is no hidden spill file behind `yy` and `p`: the drive runs because a file
+  was asked for, and no third work file competes for the head.
 
 **`.` is keystroke replay.** `DOTPRE` and `DOTPOST` record the keys of the command
 being typed. When that command ends and changed the text (`DOTCHG`, set by

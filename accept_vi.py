@@ -5826,6 +5826,317 @@ def lnum_cmds():
         e.close()
 
 
+def rdwr_files():
+    """What ':r' and a ranged ':w' need beyond hml_files(): numbered lines with
+    three unlike ones after them -- the first indented, the last with no line
+    end -- so ':61,63w' makes a file whose first non-blank is not column 0 and
+    which ends without a line end."""
+    return dict(hml_files(), rw=make(60) + b'  ind\r\nbb\r\ncc')
+
+
+# ---------------------------------------------------------------------------
+# VIM_RDWR -- ':N,Mw {file}' and ':r {file}' against vim 9.1, recorded by
+# vimref.py ('rdwr') BEFORE either was written.  Shape is VIM_MARKS's: (file,
+# keys, the sha1 of the file vim wrote, [(cursor row, column, cursor line, top
+# line) after each key]).  Every row makes the file it reads with a ranged
+# write of its own, so the two commands are held together.
+#
+# What the rows pin down:
+#   - a ranged write moves nothing: the cursor, the column and the window are
+#     where they were.
+#   - ':r' puts the text in below the cursor's line and lands on the FIRST line
+#     read, on its first non-blank; ':{n}r' below line n, ':0r' above line 1,
+#     ':N,Mr' below line M.  The window is placed as a jump to that line is.
+#   - a file that ends without a line end still reads in as whole lines when
+#     text follows it, and below a last line that has no line end the missing
+#     break goes in first.
+#   - 'u' takes a read back out and puts the cursor back where the ':' was typed.
+#   - a file that is not there changes nothing and moves nothing.
+#   - lines wider than the screen (the wide file, 'nowrap').
+VIM_RDWR = [
+    ('rw', [':61,63w! R.TXT\r', '30G', '3l', ':r R.TXT\r', 'u'], 'e37ad572aa155c38',
+     [(0, 0, '000001', '000001'),
+      (22, 0, '000030', '000008'),
+      (22, 3, '000030', '000008'),
+      (22, 2, '  ind', '000009'),
+      (21, 3, '000030', '000009')]),
+    ('rw', [':61,63w! R.TXT\r', '30G', ':0r R.TXT\r'], '099b1c5b547071c0',
+     [(0, 0, '000001', '000001'),
+      (22, 0, '000030', '000008'),
+      (0, 2, '  ind', '  ind')]),
+    ('rw', [':61,63w! R.TXT\r', '30G', ':10r R.TXT\r'], '9a276d45fb80e230',
+     [(0, 0, '000001', '000001'),
+      (22, 0, '000030', '000008'),
+      (3, 2, '  ind', '000008')]),
+    ('rw', [':61,63w! R.TXT\r', '30G', ':25r R.TXT\r'], 'fa315d2a54a6ee8f',
+     [(0, 0, '000001', '000001'),
+      (22, 0, '000030', '000008'),
+      (18, 2, '  ind', '000008')]),
+    ('rw', [':61,63w! R.TXT\r', '30G', ':40r R.TXT\r'], '6d6fc83403abba68',
+     [(0, 0, '000001', '000001'),
+      (22, 0, '000030', '000008'),
+      (22, 2, '  ind', '000019')]),
+    ('rw', [':61,63w! R.TXT\r', '30G', ':63r R.TXT\r'], 'f4aaf69f76eec9f4',
+     [(0, 0, '000001', '000001'),
+      (22, 0, '000030', '000008'),
+      (20, 2, '  ind', '000044')]),
+    ('rw', [':61,63w! R.TXT\r', '30G', ':5,7r R.TXT\r'], '9e847263301e7926',
+     [(0, 0, '000001', '000001'),
+      (22, 0, '000030', '000008'),
+      (0, 2, '  ind', '  ind')]),
+    ('rw', ['30G', '3l', ':r NOSUCH.TXT\r'], 'e37ad572aa155c38',
+     [(22, 0, '000030', '000008'),
+      (22, 3, '000030', '000008'),
+      (22, 3, '000030', '000008')]),
+    ('rw', [':5,7w! R.TXT\r', 'G', ':r R.TXT\r'], '36794535ef43faf4',
+     [(0, 0, '000001', '000001'),
+      (22, 0, 'cc', '000041'),
+      (22, 0, '000005', '000042')]),
+    ('wide', [':3,4w! R.TXT\r', '5G', ':r R.TXT\r', '$'], '1838ff637584f537',
+     [(0, 0, '000001', '000001'),
+      (4, 0, '000005', '000001'),
+      (5, 0, '000003xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', '000001'),
+      (5, 199, '000003xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', '000001')]),
+    ('ind', [':500,502w! R.TXT\r', '1000G', ':r R.TXT\r'], '277689c3ecf3a029',
+     [(0, 0, '    000001', '    000001'),
+      (11, 10, '\t  001000', '    000989'),
+      (12, 10, '\t  000500', '    000989')]),
+    ('num', [':6000,6002w! R.TXT\r', '12000G', ':100r R.TXT\r'], 'd854c59d30956d6f',
+     [(0, 0, '000001', '000001'),
+      (11, 0, '012000', '011989'),
+      (11, 0, '006000', '000090')]),]
+
+
+def rdwr_like_vim():
+    """':N,Mw {file}' and ':r {file}' land where vim lands them and leave the
+    file byte-exact."""
+    import hashlib
+    files = rdwr_files()
+    for f, keys, sha, want in VIM_RDWR:
+        e = Editor(files[f])
+        try:
+            for k, (wrow, wcol, wcur, wtop) in zip(keys, want):
+                e.key(k)
+                if k.startswith(':'):
+                    ex_settled(e)
+                r = rows(e); v = e.screen()
+                hs = int.from_bytes(bytes(e.s.mem(SYM['HSCROL'], 2)), 'little')
+                shown = lambda t: expand(t)[hs:hs + 80].rstrip()
+                got = (v.row, v.col + hs, r[v.row], r[0])
+                check(f'vim rdwr {f} {keys!r} {k!r}: {got[:2]} {got[2][:14]!r} '
+                      f'== {(wrow, wcol)} {wcur[:14]!r}',
+                      got == (wrow, wcol, shown(wcur), shown(wtop)))
+            e.key(':w\r')
+            ex_settled(e)
+            got = hashlib.sha1(saved_bytes(e)).hexdigest()[:16]
+            check(f'vim rdwr {f} {keys!r}: file as vim wrote it ({got})',
+                  got == sha)
+        finally:
+            e.close()
+
+
+def rdwr_cmds():
+    """':N,Mw {file}' and ':r {file}' beyond the recorded vim rows: what each
+    refuses and how it says so, what the files hold afterwards, an empty file,
+    an empty buffer, and the reason both exist -- a block bigger than the yank
+    register moved through a file on 100 K, and on the wide file, with the
+    line number, a mark and the modified flag right afterwards.
+
+    Where this is NOT vim (COMMANDS.md): a ranged write never goes to the
+    buffer's own file, '!' or not; ':r' with no name reads nothing; a write
+    whose last line is past the end stops at the end; and ':0r' into an empty
+    buffer leaves exactly the file read, without vim's empty last line."""
+    def L(a, b):
+        return b''.join(line(i) for i in range(a, b + 1))
+
+    def at(e):
+        v = e.screen()
+        return ''.join(v.screen[v.row]).rstrip()
+
+    def ex(e, keys, timeout=600):
+        e.key(keys)
+        e.s.run_until_quiet(quiet=1.5, timeout=timeout)
+        ex_settled(e)
+
+    def again(e, name):
+        """Back into the editor from the CCP, on *name*."""
+        e.cap.seek(0); e.cap.truncate(0)
+        e.s.send(f'VI {name}\r')
+        e.s.run_until_quiet(quiet=1, timeout=40)
+
+    rw = rdwr_files()['rw']
+    e = Editor(rw)
+    try:
+        e.key('30G'); e.key('3l')
+        v0 = e.screen(); scr0 = [''.join(r) for r in v0.screen][:23]
+        ex(e, ':5,7w OUT.TXT\r')
+        v = e.screen()
+        check(f'rdwr :5,7w OUT.TXT: says so ({bottom(e)!r})',
+              bottom(e) == '"OUT.TXT" written')
+        check('rdwr :5,7w OUT.TXT: the cursor and the text are where they were',
+              (v.row, v.col) == (v0.row, v0.col)
+              and [''.join(r) for r in v.screen][:23] == scr0)
+        g = ctrlg(e)
+        check(f'rdwr :5,7w OUT.TXT: on the same line, nothing modified ({g!r})',
+              'line 30 ' in g and 'Modified' not in g)
+        refused(e, ':5,7w OUT.TXT\r', 'File exists (! to force)', 'rdwr')
+        ex(e, ':8,9w! OUT.TXT\r')
+        check(f'rdwr :8,9w! OUT.TXT: says so ({bottom(e)!r})',
+              bottom(e) == '"OUT.TXT" written')
+        for keys, msg in ((':5,7w\r', 'No file name'),
+                          (':5,7w TEST.TXT\r', 'File exists'),
+                          (':5,7w! TEST.TXT\r', 'File exists'),
+                          (':70,80w N.TXT\r', 'Invalid range'),
+                          (':7,5w N.TXT\r', 'Invalid range'),
+                          (':0,3w N.TXT\r', 'Invalid range'),
+                          (':2,3wq N.TXT\r', 'Invalid command: 2,3wq N.TXT'),
+                          (':2,3e N.TXT\r', 'Invalid command: 2,3e N.TXT'),
+                          (':r\r', 'No file name'),
+                          (':r NOSUCH.TXT\r', "Can't open file NOSUCH.TXT"),
+                          (':99r OUT.TXT\r', 'Invalid range'),
+                          (':r OUT.TXT extra\r', 'Invalid file name')):
+            refused(e, keys, msg, 'rdwr')
+        ex(e, ':62,99w TAIL.TXT\r')
+        check(f'rdwr :62,99w: stops at the last line ({bottom(e)!r})',
+              bottom(e) == '"TAIL.TXT" written')
+        ex(e, ':%w ALL.TXT\r')
+        ex(e, ':63,63w LAST.TXT\r')
+        ex(e, ':1w ONE.TXT\r')
+        g = ctrlg(e)
+        check(f'rdwr: after all of them, line 30 still, unmodified ({g!r})',
+              'line 30 ' in g and 'Modified' not in g)
+        check('rdwr: OUT.TXT holds lines 8 and 9', disk(e, 'OUT.TXT') == L(8, 9))
+        check('rdwr: TAIL.TXT holds the text from line 62 on',
+              disk(e, 'TAIL.TXT') == b'bb\r\ncc')
+        check('rdwr: ALL.TXT holds the whole text', disk(e, 'ALL.TXT') == rw)
+        check('rdwr: LAST.TXT holds the last line', disk(e, 'LAST.TXT') == b'cc')
+        check('rdwr: ONE.TXT holds line 1', disk(e, 'ONE.TXT') == L(1, 1))
+        d = cpm_dir(e)
+        check('rdwr: a refused write made no file', not listed(d, 'N.TXT'))
+        check(f'rdwr: no work files left {work_files(d)}', not work_files(d))
+
+        # ---- a file with nothing in it (the CCP's SAVE 0 makes one) ----
+        e.s.cmd('SAVE 0 E.TXT')
+        again(e, 'TEST.TXT')
+        e.key('30G'); e.key('3l')
+        ex(e, ':r E.TXT\r')
+        g = ctrlg(e)
+        check(f'rdwr :r of an empty file: the next line, nothing modified ({g!r})',
+              'line 31 ' in g and 'Modified' not in g and at(e) == txt(31))
+        e.key('G')
+        ex(e, ':r E.TXT\r')
+        g = ctrlg(e)
+        check(f'rdwr :r of an empty file on the last line: stays ({g!r})',
+              'line 63 ' in g and 'Modified' not in g)
+        # ---- a buffer with nothing in it ----
+        check('rdwr: :q', at_ccp(e, ':q\r'))
+        again(e, 'NEW1.TXT')
+        ex(e, ':r OUT.TXT\r')
+        g = ctrlg(e)
+        check(f'rdwr :r into an empty buffer: below its one empty line ({g!r})',
+              'line 2 ' in g and 'Modified' in g and at(e) == txt(8))
+        ex(e, ':w\r')
+        check('rdwr: :q', at_ccp(e, ':q\r'))
+        again(e, 'NEW2.TXT')
+        ex(e, ':0r OUT.TXT\r')
+        g = ctrlg(e)
+        check(f'rdwr :0r into an empty buffer: line 1 ({g!r})',
+              'line 1 ' in g and at(e) == txt(8))
+        ex(e, ':w\r')
+        check('rdwr: NEW1.TXT is an empty line and then the file',
+              disk(e, 'NEW1.TXT') == b'\r\n' + L(8, 9))
+        check('rdwr: NEW2.TXT is the file', disk(e, 'NEW2.TXT') == L(8, 9))
+    finally:
+        e.close()
+
+    # ---- the reason for both: a block the yank register cannot hold ----
+    big = make(12800)
+    e = Editor(big)
+    try:
+        ex(e, '9000G'); e.key('ma')
+        ex(e, '6000G'); e.key('3l')
+        v0 = e.screen()
+        t0 = tstates(e)
+        ex(e, ':3000,7999w BLK.TXT\r')
+        s = (tstates(e) - t0) / 2e6
+        v = e.screen()
+        g = ctrlg(e)
+        check(f'rdwr big :3000,7999w: 40 K written ({bottom(e)!r}, {s:.0f} s)',
+              'line 6000 ' in g and 'Modified' not in g)
+        check(f'rdwr big :3000,7999w: the cursor is back where it was '
+              f'({(v.row, v.col)}, {at(e)!r})',
+              (v.row, v.col) == (v0.row, v0.col) and at(e) == txt(6000))
+        check(f'rdwr big :3000,7999w: in the time the paging takes '
+              f'({s:.0f} s, 90 allowed)', s < 90)
+        ex(e, '3000G'); ex(e, 'd7999G')
+        g = ctrlg(e)
+        check(f'rdwr big d7999G: the block is out ({at(e)!r}, {g!r})',
+              at(e) == txt(8000) and 'line 3000 ' in g)
+        ex(e, '1000G')
+        t0 = tstates(e)
+        ex(e, ':r BLK.TXT\r')
+        s = (tstates(e) - t0) / 2e6
+        g = ctrlg(e)
+        check(f'rdwr big :r: on the first line read ({at(e)!r}, {g!r}, {s:.0f} s)',
+              at(e) == txt(3000) and 'line 1001 ' in g and 'Modified' in g)
+        check(f'rdwr big :r: in the time the paging takes ({s:.0f} s, 90 allowed)',
+              s < 90)
+        e.key('u')
+        check(f'rdwr big :r: too much to undo, and u says so ({bottom(e)!r})',
+              bottom(e) in ('Too large to undo',
+                            'Cannot undo: change has paged out'))
+        ex(e, '6000G')
+        g = ctrlg(e)
+        check(f'rdwr big 6000G: the last line read ({at(e)!r}, {g!r})',
+              at(e) == txt(7999) and 'line 6000 ' in g)
+        e.key("'a")
+        e.s.run_until_quiet(quiet=1.5, timeout=300)
+        g = ctrlg(e)
+        check(f"rdwr big 'a: the mark followed its line ({at(e)!r}, {g!r})",
+              at(e) == txt(9000) and 'line 9000 ' in g)
+        ex(e, 'G')
+        g = ctrlg(e)
+        check(f'rdwr big G: as many lines as before ({g!r})', 'line 12800 ' in g)
+        ex(e, ':w\r')
+        got = saved_bytes(e)
+        check(f'rdwr big: the block moved, nothing else did ({len(got)} bytes)',
+              got == L(1, 1000) + L(3000, 7999) + L(1001, 2999) + L(8000, 12800))
+        check('rdwr big: BLK.TXT is the block',
+              disk(e, 'BLK.TXT') == L(3000, 7999))
+        d = cpm_dir(e)
+        check(f'rdwr big: no work files left {work_files(d)}', not work_files(d))
+    finally:
+        e.close()
+
+    # ---- lines past the right screen edge (109 K) ----
+    wide = make_wide()
+    W = wide.split(b'\r\n')[:-1]
+    e = Editor(wide)
+    try:
+        ex(e, '1400G')
+        ex(e, ':700,1100w W.TXT\r')
+        g = ctrlg(e)
+        check(f'rdwr wide :700,1100w: back on line 1400 ({at(e)!r}, {g!r})',
+              at(e) == W[1399].decode()[:80] and 'line 1400 ' in g)
+        ex(e, ':r W.TXT\r')
+        g = ctrlg(e)
+        check(f'rdwr wide :r: on the first line read ({at(e)[:10]!r}, {g!r})',
+              at(e) == W[699].decode()[:80] and 'line 1401 ' in g)
+        ex(e, ':200r W.TXT\r')
+        g = ctrlg(e)
+        check(f'rdwr wide :200r: paged back to it ({at(e)[:10]!r}, {g!r})',
+              at(e) == W[699].decode()[:80] and 'line 201 ' in g)
+        ex(e, ':w\r')
+        blk = W[699:1100]
+        want = b''.join(x + b'\r\n' for x in
+                        W[:200] + blk + W[200:1400] + blk + W[1400:])
+        got = saved_bytes(e)
+        check(f'rdwr wide: both copies are in, whole ({len(got)} bytes)',
+              got == want)
+    finally:
+        e.close()
+
+
 def qfull_cmds():
     """A 'dd' or 'yy' whose lines the yank register cannot hold is REFUSED:
     'Too large to yank' on the bottom row, the editor still running, the file,
@@ -5939,6 +6250,15 @@ def disk_full():
                 break
         check(f'full: the drive filled up ({n} files of 64 K)', 0 < n <= 200)
         e.s.cmd('ERA F%d.BIN' % n)               # the one that did not fit
+        # ... which leaves up to 64 K free again: the rest goes a block (4 K)
+        # at a time, so that not one record more will fit anywhere
+        m = 0
+        while 'NO SPACE' not in e.s.cmd('SAVE 16 G%d.BIN' % m).upper():
+            m += 1
+            if m > 20:
+                break
+        check(f'full: ... to the last block ({m} files of 4 K)', m <= 20)
+        e.s.cmd('ERA G%d.BIN' % m)
 
         def fatal(tag, keys):
             e.cap.seek(0); e.cap.truncate(0)
@@ -5965,6 +6285,17 @@ def disk_full():
             check(f'full {tag}: no work files left {work_files(d)}',
                   not work_files(d))
             check(f'full {tag}: TEST.TXT still listed', listed(d, 'TEST.TXT'))
+
+        # a ranged write that the drive has no room for is refused, not fatal:
+        # the text is all in the window, so nothing has to page for it
+        e.cap.seek(0); e.cap.truncate(0)
+        e.s.send('VI TEST.TXT\r')
+        e.s.run_until_quiet(quiet=1, timeout=40)
+        e.key('5G')
+        refused(e, ':1,100w N.TXT\r', 'Disk full', 'full :1,100w')
+        check('full :1,100w: :q leaves', at_ccp(e, ':q\r'))
+        check('full :1,100w: the part written is not left behind',
+              not listed(cpm_dir(e), 'N.TXT'))
 
         fatal('paging (G)', ['G'])
         fatal(':w', ['x', ':w\r'])
@@ -6053,6 +6384,10 @@ def main():
     if not args or 'vim' in args or 'qfull' in args:
         print('\n=== dd / yy past the yank register ===', flush=True)
         qfull_cmds()
+    if not args or 'vim' in args or 'rdwr' in args:
+        print('\n=== :N,Mw {file} / :r {file} vs vim ===', flush=True)
+        rdwr_like_vim()
+        rdwr_cmds()
     if not args or 'vim' in args or 'lnum' in args:
         print('\n=== the line number, kept as the window pages ===', flush=True)
         lnum_cmds()
