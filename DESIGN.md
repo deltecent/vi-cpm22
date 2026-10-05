@@ -161,8 +161,8 @@ move would break:
               pointer row, text + gap, Q-buffer (the yank register), undo region
     BUFEND  = BDOS base - 700H - 1
 
-In this build: the image is 16902 bytes, the `.COM` file 17024 bytes (133
-records), the reserve block 791 bytes (`4306H`–`461CH`), and the stack 128
+In this build: the image is 16989 bytes, the `.COM` file 17024 bytes (133
+records), the reserve block 791 bytes (`435DH`–`4673H`), and the stack 128
 bytes. **The size that matters is a 4 K BLOCK BOUNDARY**, because that is what
 the 8 MB disk allocates in: 16384 bytes occupy four blocks and one byte more
 occupies five. This build is past that line by design (`f F t T ; ,` would not
@@ -274,11 +274,16 @@ command can forget to record itself.
   are not a paging signature, because `UPDMARK` raises them on every edit.
 - `:w` clears the undo, because the write rebuilds every offset.
 
-**Marks `a`–`c`** are an offset plus the `PGTOPM` at the time they were set,
-stored in the reserve block. A mark is **dropped, never moved**. `MKDROP` runs
-from `MARKMOD`, one 16-bit compare per mark with nothing to update, which is
-why this rule was chosen over vim's. A mark is also lost to `:e` or to paging
-away. A yank drops none: the copy never reaches `MARKMOD`, and `MKHOLD` holds
+**Marks `a`–`c`** are 3-byte positions in the file (`FPOS`: the records paged
+out ahead of the window, times 128, plus the offset into the window), stored
+in the reserve block. Setting one costs no disk access, and it does not care
+which part of the file is resident: a jump pages until the window holds the
+position (`MKPAGE`, WordMaster's whole-file line move stopped by where the
+window is instead of by a count) and places the line as `G` does. An operator
+measures its span in logical offsets, which are good inside one window only,
+so `d'a` over a mark that is paged out is refused and the mark kept. A mark is
+**dropped, never moved**. `MKDROP` runs from `MARKMOD`, one 24-bit compare per
+mark with nothing to update. A mark is also lost to `:e`. A yank drops none: the copy never reaches `MARKMOD`, and `MKHOLD` holds
 the drop off across the delete and put back when `YKGO` has to run instead.
 
 **Search** is WordMaster's `MATCHF`/`MATCHB` swept across the whole file by

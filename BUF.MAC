@@ -102,6 +102,7 @@ RESVMEM EQU	0D80H		; WM 25: the arena QROOM keeps free past
 
 ;--- Line move (WM MVLMAX..SETBWD, GOLINE, SCRLST) -- the vi layer's paging nav.
 	PUBLIC	MVLMAX, MVLIND, SETBWD, CLRCNT
+	PUBLIC	GOLINE			; WM 2228 -- CMD.MAC pages to a mark with it
 	PUBLIC	SCRLST			; WM 4307 -- the search sweep's page step
 	PUBLIC	DELLN, SETC0		; WM line kill (dd) + its count set
 	EXTRN	CMDCNT			; CMD.MAC  -- WM CMDCNT

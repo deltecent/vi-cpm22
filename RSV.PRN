@@ -134,7 +134,7 @@
   0080                   C      DOTMAX	EQU	128		; keys one recorded change may hold (see '.')
   0020                   C      KBRSIZ	EQU	32		; KEY.MAC's type-ahead ring (a power of two)
   0003                   C      MKMAX	EQU	3		; marks 'a'-'c' -- three is enough (COMMANDS.md)
-  0004                   C      MKSIZ	EQU	4		; each: its offset, then PGTOPM when it was set
+  0004                   C      MKSIZ	EQU	4		; each: a 3-byte file position (the 4th is spare)
                          C      
                          C      ;------------------------------------------------------------
                          C      ; KEY DECODER -- GETKEY return types (B) and action codes (C when B=KT_ACT).

@@ -4744,10 +4744,9 @@ def marks_files():
 #     this editor agree.
 #
 # DELIBERATELY NOT HERE, because this editor is documented to deviate: an edit
-# ABOVE a mark (vim shifts the mark to follow the text, this editor drops it),
-# and a mark whose window has paged away (vim jumps back, this editor drops
-# it).  Both are asserted in marks_cmds() instead -- recording vim for them
-# would be recording a reference this editor is designed not to match.
+# ABOVE a mark (vim shifts the mark to follow the text, this editor drops it).
+# That is asserted in marks_cmds() instead -- recording vim for it would be
+# recording a reference this editor is designed not to match.
 VIM_MARKS = [
     ('mk', ['ma', 'G', "'a"], 'd0c2cb8e681aa18f',
      [(0, 0, 'alpha beta', 'alpha beta'),
@@ -5345,17 +5344,63 @@ def marks_cmds():
         finally:
             e.close()
 
-    # ---- the window paging away drops the mark ----
-    e = Editor(make(12800))
-    try:
-        e.key('ma')
-        e.key('G')                               # far past the resident window
-        notset(e, "'a", 'the window paged away: the mark is gone')
-        e.key('ma')                              # ... and it can be set again here
-        e.key('gg')
-        notset(e, "'a", 'paged the other way: still gone')
-    finally:
-        e.close()
+    # ---- a mark is a place in the FILE, not in the window: paging away from
+    #      it and back does not lose it, and a jump pages to wherever it is.
+    #      100 K, so every jump here crosses the resident window; each landing
+    #      is held to the line's text, '^G's line number and the screen a '^L'
+    #      draws.
+    big = make(12800)
+
+    def landed(e, tag, n, col):
+        v = e.screen(); scr = [''.join(r).rstrip() for r in v.screen[:23]]
+        check(f'{tag}: on line {n}, column {col} ({scr[v.row]!r}, {v.col})',
+              scr[v.row] == txt(n) and v.col == col)
+        e.key('\x0c')
+        v2 = e.screen(); scr2 = [''.join(r).rstrip() for r in v2.screen[:23]]
+        check(f'{tag}: the screen is what ^L draws (top {scr[0]!r}, '
+              f'^L {scr2[0]!r})',
+              scr == scr2 and (v.row, v.col) == (v2.row, v2.col))
+        g = ctrlg(e)
+        check(f'{tag}: ^G agrees ({g!r})', f'line {n} ' in g + ' ')
+
+    for q, col in (("'", 0), ('`', 3)):
+        e = Editor(big)
+        try:
+            e.key('40G'); e.key('3l'); e.key('ma')       # near the top
+            e.key('6000G'); e.key('3l'); e.key('mb')     # the middle
+            e.key('G'); e.key('3l'); e.key('mc')         # the last line
+            e.key(q + 'a'); landed(e, f'from the end, {q}a', 40, col)
+            e.key(q + 'c'); landed(e, f'from the top, {q}c', 12800, col)
+            e.key(q + 'b'); landed(e, f'from the end, {q}b', 6000, col)
+            e.key(q + 'a'); landed(e, f'from the middle, {q}a', 40, col)
+            e.key(q + 'b'); landed(e, f'from the top, {q}b', 6000, col)
+            e.key(q + 'b'); landed(e, f'already there, {q}b', 6000, col)
+            e.key('9000G'); e.key('x')           # an edit BELOW a and b
+            e.key(q + 'a'); landed(e, f'after an edit below, {q}a', 40, col)
+            e.key(':w\r'); ex_settled(e)         # the write keeps them too
+            e.key(q + 'b'); landed(e, f'after :w, {q}b', 6000, col)
+        finally:
+            e.close()
+
+    # ---- an OPERATOR cannot take a span the window does not hold whole, so
+    #      over a mark that is paged out it is refused -- the bell, nothing
+    #      deleted -- and the mark is still there for a plain jump ----
+    for op in ("d'a", 'd`a', "y'a"):
+        e = Editor(big)
+        try:
+            e.key('40G'); e.key('ma'); e.key('G')
+            n = len(e.cap.getvalue())
+            e.key(op)
+            v = e.screen(); scr = [''.join(r).rstrip() for r in v.screen[:23]]
+            check(f'{op} over a paged-out mark: rings',
+                  '\x07' in e.cap.getvalue()[n:])
+            check(f'{op} over a paged-out mark: takes nothing '
+                  f'({scr[v.row]!r})', scr[v.row] == txt(12800))
+            check(f'{op} over a paged-out mark: not modified ({ctrlg(e)!r})',
+                  'Modified' not in ctrlg(e))
+            e.key("'a"); landed(e, f"{op} refused, then 'a", 40, 0)
+        finally:
+            e.close()
 
 
 

@@ -85,7 +85,7 @@ EXMAX	EQU	40		; max chars on the ':' ex command line
 DOTMAX	EQU	128		; keys one recorded change may hold (see '.')
 KBRSIZ	EQU	32		; KEY.MAC's type-ahead ring (a power of two)
 MKMAX	EQU	3		; marks 'a'-'c' -- three is enough (COMMANDS.md)
-MKSIZ	EQU	4		; each: its offset, then PGTOPM when it was set
+MKSIZ	EQU	4		; each: a 3-byte file position (the 4th is spare)
 
 ;------------------------------------------------------------
 ; KEY DECODER -- GETKEY return types (B) and action codes (C when B=KT_ACT).

@@ -74,6 +74,7 @@
 	EXTRN	MATCHF, MATCHB, FWDCNT, SUBLEN	; BUF.MAC -- WM's string matchers
 	EXTRN	SRCHBF, SRCHST, SRCMAX		; BUF.MAC -- ... and the pattern
 	EXTRN	SCRLST				; BUF.MAC -- WM 4307 (sweep + page)
+	EXTRN	GOLINE				; BUF.MAC -- WM 2228 (a mark's page loop)
 	EXTRN	GAPBEG, TXTBEG			; BUF.MAC -- EOF last-line test (G)
 	EXTRN	RGET0, RDGET, LNDLT		; BUF.MAC -- WM read-ahead / lines moved
 	EXTRN	LINPSB, DIRFLG			; BUF.MAC / PAGE.MAC -- G/gg placement
@@ -434,12 +435,13 @@ DOTBEL:
 ; '''{a-c}' to that line's first non-blank.  Three of them, which is all
 ; COMMANDS.md asks for.
 ;
-; A mark is a logical offset plus the PGTOPM the window carried when it was
-; set.  It is DROPPED, never shifted, the moment it could no longer point at
-; the same text: MKDROP clears it when an edit happens at or before it, and a
-; jump refuses when the window has paged since.  That is the decided
-; behaviour -- a mark that survived an edit above it would point somewhere
-; plausible and wrong, which is worse than one that admits it is gone.
+; A mark is a 3-byte position in the FILE (FPOS: the records paged out ahead
+; of the window, plus the offset into it), so it does not care which part of
+; the file is resident: a jump pages until the window holds it (MKPAGE).  It
+; is DROPPED, never shifted, the moment it could no longer point at the same
+; text: MKDROP clears it when an edit happens at or before it -- a mark that
+; survived an edit above it would point somewhere plausible and wrong, which
+; is worse than one that admits it is gone.
 ;
 ; DEVIATION from vim, deliberate and in COMMANDS.md: vim shifts a mark to
 ; follow the text.  A consequence worth knowing is that '.' after a 'd''a'
@@ -736,50 +738,97 @@ MKOP:
 	JZ	MKSET
 				; ... otherwise fall into MKJMP
 
-;MKJMP -- go back to the mark.  It refuses, with vim's 'Mark not set', when
-;the mark was never set or when the window has paged away from under it.
+;MKJMP -- go back to the mark, paging to it if the window has left it.
+;'Mark not set', as vim says it, when it was never set or an edit dropped it.
+;Under an OPERATOR a mark the window does not hold is refused with the bell
+;and stays set: the operator measures its span in logical offsets, which are
+;only good inside one window.
 MKJMP:
 	PUSH	H
 	CALL	MKVAD
 	MOV	A,M
 	POP	H
 	ORA	A
-	JZ	MKNSET		; never set
+	JZ	MKNSET		; never set, or dropped
 	MOV	E,M
 	INX	H
-	MOV	D,M		; DE = the offset it holds
+	MOV	D,M
 	INX	H
 	MOV	A,M
-	INX	H
-	MOV	H,M
-	MOV	L,A		; HL = the window signature it was set under
-	PUSH	D
-	XCHG			; DE = that signature
-	LHLD	PGTOPM
-	MOV	A,L
-	CMP	E
-	JNZ	MKSTAL
-	MOV	A,H
-	CMP	D
-	JNZ	MKSTAL
+	XCHG
+	SHLD	MKPOS
+	STA	MKPOS+2		; the file position it holds
+	CALL	MKWIN
+	JC	MKJ_GO		; in the window: any command may go there
+	LDA	PSAVE
+	ORA	A
+	JNZ	MKBAD		; paged out, and an operator wants the span
+MKJ_GO:
 	CALL	GZONE		; the screen's top line, before the cursor
 				;   moves: GPLACE measures the landing against
 				;   it, and one left over from an earlier 'G'
 				;   had it keep a window the line is not in
-	LDA	MKWHAT		; decided BEFORE the GOTO, so no register of
-	CPI	PJL		;   ours has to survive a BUF primitive
-	JZ	MKJ_GO		; ''': GPKEEP is 0, so GPLACE finds the first
+	CALL	MKPAGE		; HL = the mark's offset in the window
+	LDA	MKWHAT
+	CPI	PJL
+	JZ	MKJ_LN		; ''': GPKEEP is 0, so GPLACE finds the first
 	MVI	A,1		;   non-blank
 	STA	GPKEEP		; '`': land on the column it was set at
-MKJ_GO:
-	POP	H		; HL = the offset
+MKJ_LN:
 	CALL	GOTO
 	JMP	GPLACE		; (which sets LNDLT itself)
-MKSTAL:
-	POP	H		; the window paged: the mark is gone for good
-	CALL	MKVAD
-	MVI	M,0
-				; ... and fall into MKNSET
+
+;MKPAGE -- page until MKPOS is in the window: HL = its logical offset there.
+;The loop is WM's own whole-file line move (MVLMAX: GOLINE to the window's
+;edge, SCRLST to page one step), stopped by where the window is instead of by
+;the count.  A step cannot carry the window past the mark: the pager evicts
+;only behind the cursor, and the cursor is on the edge nearer the mark.
+MKPAGE:
+	CALL	MKWIN
+	RC
+	STA	DIRFLG
+	LXI	H,0FFFFH
+	SHLD	CMDCNT
+	CALL	GOLINE
+	CALL	SCRLST
+	CALL	CNTTST
+	JNZ	MKPAGE
+	CALL	MKWIN		; the file ran out: that was its last step
+	RC
+	LXI	H,0FFFFH	; (not expected) past the end: GOTO clamps it
+	RET
+
+;MKWIN -- CY and HL = MKPOS as a logical offset if the window holds it; NC and
+;A = the way to page for it, as DIRFLG has it (0 forward, FFH back), if not.
+MKWIN:
+	LHLD	TXTBEG
+	CALL	FPOS
+	XCHG
+	MOV	B,A		; B:DE = the window's first byte
+	LHLD	MKPOS
+	MOV	A,L
+	SUB	E
+	MOV	L,A
+	MOV	A,H
+	SBB	D
+	MOV	H,A
+	LDA	MKPOS+2
+	SBB	B		; A:HL = the mark, from the window's top
+	JC	MKW_BK		; above it
+	JNZ	MKW_FW		; 64K or more below it
+	PUSH	H
+	CALL	LOGLEN
+	POP	D
+	CALL	CMP16		; DE = the offset vs HL = the window's length
+	XCHG
+	RC			; inside
+MKW_FW:
+	XRA	A
+	RET
+MKW_BK:
+	MVI	A,0FFH
+	ORA	A
+	RET
 
 ;MKNSET -- a jump to a mark that will not answer: vim's E20 on the bottom row
 ;(without the number, and without a bell, as every message here), the cursor
@@ -805,21 +854,18 @@ MKBAD:
 	STA	PSAVE
 	JMP	DOTBEL
 
-;MKSET -- remember where the cursor is, and which window it is in.
+;MKSET -- remember where in the FILE the cursor is.
 MKSET:
 	PUSH	H
-	CALL	CUROFF		; HL = the cursor's logical offset
+	LHLD	GAPBEG
+	CALL	FPOS		; A:HL = the cursor's file position
 	XCHG
-	LHLD	PGTOPM
-	XTHL			; HL = the slot, (SP) = the signature
+	POP	H
 	MOV	M,E
 	INX	H
 	MOV	M,D
 	INX	H
-	POP	D
-	MOV	M,E
-	INX	H
-	MOV	M,D
+	MOV	M,A
 	CALL	MKVAD
 	MVI	M,1		; ... and the mark is live
 	JMP	SETMOV		; 'm' draws nothing and moves nothing
@@ -836,8 +882,10 @@ MKDROP:
 	PUSH	B
 	PUSH	D
 	PUSH	H
-	CALL	CUROFF		; HL = where the edit is (CUROFF clobbers DE)
+	LHLD	GAPBEG
+	CALL	FPOS		; A:HL = where in the file the edit is
 	SHLD	MKEDIT
+	STA	MKEDIT+2
 	LXI	H,MKVAL
 	LXI	D,MKTAB
 	MVI	B,MKMAX
@@ -846,13 +894,19 @@ MKD_LP:
 	ORA	A
 	JZ	MKD_NX		; that mark is not set: nothing to drop
 	PUSH	H
-	LHLD	MKEDIT
-	LDAX	D		; the mark's offset, low
-	SUB	L
+	LXI	H,MKEDIT
+	LDAX	D		; the mark's position less the edit's, a byte
+	SUB	M		;   at a time (neither INX nor LDAX touch CY)
 	INX	D
-	LDAX	D		; ... and high (neither INX nor LDAX touch CY)
+	INX	H
+	LDAX	D
+	SBB	M
+	INX	D
+	INX	H
+	LDAX	D
+	SBB	M		; CY iff the mark is BEFORE the edit
 	DCX	D
-	SBB	H		; CY iff the mark is BEFORE the edit
+	DCX	D
 	POP	H
 	JC	MKD_NX
 	MVI	M,0		; at it or after it: the mark is dropped
@@ -6188,7 +6242,8 @@ GPKEEP: DB	0		; GPLACE: keep the column (a search) not FNBLNK
 MKVAL:	DB	0,0,0		; marks: nonzero once 'm' has set that one.  It
 				;   lives HERE and not in MKTAB because the image
 				;   guarantees a DB, and nothing guarantees a DS
-MKEDIT: DW	0		; MKDROP: where the edit that may drop them is
+MKEDIT: DB	0,0,0		; MKDROP: where the edit that may drop them is
+MKPOS:	DB	0,0,0		; MKJMP: the file position being jumped to
 MKWHAT: DB	0		; which of 'm' / '`' / ''' is running
 MKHOLD: DB	0		; set across YKGO's delete + put back (a yank
 				;   that could not copy): MKDROP must leave the
