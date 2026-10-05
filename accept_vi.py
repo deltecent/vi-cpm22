@@ -5662,6 +5662,72 @@ def pgop_cmds():
             e.close()
 
 
+def qfull_cmds():
+    """A 'dd' or 'yy' whose lines the yank register cannot hold is REFUSED:
+    'Too large to yank' on the bottom row, the editor still running, the file,
+    the cursor, the marks and the modified flag as they were, and the register
+    left empty.  It used to raise WordMaster's fatal 'QBUF FULL' and drop to
+    CP/M with the work lost.  A count that does fit still goes in and comes
+    back out whole, a put of 24 K included."""
+    def L(a, b):
+        return b''.join(line(i) for i in range(a, b + 1))
+
+    big = make(12800)
+    whole = L(1, 5999) + b'00600\r\n' + L(6001, 12800)
+    for op in ('5000dd', '5000yy', '6801dd', '9999yy'):
+        e = Editor(big)
+        try:
+            e.key('6100G'); e.key('ma'); e.key('6000G'); e.key('3l')
+            n = len(e.cap.getvalue())
+            e.key(op)
+            e.s.run_until_quiet(quiet=1.5, timeout=300)
+            check(f'{op}: the editor is still running',
+                  not PROMPT.search(e.cap.getvalue()[n:]))
+            check(f'{op}: says why not ({bottom(e)!r})',
+                  bottom(e) == 'Too large to yank')
+            v = e.screen(); scr = [''.join(r).rstrip() for r in v.screen[:23]]
+            check(f'{op}: the cursor is where it was ({scr[v.row]!r}, {v.col})',
+                  scr[v.row] == txt(6000) and v.col == 3)
+            g = ctrlg(e)
+            check(f'{op}: nothing is changed ({g!r})',
+                  'Modified' not in g and 'line 6000 ' in g)
+            e.key('p'); e.key('u')
+            e.s.run_until_quiet(quiet=1.5, timeout=120)
+            g = ctrlg(e)
+            check(f'{op}: the register is empty and there is nothing to undo '
+                  f'({g!r})', 'Modified' not in g and 'line 6000 ' in g)
+            e.key("'a")
+            e.s.run_until_quiet(quiet=1.5, timeout=120)
+            v = e.screen(); scr = [''.join(r).rstrip() for r in v.screen[:23]]
+            check(f'{op}: a mark inside the lines is still on its line '
+                  f'({scr[v.row]!r})', scr[v.row] == txt(6100))
+            e.key('6000G'); e.key('3l'); e.key('x'); e.key(':w\r'); ex_settled(e)
+            got = saved_bytes(e)
+            check(f'{op}: the file is whole and the next command is its own '
+                  f'({len(got)} bytes)', got == whole)
+        finally:
+            e.close()
+
+    # ---- what does fit still goes in, and comes back out ----
+    for keys, want in (
+            (['6000G', '3000dd', 'P'], big),
+            (['6000G', '3000dd', 'gg', 'P'], L(6000, 8999) + L(1, 5999) + L(9000, 12800))):
+        e = Editor(big)
+        try:
+            n = len(e.cap.getvalue())
+            for k in keys:
+                e.key(k)
+                e.s.run_until_quiet(quiet=1.5, timeout=300)
+            check(f'{" ".join(keys)}: the editor is still running',
+                  not PROMPT.search(e.cap.getvalue()[n:]))
+            e.key(':w\r'); ex_settled(e)
+            got = saved_bytes(e)
+            check(f'{" ".join(keys)}: byte-exact ({len(got)} bytes, '
+                  f'{len(want)} wanted)', got == want)
+        finally:
+            e.close()
+
+
 def disk_full():
     """A fatal disk error leaves the editor the way a quit does: the terminal
     restored, the message on the bottom row rather than over the text at the
@@ -5791,6 +5857,9 @@ def main():
     if not args or 'vim' in args or 'pgop' in args:
         print('\n=== operators over a motion that pages ===', flush=True)
         pgop_cmds()
+    if not args or 'vim' in args or 'qfull' in args:
+        print('\n=== dd / yy past the yank register ===', flush=True)
+        qfull_cmds()
     if not args or 'vim' in args or 'find' in args:
         print('\n=== f F t T ; , vs vim ===', flush=True)
         find_like_vim()

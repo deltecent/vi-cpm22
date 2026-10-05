@@ -74,6 +74,7 @@ MW_NON	EQU	0		; nothing to say
 MW_FIL	EQU	1		; the file just opened
 MW_WRT	EQU	2		; ':w' wrote it
 MW_CTG	EQU	3		; '^G' -- where am I
+MW_BIG	EQU	4		; the yank register cannot hold that
 
 EXMAX	EQU	40		; max chars on the ':' ex command line
 

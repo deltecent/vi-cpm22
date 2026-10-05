@@ -47,10 +47,12 @@
 	EXTRN	CUROFF, LOGLEN, CHARAT, GOTO	; BUF.MAC logical-offset API
 	EXTRN	PGTOPM				; PAGE.MAC -- the window signature
 	EXTRN	MKTAB				; RSV.MAC  -- the marks, above the image
+	EXTRN	MKSAV				; ... and a refused 'dd's copy of them
 	EXTRN	DELFWD, DELPRV, UNDELF			; BUF.MAC deletes
 	EXTRN	CMP16, SUBHD, MEMCPY		; BUF.MAC 16-bit helpers
 	EXTRN	UNDBEG, UNDO, UNDRPL, UNDWHY	; BUF.MAC single-level undo
 	EXTRN	UNDBAD				; ... and 'too big to capture'
+	EXTRN	UNDCLR				; ... nothing to undo
 	EXTRN	UNDHER				; ... where this change starts
 	EXTRN	UNDCUR				; ... the cursor it restores
 	EXTRN	BCONOU				; SCRN.MAC -- console out (miss bell)
@@ -3093,6 +3095,9 @@ OPG_DL:
 	CALL	SUB24
 	JMP	OPG_SV
 OPG_NO:
+	MVI	C,BEL
+	CALL	BCONOU
+OPG_HM:				; the cursor back where the command found it
 	LXI	H,OPSFP
 	CALL	MKLOAD
 	CALL	MKPAGE
@@ -3101,8 +3106,6 @@ OPG_NO:
 	STA	PSAVE
 	INR	A
 	STA	GPKEEP		; the column it had, not the first non-blank
-	MVI	C,BEL
-	CALL	BCONOU
 ;OPMID -- the cursor's line on the middle row and the screen drawn whole.
 OPMID:
 	CALL	ZSAVE
@@ -3140,6 +3143,8 @@ OPLINE:
 	JZ	SETMOV
 	CPI	'y'
 	JZ	VY_YY
+	LXI	H,OPSFP		; where the cursor is, for a count the register
+	CALL	FPSTO		;   cannot hold to come back to (QREFUS)
 	JMP	VD_DD
 
 ;OPCLS -- A(key) -> A = motion class (0 excl, 1 incl, 2 linewise); CY if the key
@@ -3858,6 +3863,9 @@ VDD_LS:
 				;   count over one does nothing at all
 VDD_GO:
 	CALL	QKILL		; these lines become the register, not the last
+	LXI	H,MKTAB		; the marks as they are now: a count the register
+	LXI	D,MKSAV		;   cannot hold is refused part way through, and
+	CALL	COPY12		;   every mark in the lines has closed up by then
 	CALL	LNSTRT		; the WHOLE line is yanked, so start at its start.
 				;   WM deleted BACKWARD to here instead (KEYU, WM
 				;   3333), and a backward delete cannot reach the
@@ -3867,6 +3875,7 @@ VDD_GO:
 	CALL	SETC0
 VDD_FW:
 	CALL	QPUTLN		; WM 3355 / QPUT: the lines, into the register
+	JC	QREFUS		; ... which has no room for them
 	CALL	CNTTST
 	JNZ	VDD_FW
 	CALL	MARKMOD
@@ -3896,8 +3905,8 @@ VDD_UP:
 ; YANK REGISTER  (yy Y p P)  -- the register itself is WM's Q-buffer, a second
 ; gap buffer inside the arena (see BUF.MAC).  It is not a fixed block, so what
 ; can be yanked is bounded by QROOM -- the arena less RESVMEM, with the text
-; paging out from underneath it -- and an overflow raises WM's 'QBUF FULL' with
-; what has already moved safely in the register.
+; paging out from underneath it -- and lines that will not fit are refused
+; whole (QREFUS), where WM raised a fatal 'QBUF FULL'.
 ;
 ; Linewise only: 'dd'/'yy' put whole lines in and 'p'/'P' put whole lines back.
 ; A charwise register (from x / D / dw) would need a type flag beside it and is
@@ -3937,6 +3946,8 @@ VC_Y:
 ; the right text behind but has to hold everything else still while it runs and
 ; repaint the screen whole afterwards.
 VY_YY:
+	LXI	H,OPSFP		; where the cursor is, for a count the register
+	CALL	FPSTO		;   cannot hold to come back to (QREFUS)
 	CALL	CUROFF
 	SHLD	YOFF		; the cursor, which a yank leaves alone
 	CALL	BOL
@@ -3999,6 +4010,9 @@ YKGO:
 				;   took lines from one that took none
 	LHLD	YACT
 	CALL	YCALL		; the lines out of the file, into the register
+	LDA	MSGWHT		; refused -- the register cannot hold them -- and
+	CPI	MW_BIG		;   QREFUS has put back what went and placed the
+	JZ	YK_RF		;   cursor: only the flags are still owed
 	CALL	LOGLEN
 	XCHG
 	LHLD	YWAS
@@ -4042,6 +4056,7 @@ YK_FIN:				; nothing came out, so nothing was put back and
 YK_RST:
 	LHLD	YLDLT
 	SHLD	LNDLT		; nothing moved: the cursor is on the row it was
+YK_RF:
 	LDA	YMODF
 	STA	MODF
 	LDA	YDCHG
@@ -4053,6 +4068,32 @@ YK_RST:
 	CALL	GLSTAL
 	JMP	SETFUL		; the cheap paint cannot carry this
 YCALL:	PCHL
+
+;QREFUS -- the yank register cannot hold the lines a 'dd' or a yank asked for
+; (QPUTLN's CY).  The register is a part of the arena, so that is a limit of
+; the machine and not an error: it used to be WordMaster's 'QBUF FULL', which
+; ends the editor.  What the earlier passes took is put straight back, so the
+; text is what it was; the marks a 'dd' closed up on the way are put back as
+; they were, and its part-capture is dropped so 'u' cannot replay half of a
+; command that did nothing.  (A yank runs under YKGO, which holds both still.)
+; The register is left EMPTY -- the lines it held went when the count began --
+; and the cursor goes back where it started, as OPG_NO puts it.
+QREFUS:
+	CALL	CLRCNT		; the count is spent: nothing below may page on it
+	CALL	QEMPTY
+	CNZ	QGET		; what went, back where it came from
+	CALL	QKILL
+	LDA	MKHOLD
+	ORA	A
+	JNZ	QRF_Y
+	LXI	H,MKSAV
+	LXI	D,MKTAB
+	CALL	COPY12
+	CALL	UNDCLR
+QRF_Y:
+	MVI	A,MW_BIG	; said once the screen is drawn (MSGPST)
+	STA	MSGWHT
+	JMP	OPG_HM
 
 ;YSPAN -- the lines of [OPLO,OPHI) out of the file and into the register, one at
 ; a time as 'dd' does it.  There is no line COUNT to drive the loop with here --
@@ -4083,6 +4124,7 @@ YS_LP:
 	LXI	H,1		; CMDCNT = 1 line, DIRFLG = forward (see above)
 	CALL	SETC0
 	CALL	QPUTLN		; WM 3355 / QPUT: that line, into the register
+	JC	QREFUS		; ... which has no room for it
 	CALL	LOGLEN
 	XCHG			; DE = what is left
 	LHLD	YTGT
@@ -5383,6 +5425,7 @@ SNOTFD: DB	'Pattern not found: ',0
 SNOPAT: DB	'No previous search pattern',0
 SUNDW:	DB	'Cannot undo: change has paged out',0
 SUNDB:	DB	'Too large to undo',0
+SQBIG:	DB	'Too large to yank',0
 SMKNS:	DB	'Mark not set',0
 SNONM:	DB	'[No Name]',0
 SMODM:	DB	'[Modified]',0
@@ -6237,7 +6280,13 @@ MSGPST:
 	JZ	MP_FIL
 	CPI	MW_WRT
 	JZ	MP_WRT
+	CPI	MW_BIG
+	JZ	MP_BIG
 	CALL	MSGCTG
+	JMP	SCURS
+MP_BIG:
+	LXI	H,SQBIG
+	CALL	EXMSG
 	JMP	SCURS
 MP_FIL:
 	CALL	FILMSG

@@ -1,7 +1,7 @@
 # VI — a vi-style editor for CP/M 2.2 on the 8080
 
 `VI.COM` is a screen editor for CP/M 2.2 that behaves like vi. It runs on a
-plain 8080 in a 56 K TPA, it is 17,536 bytes, and it edits files far larger
+plain 8080 in a 56 K TPA, it is 17,664 bytes, and it edits files far larger
 than memory — 100 K files are ordinary — by paging text to and from disk.
 
 vim 9.1 is the reference for behaviour. A command is not finished here until it
@@ -37,7 +37,7 @@ Commands, with counts (`5j`, `3dd`, `20G`):
 | edit | `x` `dd` `D` `C` `J` `~` `u` `.` |
 | find | `f F t T` `; ,` — find a character on the line, inclusive/exclusive |
 | operators | `d c y` over a motion: `dw dd d$ dj dG dfz` `cw C` `yy Y y'a` |
-| yank/put | `yy Y` `p P` `3p` — one register, whole lines, filled only by a yank |
+| yank/put | `yy Y` `p P` `3p` — one register, whole lines, filled by a yank or `dd` |
 | marks | `m{a-c}` `` `{a-c} `` `'{a-c}` `d'a` `` d`a `` |
 | search | `/text` `?text` `n N` — a literal string, not a regex; wraps |
 | substitute | `:s/old/new/` `:s//g` `:%s//g` `:2,40s//g` — literal, one undo |

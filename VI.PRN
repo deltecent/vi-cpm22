@@ -107,6 +107,7 @@
   0001                   C      MW_FIL	EQU	1		; the file just opened
   0002                   C      MW_WRT	EQU	2		; ':w' wrote it
   0003                   C      MW_CTG	EQU	3		; '^G' -- where am I
+  0004                   C      MW_BIG	EQU	4		; the yank register cannot hold that
                          C      
   0028                   C      EXMAX	EQU	40		; max chars on the ':' ex command line
                          C      
@@ -115,10 +116,10 @@
                          C      ; on behalf of another module.  They live here, not in the module that uses
                          C      ; the storage, so the module and RSV.MAC cannot disagree about a size.
                          C      ;------------------------------------------------------------
-  0080                   C      DOTMAX	EQU	128		; keys one recorded change may hold (see '.')
 	MACRO-80 3.44	09-Dec-81	PAGE	1-2
 
 
+  0080                   C      DOTMAX	EQU	128		; keys one recorded change may hold (see '.')
   0020                   C      KBRSIZ	EQU	32		; KEY.MAC's type-ahead ring (a power of two)
   0003                   C      MKMAX	EQU	3		; marks 'a'-'c' -- three is enough (COMMANDS.md)
   0004                   C      MKSIZ	EQU	4		; each: a 3-byte file position (the 4th is spare)
@@ -174,10 +175,10 @@
   0012'   21 0000*              	LXI	H,MKSHFT		; the marks follow every edit
   0015'   22 0000*              	SHLD	EDTHK
   0018'   CD 0000*              	CALL	FOPEN			; open the source FCB staged at 005CH
-  001B'   CD 0000*              	CALL	ARGGO			; '+{n}': the line to start on
 	MACRO-80 3.44	09-Dec-81	PAGE	1-3
 
 
+  001B'   CD 0000*              	CALL	ARGGO			; '+{n}': the line to start on
   001E'   3E 00                 	MVI	A,R_FULL		; nothing is on the screen yet, and
   0020'   32 0000*              	STA	RINTENT			;   ARGGO dispatched real keys that
                                 					;   may have lowered the intent
@@ -224,15 +225,15 @@ Symbols:
 0001 	KT_ACT          0002 	KT_CHAR         0000 	KT_NONE         
 000A 	LF              0003 	MKMAX           0013*	MKSHFT          
 0004 	MKSIZ           0029'	MLOOP           0042*	MODEMS          
-004A'	MQUIT           0045*	MSGPST          0003 	MW_CTG          
-0001 	MW_FIL          0000 	MW_NON          0002 	MW_WRT          
-0000 	NUL             0038*	QUITF           0032*	RINTENT         
-0003 	R_DLIN          0000 	R_FULL          0004 	R_ICH           
-0005 	R_ILIN          0006 	R_JOIN          0002 	R_LINE          
-0001 	R_MOVE          004B*	SCDONE          003F*	SCDRAW          
-000A*	SCINIT          002D*	SCPRE           0000'	START           
-0009 	TAB             0008 	TABWID          0001*	VISTK           
-0000 	WBOOT           
+004A'	MQUIT           0045*	MSGPST          0004 	MW_BIG          
+0003 	MW_CTG          0001 	MW_FIL          0000 	MW_NON          
+0002 	MW_WRT          0000 	NUL             0038*	QUITF           
+0032*	RINTENT         0003 	R_DLIN          0000 	R_FULL          
+0004 	R_ICH           0005 	R_ILIN          0006 	R_JOIN          
+0002 	R_LINE          0001 	R_MOVE          004B*	SCDONE          
+003F*	SCDRAW          000A*	SCINIT          002D*	SCPRE           
+0000'	START           0009 	TAB             0008 	TABWID          
+0001*	VISTK           0000 	WBOOT           
 
 
 

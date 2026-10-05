@@ -115,10 +115,11 @@
   0001                   C      MW_FIL	EQU	1		; the file just opened
   0002                   C      MW_WRT	EQU	2		; ':w' wrote it
   0003                   C      MW_CTG	EQU	3		; '^G' -- where am I
-                         C      
+  0004                   C      MW_BIG	EQU	4		; the yank register cannot hold that
 	MACRO-80 3.44	09-Dec-81	PAGE	1-2
 
 
+                         C      
   0028                   C      EXMAX	EQU	40		; max chars on the ':' ex command line
                          C      
                          C      ;------------------------------------------------------------
@@ -174,10 +175,10 @@
                                 	;--- ESC: poll for sequence continuation ---
   000F'   CD 00F3'              	CALL	GK_POLL		; A = next byte, 0 = timeout
   0012'   B7                    	ORA	A
-  0013'   CA 0023'              	JZ	GK_ESC_LN	; timeout: standalone ESC
 	MACRO-80 3.44	09-Dec-81	PAGE	1-3
 
 
+  0013'   CA 0023'              	JZ	GK_ESC_LN	; timeout: standalone ESC
   0016'   FE 5B                 	CPI	'['
   0018'   CA 0028'              	JZ	GK_CSI
   001B'   FE 4F                 	CPI	'O'
@@ -233,10 +234,10 @@
   0081'   CA 00C8'              	JZ	GKLNEN	      ; ESC[4~ = End
   0084'   FE 05                 	CPI	5
   0086'   CA 00D7'              	JZ	GK_PGUP		; ESC[5~ = PgUp
-  0089'   FE 06                 	CPI	6
 	MACRO-80 3.44	09-Dec-81	PAGE	1-4
 
 
+  0089'   FE 06                 	CPI	6
   008B'   CA 00DC'              	JZ	GK_PGDN		; ESC[6~ = PgDn
   008E'   C3 00EE'              	JMP	GK_NONE
                                 
@@ -292,10 +293,10 @@
   00E1'                         GK_PEND:
   00E1'   4F                    	MOV	C,A
   00E2'   3E 00                 	MVI	A,0
-  00E4'   32 0192'              	STA	KPEND
 	MACRO-80 3.44	09-Dec-81	PAGE	1-5
 
 
+  00E4'   32 0192'              	STA	KPEND
   00E7'   06 02                 	MVI	B,KT_CHAR
   00E9'   C9                    	RET
                                 
@@ -351,10 +352,10 @@
   0115'   C3 0000*              	JMP	BCONIN		; ring empty -> block for the next byte
                                 
                                 ; KBRDY - pump the ring, then A=0FFH if it holds a byte, else A=00H.  Peeks
-                                ; only (takes nothing), so the byte stays for the next KBGETB/GK_POLL.  This is
 	MACRO-80 3.44	09-Dec-81	PAGE	1-6
 
 
+                                ; only (takes nothing), so the byte stays for the next KBGETB/GK_POLL.  This is
                                 ; RPOLL: the paint loop calls it to yield to type-ahead.  Clobbers HL,DE,BC.
   0118'                         KBRDY:
   0118'   CD 0136'              	CALL	KBPUMP
@@ -410,10 +411,10 @@
   0155'   77                    	MOV	M,A		; store
   0156'   3A 0194'              	LDA	KBTAIL
   0159'   3C                    	INR	A
-  015A'   E6 1F                 	ANI	KBRSIZ-1	; wrap (mask = size-1)
 	MACRO-80 3.44	09-Dec-81	PAGE	1-7
 
 
+  015A'   E6 1F                 	ANI	KBRSIZ-1	; wrap (mask = size-1)
   015C'   32 0194'              	STA	KBTAIL
   015F'   C9                    	RET
                                 
@@ -493,12 +494,12 @@ Symbols:
 0191'	KPARAM          0192'	KPEND           0136'	KP_LP           
 0129'	KR_NO           017C'	KTK_EMP         0001 	KT_ACT          
 0002 	KT_CHAR         0000 	KT_NONE         000A 	LF              
-0003 	MKMAX           0004 	MKSIZ           0003 	MW_CTG          
-0001 	MW_FIL          0000 	MW_NON          0002 	MW_WRT          
-0000 	NUL             0003 	R_DLIN          0000 	R_FULL          
-0004 	R_ICH           0005 	R_ILIN          0006 	R_JOIN          
-0002 	R_LINE          0001 	R_MOVE          0009 	TAB             
-0008 	TABWID          0000 	WBOOT           
+0003 	MKMAX           0004 	MKSIZ           0004 	MW_BIG          
+0003 	MW_CTG          0001 	MW_FIL          0000 	MW_NON          
+0002 	MW_WRT          0000 	NUL             0003 	R_DLIN          
+0000 	R_FULL          0004 	R_ICH           0005 	R_ILIN          
+0006 	R_JOIN          0002 	R_LINE          0001 	R_MOVE          
+0009 	TAB             0008 	TABWID          0000 	WBOOT           
 
 
 

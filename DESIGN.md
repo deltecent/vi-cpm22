@@ -161,8 +161,8 @@ move would break:
               pointer row, text + gap, Q-buffer (the yank register), undo region
     BUFEND  = BDOS base - 700H - 1
 
-In this build: the image is 17474 bytes, the `.COM` file 17536 bytes (137
-records), the reserve block 791 bytes (`4542H`–`4858H`), and the stack 128
+In this build: the image is 17629 bytes, the `.COM` file 17664 bytes (138
+records), the reserve block 803 bytes (`45DDH`–`48FFH`), and the stack 128
 bytes. **The size that matters is a 4 K BLOCK BOUNDARY**, because that is what
 the 8 MB disk allocates in: 16384 bytes occupy four blocks and one byte more
 occupies five. This build is past that line by design (`f F t T ; ,` would not
@@ -259,6 +259,13 @@ about 27 K. WordMaster has no copy without delete, so the copy is appended
   splice a stale register into the file.
 - **`dd` deletes forward only**, from the start of the line, because `QCOPY`
   always reads from `GAPEND`. A backward delete cannot reach the register.
+- **Lines the register cannot hold are refused, not fatal.** WordMaster's
+  `QROOM` raises `QBUF FULL` from inside `QCOPY`, and an error ends the editor.
+  `QPUTLN` asks `QFIT` first, for the whole pass and before a byte moves, and
+  returns carry. `QREFUS` then puts back what earlier passes took, restores
+  the marks from `MKSAV` (a `dd` has closed them up by then), drops the
+  part-captured undo, empties the register and says "Too large to yank". A
+  yank reaches it under `YKGO`, which already holds the marks and undo still.
 
 **`.` is keystroke replay.** `DOTPRE` and `DOTPOST` record the keys of the command
 being typed. When that command ends and changed the text (`DOTCHG`, set by

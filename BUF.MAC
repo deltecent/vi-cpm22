@@ -80,6 +80,7 @@ RESVMEM EQU	0D80H		; WM 25: the arena QROOM keeps free past
 	PUBLIC	UNDBEG, UNDO, UNDRPL
 	PUBLIC	UNDHER			 ; ... where the next change starts
 	PUBLIC	UNDINS			 ; ... a block insert, for 'u'
+	PUBLIC	UNDCLR
 	PUBLIC	UNDN, UNDST, UNDBAD	 ; ... and its state, for a probe
 	PUBLIC	UNDWHY			 ; why UNDO refused (CMD.MAC's message)
 	PUBLIC	UNDNEW			 ; ... and the change it captured
@@ -307,9 +308,9 @@ CKLEN:				; WM 1934
 ; The register is NOT a fixed block -- it is a region of the arena, so its
 ; ceiling is QROOM's: everything but RESVMEM, with the text free to page out
 ; from underneath it.  Overflow raises 'QBUF FULL' from INSIDE QCOPY's chunk
-; loop, which leaves what has already moved in the register and gone from the
-; text, so text + register is conserved and a put gives back exactly what was
-; taken.
+; loop, and that is fatal -- so the line yank (QPUTLN) asks QFIT first and
+; returns carry instead, with what earlier passes moved still in the register
+; and gone from the text for its caller to put back.
 ;============================================================
 
 ;QROOM -- WM 1594: 'QBUF FULL' unless the arena still holds RESVMEM beyond the
@@ -429,6 +430,9 @@ QKILL:				; WM 1529
 ;slides the hole above the Q-buffer back out of the way, and PAGESTP advances
 ;the window a step -- so a count runs past the resident window, as dd's does.
 ;Ends on PAGESTP exactly as DELTO does, so the caller's CNTTST loop is the same.
+;APPENDED: NC when the pass went; CY, with nothing of it taken, when the
+;register has no room for it (QFIT).  What earlier passes took is still in the
+;register and gone from the text, for the caller to put back.
 QPUTLN:				; WM 1552
 	LXI	H,QEND
 	CALL	MKGAP
@@ -437,11 +441,49 @@ QPUTLN:				; WM 1552
 	LHLD	GAPEND
 	XCHG
 	CALL	SPANBC
+	CALL	QFIT		; (appended) will the register hold them?
+	JC	QPL_NO
 	CALL	UNDDLQ		; (appended) those lines, for 'u', before they go
 	LXI	H,QEND
 	CALL	QCOPY
 	CALL	HOLEQ
-	JMP	PAGESTP
+	CALL	PAGESTP
+	ORA	A		; (appended) NC: they went
+	RET
+QPL_NO:				; (appended) CY: nothing of this pass was taken
+	CALL	HOLEQ
+	STC
+	RET
+
+;QFIT -- APPENDED (NOT WordMaster): CY if the register cannot take BC more
+;bytes and still leave QROOM its reserve.  Keeps BC.  QROOM asks the same
+;thing a chunk at a time from inside QCOPY and its answer is fatal; asked here
+;first, for the whole pass and before a byte has moved, the answer is one the
+;caller can refuse on -- and with every pass asked, QROOM's is never reached
+;from a line yank.
+QFIT:
+	PUSH	B
+	LXI	H,QBEG
+	CALL	PRSPAN		; BC = what the register holds
+	LHLD	BUFBEG
+	XCHG
+	LHLD	BUFEND
+	CALL	SUBHD		; HL = the arena
+	CALL	NEGBC
+	DAD	B		; ... less the register
+	POP	B
+	MOV	A,L
+	SUB	C
+	MOV	L,A
+	MOV	A,H
+	SBB	B
+	MOV	H,A		; ... less these lines
+	RC			; not even that much
+	MOV	A,L
+	SUI	(RESVMEM+1) AND 0FFH
+	MOV	A,H
+	SBI	(RESVMEM+1) SHR 8	; CY unless more than the reserve is left
+	RET
 
 ;============================================================
 ; PROBE / DELETE -- WM.ASM 991-1001, 1790-1829

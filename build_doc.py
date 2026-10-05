@@ -147,8 +147,10 @@ YANK AND PUT ---------------------------------------------------------------
     p    P          put the yanked lines after / before this line
     3p              put three copies
 
-There is one register and it holds whole lines.  A delete does not fill
-it -- only a yank does.
+There is one register and it holds whole lines.  A yank fills it and so
+does dd; no other delete does.  It holds about 27 K: a dd or yy of more
+than that is refused with "Too large to yank" and changes nothing.  To
+delete more, use dG, d{n}G or d'a, which keep nothing.
 
 
 MARKS ----------------------------------------------------------------------
