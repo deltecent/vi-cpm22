@@ -11,7 +11,7 @@
 ; Every routine cites its WM.ASM source line, so it still diffs against WM.ASM.
 ;
 ; WHAT IS HERE: the gap buffer and the WordMaster routines that walk it --
-; insert (PUTGAP/INSBLK/INSSTR), delete (DELTO/DELLN), cursor move (PUTCUR and
+; insert (PUTGAP/INSBLK/INSSTR), delete (DELTO), cursor move (PUTCUR and
 ; the gap slides), the pointer-row mechanics (MOVGAP/NEXTPR/BUFSUM/PRSPAN), the
 ; Q-buffer (the vi yank register), the line moves (MVLMAX/GOLINE/SCRLST), the
 ; string matchers (MATCHF/MATCHB) and the screen reads (LINPOSB/RGET).  The
@@ -104,7 +104,7 @@ RESVMEM EQU	0D80H		; WM 25: the arena QROOM keeps free past
 	PUBLIC	MVLMAX, MVLIND, SETBWD, CLRCNT
 	PUBLIC	GOLINE			; WM 2228 -- CMD.MAC pages to a mark with it
 	PUBLIC	SCRLST			; WM 4307 -- the search sweep's page step
-	PUBLIC	DELLN, SETC0		; WM line kill (dd) + its count set
+	PUBLIC	SETC0			; WM 1054 -- the line kill's count set
 	EXTRN	CMDCNT			; CMD.MAC  -- WM CMDCNT
 	EXTRN	AUXCNT, NEWFIL, DIRFLG	; PAGE.MAC -- WM L271E / NEWFIL / DIRFLG
 	EXTRN	MOREIN, POLLBRK		; PAGE.MAC -- WM 4743 / WM 6199
@@ -424,7 +424,7 @@ QKILL:				; WM 1529
 
 ;QPUTLN -- WM 1552: take the line at the cursor into the Q-buffer, DELETING it.
 ;This is WM's QPUT loop body without its own CNTTST loop, because the vi layer
-;runs the count (VD_DD does exactly that around DELLN).  GOLINE finds where the
+;runs the count (VD_DD does exactly that).               GOLINE finds where the
 ;line ends, SPANBC measures from the gap to there, QCOPY takes that span, HOLEQ
 ;slides the hole above the Q-buffer back out of the way, and PAGESTP advances
 ;the window a step -- so a count runs past the resident window, as dd's does.
@@ -523,11 +523,8 @@ MVLLOOP:			; WM 1020
 	RET
 
 
-;DELLN -- WM 1045: delete CMDCNT lines from the cursor (GOLINE + DELTO; the S
-;flag GOLINE leaves from DIRFLG picks DELTO's direction).
-DELLN:				; WM 1045
-	CALL	GOLINE
-	JMP	DELTO
+;(WM 1045, the line kill -- GOLINE + DELTO -- is not carried: 'dd' takes its
+;lines through QPUTLN, and nothing called it.)
 
 ;SETC0 -- WM 1054: CMDCNT = HL, forward (DIRFLG = 0).
 SETC0:				; WM 1054

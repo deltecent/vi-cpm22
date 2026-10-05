@@ -64,7 +64,7 @@
 	EXTRN	AUXCNT				; PAGE.MAC -- WM L271E (follows NEWFIL)
 	EXTRN	MVLMAX, MVLIND, SETBWD		; BUF.MAC -- WM line move (pages)
 	EXTRN	CLRCNT				; BUF.MAC -- WM count/direction reset
-	EXTRN	DELLN, SETC0			; BUF.MAC -- WM line kill (dd)
+	EXTRN	SETC0				; BUF.MAC -- WM count set, forward
 	EXTRN	QPUTLN, QGET, QKILL		; BUF.MAC -- the yank register
 	EXTRN	QCPYN, BUFSUM			; ... the copy that does not delete
 	EXTRN	INRDY				; PAGE.MAC -- is any of the file unread
@@ -806,14 +806,8 @@ MKWIN:
 	XCHG
 	MOV	B,A		; B:DE = the window's first byte
 	LHLD	MKPOS
-	MOV	A,L
-	SUB	E
-	MOV	L,A
-	MOV	A,H
-	SBB	D
-	MOV	H,A
 	LDA	MKPOS+2
-	SBB	B		; A:HL = the mark, from the window's top
+	CALL	SUB24		; A:HL = the mark, from the window's top
 	JC	MKW_BK		; above it
 	JNZ	MKW_FW		; 64K or more below it
 	PUSH	H
@@ -857,8 +851,7 @@ MKBAD:
 ;MKSET -- remember where in the FILE the cursor is.
 MKSET:
 	PUSH	H
-	LHLD	GAPBEG
-	CALL	FPOS		; A:HL = the cursor's file position
+	CALL	CURFP		; A:HL = the cursor's file position
 	XCHG
 	POP	H
 	MOV	M,E
@@ -896,17 +889,9 @@ MKSHFT:
 	POP	D
 	CALL	SUBHD
 	XCHG			; DE = how far behind the cursor it is
-	LHLD	GAPBEG
-	CALL	FPOS		; A:HL = the cursor's file position
-	MOV	B,A
-	MOV	A,L
-	SUB	E
-	MOV	L,A
-	MOV	A,H
-	SBB	D
-	MOV	H,A
-	MOV	A,B
-	SBI	0
+	CALL	CURFP		; A:HL = the cursor's file position
+	MVI	B,0
+	CALL	SUB24
 	SHLD	MKEDIT
 	STA	MKEDIT+2	; where in the file the edit is
 	LXI	H,MKVAL
@@ -2613,6 +2598,23 @@ VLG_GG:
 	CALL	GETCNT		; HL = target line (no count: 1)
 	JMP	VG_LN
 
+;SUB24 -- A:HL less B:DE -> A:HL, a file position from a file position.  CY
+; if it went below zero, Z if the top byte came out 0.  Uses C.
+SUB24:
+	MOV	C,A
+	MOV	A,L
+	SUB	E
+	MOV	L,A
+	MOV	A,H
+	SBB	D
+	MOV	H,A
+	MOV	A,C
+	SBB	B
+	RET
+
+;CURFP -- A:HL = the cursor's file position.  NOTE: falls into FPOS.
+CURFP:
+	LHLD	GAPBEG
 ;FPOS -- HL = a pointer into the text before the gap -> A:HL = its file
 ; position (OUTPOS * 128 + HL - TXTBEG).  Keeps BC, DE.
 FPOS:
@@ -2677,22 +2679,16 @@ GZONE:
 ; rule above), ask for a full repaint, and land on the first non-blank.
 GPLACE:
 	CALL	ZSAVE
-	LHLD	GAPBEG
-	CALL	FPOS
+	CALL	CURFP
 	XCHG
-	MOV	C,A		; C:DE = the target's position
 	LHLD	ZTOP
-	MOV	A,E
-	SUB	L
-	MOV	L,A
-	MOV	A,D
-	SBB	H
-	MOV	H,A
-	SHLD	ZDIF
+	XCHG
+	MOV	C,A		; C:HL = the target's position
 	LDA	ZTOP+2
-	MOV	B,A
+	MOV	B,A		; B:DE = the top's
 	MOV	A,C
-	SBB	B		; A:ZDIF = target - top; CY iff above the top
+	CALL	SUB24
+	SHLD	ZDIF		; A:ZDIF = target - top; CY iff above the top
 	JC	GP_UP
 	ORA	A
 	JNZ	GP_MID		; 64K bytes or more below
