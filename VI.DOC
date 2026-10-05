@@ -10,7 +10,8 @@ the line into the FCB, so VI never sees it.  The screen size is detected
 from the terminal; a VT100 (or anything that answers ESC [ 6 n) is assumed.
 
 The file may be far larger than memory: text is paged to and from disk as
-you move.  100K files are normal.  A big jump takes a few seconds.
+you move.  100K files are normal, but a jump from one end of one to the
+other takes most of a minute: see LARGE FILES below.
 
 
 MODES ----------------------------------------------------------------------
@@ -176,6 +177,115 @@ as in real vi, not a whole history.  A very large change may not fit; u
 then says so rather than doing half of it.  A :w clears the undo.
 
 
+LARGE FILES ----------------------------------------------------------------
+
+A file bigger than memory is edited through a window: part of it is in
+memory and the rest is paged to and from the disk as you move.  A command
+that stays inside the window costs what it costs in a small file.  One
+that has to page costs disk time, some big ones are refused, and some
+cannot be undone.  This section says which, and what to use instead.
+
+The times are for a 100 K file of 12800 short lines, on a 2 MHz 8080 and a
+9600-baud terminal.  They leave out the drive's head seeks and the wait
+for a sector to come round, so on a real drive every time over a second
+or two is LONGER than shown.  Nothing is drawn while a long command runs.
+The editor has not hung; the cursor comes back when it is done.
+
+The limits:
+
+    Memory      The text in memory, the yank register and the undo share
+                27265 bytes (about 27 K, with a 56 K CP/M).  About 2 K of
+                the file is read when it is opened, and up to 24 K is in
+                memory at once.
+    Register    One, of whole lines, about 23 K.  What it holds is taken
+                from the text's share, so after a big yank less of the
+                file is in memory and every move pages sooner.
+    Undo        One change, of up to 1024 bytes.
+    CPU, disk   The file moves through the window 128 bytes at a time, at
+                about 2 K a second.  Text that has left the window is in
+                two work files on the file's own drive, NAME.$$$ and
+                VIBACKUP.$$$.
+    Terminal    960 characters a second: a full repaint is a second and
+                a half.
+
+Quick, wherever you are in the file:
+
+    ^F  ^B                    under a second
+    200j                       1.6 s
+    x                          0.1 s
+    dd                         0.5 s       u after it      0.4 s
+    60yy                       0.5 s
+    ^G                         0.6 s
+    6100G from line 6000       1.0 s
+
+A jump costs the distance moved, not the size of the line number.
+
+Slow, because the file has to go through the window:
+
+    G from line 1               46 s       gg from the last line   41 s
+    6000G from line 1           22 s       100G from line 12000    38 s
+    /text, 94 K further on      46 s       ?text, 46 K back        15 s
+    /text, wrapping round       65 s       'a, 46 K back           16 s
+    :w                          51 s   all of it, however little changed
+    :e! at line 6000            21 s   3.1 s at line 1
+    :%s/0/1/                   266 s   every line; over 100 lines, 2.6 s
+
+Going BACK costs more once something has been changed: gg from the last
+line is 55 s after an x there, because the text passed over
+is then written to VIBACKUP.$$$.
+
+Big deletes and yanks, at line 6000:
+
+    500dd      4 K   4.0 s          500yy      4 K   4.0 s
+    2000dd    16 K    11 s
+    2800dd    22 K    13 s          2800yy    22 K    38 s
+    d6500G     4 K   3.1 s
+    d9000G    24 K    18 s
+    dG        54 K    50 s
+    dgg       48 K    22 s
+
+What is refused:
+
+  * A dd or yy of more than the register holds says "Too large to yank"
+    and changes nothing -- but 3000dd (24 K) takes 34 s to say so,
+    because the lines are taken and then put back.
+  * A yank, or a delete of part of a line, between two places that are
+    not both in memory rings the bell and does nothing.  yG at line 6000
+    takes 43 s to find that out.
+  * u after a change of more than 1024 bytes says "Too large to undo".
+    100dd of 8-byte lines can be undone; 500dd and d6500G (4 K each)
+    cannot.
+  * u after the window has moved off the change (dd, then G) says "Cannot
+    undo: change has paged out".
+  * A :w clears the undo.
+
+What to do instead:
+
+  * To DELETE a big range use dG, d{n}G or d'a.  They keep nothing, so
+    no size is refused -- and nothing but :e! brings the lines back.
+  * To MOVE or COPY a big block, write it to a file and read it back in
+    (see YANK AND PUT).  :6000,9000w T.TXT is 31 s for 24 K and
+    :r T.TXT is 26 s.  That is any size, with the block still on the
+    disk afterwards.  To move a block that fits the register, 2800dd
+    and P are quicker (13 s and 9.3 s); to copy one, 2800yy is not.
+  * Type :w before a change that cannot be undone.  The file on the disk
+    is not touched until the next :w, so :e! then throws the change away,
+    and each :w leaves the version before it in NAME.BAK.
+  * A :w is 51 s even with nothing changed.  :x and ZZ write only
+    a changed text, so use them to leave.
+  * Work from the top of the file down, and go by line number when you
+    know it: ^G says where you are, and a line close by costs a second.
+  * Split a file you need only part of.  :1,6000w A.TXT and
+    :6001,12800w B.TXT make two that each page half as far.
+
+Disk space.  The work files need room on the file's own drive.  On the
+100 K file NAME.$$$ reached 84 K and VIBACKUP.$$$ 80 K, besides the file
+and its .BAK, so allow twice the file's size free before you start.  If the
+drive fills while the editor is paging or writing, it stops with DISK
+FULL and the changes since the last :w are lost; the file on the disk
+is as that :w left it.
+
+
 NOT IN THIS VI -------------------------------------------------------------
 
     f F t T ; ,     character search on a line
@@ -189,4 +299,4 @@ NOT IN THIS VI -------------------------------------------------------------
 
 A count before an insert (3ix) is ignored: it inserts once.  So is a count
 on r and ~.
-
+

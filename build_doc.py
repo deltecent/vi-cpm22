@@ -31,8 +31,17 @@ shipping inside CPM22-8MB-56K-VI.DSK is still the VI.DOC in the repo.
 The text itself is checked by hand against COMMANDS.md, and its command list
 comes from CMDTAB / ACTTAB / EXTAB in CMD.MAC rather than from memory.  When
 a command is added or removed, this file is part of the change.
+
+The NUMBERS are not typed in at all.  Every time in the LARGE FILES section
+is read out of TIMECOST.md, which timecost.py measures on the built editor,
+and the memory figures are worked out from VI.SYM and BUF.MAC's equates (the
+arena starts where the image ends, so they move whenever the image grows).
+A figure this file cannot find is a refusal to write, like a line too wide;
+and because a new build or a new measurement changes what this would write,
+`--check` then says VI.DOC is stale until it is rebuilt.
 """
 import os
+import re
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -57,7 +66,8 @@ the line into the FCB, so VI never sees it.  The screen size is detected
 from the terminal; a VT100 (or anything that answers ESC [ 6 n) is assumed.
 
 The file may be far larger than memory: text is paged to and from disk as
-you move.  100K files are normal.  A big jump takes a few seconds.
+you move.  100K files are normal, but a jump from one end of one to the
+other takes most of a minute: see LARGE FILES below.
 
 
 MODES ----------------------------------------------------------------------
@@ -148,7 +158,7 @@ YANK AND PUT ---------------------------------------------------------------
     3p              put three copies
 
 There is one register and it holds whole lines.  A yank fills it and so
-does dd; no other delete does.  It holds about 23 K: a dd or yy of more
+does dd; no other delete does.  It holds about @REGK@ K: a dd or yy of more
 than that is refused with "Too large to yank" and changes nothing.  To
 delete more, use dG, d{n}G or d'a, which keep nothing.  To MOVE more,
 write the lines to a file and read them back in where they belong:
@@ -223,6 +233,9 @@ as in real vi, not a whole history.  A very large change may not fit; u
 then says so rather than doing half of it.  A :w clears the undo.
 
 
+@LARGE@
+
+
 NOT IN THIS VI -------------------------------------------------------------
 
     f F t T ; ,     character search on a line
@@ -239,13 +252,231 @@ on r and ~.
 """
 
 
+TIMES = os.path.join(HERE, "TIMECOST.md")
+
+
+def measured():
+    """TIMECOST.md as {row name: cells}, the backquotes taken off the name."""
+    try:
+        with open(TIMES) as f:
+            text = f.read()
+    except OSError as e:
+        raise ValueError(f"TIMECOST.md cannot be read ({e}) -- "
+                         "run `python3 timecost.py --write`")
+    rows = {}
+    for l in text.split("\n"):
+        cells = [c.strip() for c in l.strip().strip("|").split("|")]
+        if l.startswith("|") and len(cells) >= 2:
+            rows[cells[0].replace("`", "")] = cells[1:]
+    return rows
+
+
+def equate(name):
+    """An `EQU` of BUF.MAC's, as a number."""
+    with open(os.path.join(HERE, "BUF.MAC"), newline="") as f:
+        m = re.search(r"^%s\s+EQU\s+([0-9A-F]+)H" % name, f.read(), re.M)
+    if not m:
+        raise ValueError(f"BUF.MAC has no `{name} EQU ...H`")
+    return int(m.group(1), 16)
+
+
+def symbol(name):
+    toks = open(os.path.join(HERE, "VI.SYM")).read().split()
+    for addr, sym in zip(toks[0::2], toks[1::2]):
+        if sym == name:
+            return int(addr, 16)
+    raise ValueError(f"VI.SYM has no {name}")
+
+
+def figures():
+    """Every number the document quotes: (lookup of a time, dict of sizes)."""
+    rows = measured()
+    missing = []
+
+    def cell(name, i=0):
+        if name not in rows:
+            missing.append(name)
+            return "0"
+        return rows[name][i]
+
+    def t(name):
+        """A measured time as the text reads it: '46 s', '4.0 s'."""
+        s = float(cell(name))
+        return "%d s" % round(s) if s >= 10 else "%.1f s" % s
+
+    def k(n):
+        return "%d K" % round(n / 1024)
+
+    bdos = int(cell("BDOS entry, the word at 0006H").rstrip("H"), 16)
+    arena = bdos - 1 - symbol("RSVTOP")
+    held = [int(n) for n in re.findall(
+        r"\d+", cell("text in memory after 6000G G 6000G gg G"))] or [0]
+    sizes = {
+        "arena": arena,
+        "ARENAK": k(arena),
+        # QFIT refuses unless MORE than RESVMEM is left: BUF.MAC
+        "REGK": k(arena - equate("RESVMEM") - 1),
+        "undo": equate("UNDCAP"),
+        "WINK": k(max(held)),
+        "OPENK": k(int(cell("text in memory when the file is opened")
+                       .split()[0])),
+        "OUTK": k(int(cell("TEST.$$$ after G from the top, nothing changed")
+                      .split()[0])),
+        "BAKK": k(int(cell("VIBACKUP.$$$ after G x gg").split()[0])),
+        # the whole 100 K file, end to end
+        "RATEK": k(102400 / (float(cell("G from the top")) or 1)),
+    }
+    # the messages the section names must be the ones the editor gave
+    for name, said in (("3000dd (24 K)", "Too large to yank"),
+                       ("u after 500dd", "Too large to undo"),
+                       ("u after d6500G", "Too large to undo"),
+                       ("u after dd G", "Cannot undo: change has paged out")):
+        if cell(name, 2) != said:
+            missing.append(f"{name} (which no longer says {said!r})")
+    for name in ("u after 100dd", "2800dd (22 K)", "2800yy (22 K)",
+                 "yG (54 K)"):
+        if cell(name, 2):
+            missing.append(f"{name} (which now says {cell(name, 2)!r})")
+    return t, sizes, missing
+
+
+def large_files():
+    """The LARGE FILES section, every figure in it measured or derived."""
+    t, z, missing = figures()
+
+    def two(a, ta, b=None, tb=None):
+        l = "    %-26s%6s" % (a, t(ta))
+        return l + ("       %-22s%6s" % (b, t(tb)) if b else "")
+
+    def cut(what, size, name, note=""):
+        return "    %-9s%5s%8s%s" % (what, size, t(name), note)
+
+    text = f"""
+LARGE FILES ----------------------------------------------------------------
+
+A file bigger than memory is edited through a window: part of it is in
+memory and the rest is paged to and from the disk as you move.  A command
+that stays inside the window costs what it costs in a small file.  One
+that has to page costs disk time, some big ones are refused, and some
+cannot be undone.  This section says which, and what to use instead.
+
+The times are for a 100 K file of 12800 short lines, on a 2 MHz 8080 and a
+9600-baud terminal.  They leave out the drive's head seeks and the wait
+for a sector to come round, so on a real drive every time over a second
+or two is LONGER than shown.  Nothing is drawn while a long command runs.
+The editor has not hung; the cursor comes back when it is done.
+
+The limits:
+
+    Memory      The text in memory, the yank register and the undo share
+                {z['arena']} bytes (about {z['ARENAK']}, with a 56 K CP/M).  About {z['OPENK']} of
+                the file is read when it is opened, and up to {z['WINK']} is in
+                memory at once.
+    Register    One, of whole lines, about {z['REGK']}.  What it holds is taken
+                from the text's share, so after a big yank less of the
+                file is in memory and every move pages sooner.
+    Undo        One change, of up to {z['undo']} bytes.
+    CPU, disk   The file moves through the window 128 bytes at a time, at
+                about {z['RATEK']} a second.  Text that has left the window is in
+                two work files on the file's own drive, NAME.$$$ and
+                VIBACKUP.$$$.
+    Terminal    960 characters a second: a full repaint is a second and
+                a half.
+
+Quick, wherever you are in the file:
+
+    ^F  ^B                    under a second
+    200j                    {t('200j at line 6000'):>8}
+    x                       {t('x'):>8}
+    dd                      {t('dd'):>8}       u after it   {t('u after dd'):>8}
+    60yy                    {t('60yy'):>8}
+    ^G                      {t('^G at the end'):>8}
+    6100G from line 6000    {t('6100G from line 6000'):>8}
+
+A jump costs the distance moved, not the size of the line number.
+
+Slow, because the file has to go through the window:
+
+{two('G from line 1', 'G from the top', 'gg from the last line', 'gg from the end')}
+{two('6000G from line 1', '6000G from the top', '100G from line 12000', '100G from line 12000')}
+{two('/text, 94 K further on', '/012000 from the top', '?text, 46 K back', '?000100 from line 6000')}
+{two('/text, wrapping round', '/000100 from line 6000 (wraps)', "'a, 46 K back", "'a to line 100 from line 6000")}
+{two(':w', ':w, nothing changed')}   all of it, however little changed
+{two(':e! at line 6000', ':e! after x at line 6000')}   {t(':e! after x at the top')} at line 1
+{two(':%s/0/1/', ':%s/0/1/ (12800 lines)')}   every line; over 100 lines, {t(':6000,6100s/0/1/')}
+
+Going BACK costs more once something has been changed: gg from the last
+line is {t('gg from the end, after x there')} after an x there, because the text passed over
+is then written to VIBACKUP.$$$.
+
+Big deletes and yanks, at line 6000:
+
+{cut('500dd', '4 K', '500dd (4 K)')}          {cut('500yy', '4 K', '500yy (4 K)').strip()}
+{cut('2000dd', '16 K', '2000dd (16 K)')}
+{cut('2800dd', '22 K', '2800dd (22 K)')}          {cut('2800yy', '22 K', '2800yy (22 K)').strip()}
+{cut('d6500G', '4 K', 'd6500G (4 K)')}
+{cut('d9000G', '24 K', 'd9000G (24 K)')}
+{cut('dG', '54 K', 'dG (54 K)')}
+{cut('dgg', '48 K', 'dgg (48 K)')}
+
+What is refused:
+
+  * A dd or yy of more than the register holds says "Too large to yank"
+    and changes nothing -- but 3000dd (24 K) takes {t('3000dd (24 K)')} to say so,
+    because the lines are taken and then put back.
+  * A yank, or a delete of part of a line, between two places that are
+    not both in memory rings the bell and does nothing.  yG at line 6000
+    takes {t('yG (54 K)')} to find that out.
+  * u after a change of more than {z['undo']} bytes says "Too large to undo".
+    100dd of 8-byte lines can be undone; 500dd and d6500G (4 K each)
+    cannot.
+  * u after the window has moved off the change (dd, then G) says "Cannot
+    undo: change has paged out".
+  * A :w clears the undo.
+
+What to do instead:
+
+  * To DELETE a big range use dG, d{{n}}G or d'a.  They keep nothing, so
+    no size is refused -- and nothing but :e! brings the lines back.
+  * To MOVE or COPY a big block, write it to a file and read it back in
+    (see YANK AND PUT).  :6000,9000w T.TXT is {t(':6000,9000w T.TXT (24 K)')} for 24 K and
+    :r T.TXT is {t(':r T.TXT of 24 K, at line 3000')}.  That is any size, with the block still on the
+    disk afterwards.  To move a block that fits the register, 2800dd
+    and P are quicker ({t('2800dd (22 K)')} and {t('P after 2800dd')}); to copy one, 2800yy is not.
+  * Type :w before a change that cannot be undone.  The file on the disk
+    is not touched until the next :w, so :e! then throws the change away,
+    and each :w leaves the version before it in NAME.BAK.
+  * A :w is {t(':w, nothing changed')} even with nothing changed.  :x and ZZ write only
+    a changed text, so use them to leave.
+  * Work from the top of the file down, and go by line number when you
+    know it: ^G says where you are, and a line close by costs a second.
+  * Split a file you need only part of.  :1,6000w A.TXT and
+    :6001,12800w B.TXT make two that each page half as far.
+
+Disk space.  The work files need room on the file's own drive.  On the
+100 K file NAME.$$$ reached {z['OUTK']} and VIBACKUP.$$$ {z['BAKK']}, besides the file
+and its .BAK, so allow twice the file's size free before you start.  If the
+drive fills while the editor is paging or writing, it stops with DISK
+FULL and the changes since the last :w are lost; the file on the disk
+is as that :w left it.
+"""
+    if missing:
+        raise ValueError("TIMECOST.md does not hold what LARGE FILES quotes "
+                         "-- run `python3 timecost.py --write`:\n  "
+                         + "\n  ".join(missing))
+    return text.strip("\n"), z
+
+
 def render():
     """DOC as the bytes a CP/M text file holds, or ValueError saying why not.
 
     Every complaint is collected before raising, so one run names every bad
     line rather than making the author find them one at a time.
     """
-    lines = [l.rstrip() for l in DOC.strip("\n").split("\n")]
+    large, sizes = large_files()
+    text = DOC.replace("@LARGE@", large).replace("@REGK@",
+                                                 sizes["REGK"].split()[0])
+    lines = [l.rstrip() for l in text.strip("\n").split("\n")]
     bad = []
     for n, l in enumerate(lines, 1):
         if len(l) > MAXCOL:

@@ -26,8 +26,10 @@ These are facts about the machine, not preferences. Most decisions below trace
 back to one of them.
 
 - **An 8080 in a 56 K TPA.** No Z80 instructions. The editing arena is the RAM
-  between the top of the program and 7 pages below the BDOS
-  (`BUFEND = [0006H] - 700H - 1`, WM `INIT`). **Every byte of the image comes out of
+  between the top of the program and the BDOS (`BUFEND = [0006H] - 1`; WM's
+  `INIT` stops 7 pages lower only when that vector's low byte is not 06H, which
+  is something loaded under the BDOS, a debugger for one). With a 56 K CP/M it
+  is 27,265 bytes in this build. **Every byte of the image comes out of
   the arena**, so the binary is the scarce resource. Commands are priced in
   bytes before they are built, and a command that earns too little gets cut.
 - **The console is a 9600-baud serial line**, about 960 characters a second. A
@@ -167,7 +169,7 @@ move would break:
             type-ahead ring, sector stage + guards, undo records, marks
     RSVTOP  = PBEGMEM: the arena base
               pointer row, text + gap, Q-buffer (the yank register), undo region
-    BUFEND  = BDOS base - 700H - 1
+    BUFEND  = BDOS base - 1   (B605H with a 56 K CP/M; see section 1)
 
 In this build: the image is 18273 bytes, the `.COM` file 18304 bytes (143
 records), the reserve block 803 bytes (`4861H`–`4B83H`), and the stack 128
@@ -241,7 +243,7 @@ repaint.
 - A span that takes no line break asks for a one-row repaint.
 - The span's start is kept as a **file position** as well as an offset, because
   an offset is good inside one window only and the motion may page (`G` with a
-  count always does: it goes by way of line 1). After the motion `OPSFIX` turns
+  count does whenever its line is outside the window). After the motion `OPSFIX` turns
   the position back into an offset if the window still holds it. If it does
   not, a **line delete** is carried through the pager (`OPPGD`): the cursor goes
   to the low line and the text is deleted a window at a time until what is left
