@@ -28,6 +28,8 @@
 
 	EXTRN	BINIT			; BUF.MAC -- stand up the arena
 	EXTRN	ERRHK			; BUF.MAC -- where a fatal message goes
+	EXTRN	EDTHK			; BUF.MAC -- who hears of an edit
+	EXTRN	MKSHFT			; CMD.MAC  -- the marks do
 	EXTRN	FOPEN			; CMD.MAC  -- open + load the file (or none)
 	EXTRN	ARGSCN, ARGGO		; CMD.MAC  -- '+{n}' / '-R' on the line
 	EXTRN	SCINIT, SCDRAW, SCDONE	; SCRN.MAC -- geometry / paint / teardown
@@ -49,6 +51,8 @@ START:
 	CALL	SCINIT			; terminal geometry (DSR autodetect)
 	LXI	H,SCDONE		; a fatal message goes where a quit
 	SHLD	ERRHK			;   leaves the cursor: bottom left
+	LXI	H,MKSHFT		; the marks follow every edit
+	SHLD	EDTHK
 	CALL	FOPEN			; open the source FCB staged at 005CH
 	CALL	ARGGO			; '+{n}': the line to start on
 	MVI	A,R_FULL		; nothing is on the screen yet, and

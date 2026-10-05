@@ -161,8 +161,8 @@ move would break:
               pointer row, text + gap, Q-buffer (the yank register), undo region
     BUFEND  = BDOS base - 700H - 1
 
-In this build: the image is 16989 bytes, the `.COM` file 17024 bytes (133
-records), the reserve block 791 bytes (`435DH`–`4673H`), and the stack 128
+In this build: the image is 17106 bytes, the `.COM` file 17152 bytes (134
+records), the reserve block 791 bytes (`43D2H`–`46E8H`), and the stack 128
 bytes. **The size that matters is a 4 K BLOCK BOUNDARY**, because that is what
 the 8 MB disk allocates in: 16384 bytes occupy four blocks and one byte more
 occupies five. This build is past that line by design (`f F t T ; ,` would not
@@ -281,10 +281,19 @@ which part of the file is resident: a jump pages until the window holds the
 position (`MKPAGE`, WordMaster's whole-file line move stopped by where the
 window is instead of by a count) and places the line as `G` does. An operator
 measures its span in logical offsets, which are good inside one window only,
-so `d'a` over a mark that is paged out is refused and the mark kept. A mark is
-**dropped, never moved**. `MKDROP` runs from `MARKMOD`, one 24-bit compare per
-mark with nothing to update. A mark is also lost to `:e`. A yank drops none: the copy never reaches `MARKMOD`, and `MKHOLD` holds
-the drop off across the delete and put back when `YKGO` has to run instead.
+so `d'a` over a mark that is paged out is refused and the mark kept. A mark
+**follows its text**. Every change to the text, `u`'s replay included, goes
+through `UNDCHG` in `BUF.MAC` with its offset and length, and `UNDCHG` calls
+`EDTHK`, a vector `VI.MAC` points at `MKSHFT` (a test harness leaves it on a
+`RET`). `MKSHFT` moves each mark past the edit by the bytes that went in or
+came out, and closes a mark inside a delete up to where the delete was. An
+insert exactly at a mark leaves the mark in front of the new text unless that
+text ends a line, so a line opened or put above the mark's line is above the
+mark too. The edit's file position is taken from the cursor's, less its
+distance behind the cursor, because a put bigger than the window pages its own
+start out. Only `:e` clears the marks. A yank moves none: the copy changes no
+text, and `MKHOLD` holds `MKSHFT` off across the delete and put back when
+`YKGO` has to run instead.
 
 **Search** is WordMaster's `MATCHF`/`MATCHB` swept across the whole file by
 WordMaster's `FINDA` loop (`SRCHW`), paging one step per miss. The pattern is

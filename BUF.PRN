@@ -120,6 +120,7 @@
 
 
                                 	PUBLIC	ERRHK			; VI.MAC   -- ERRMSG's screen hook
+                                	PUBLIC	EDTHK			; VI.MAC   -- UNDCHG's hook for the marks
                                 	EXTRN	KBPOLL			; KEY.MAC  -- WM GETKEY (type-ahead drain)
                                 	EXTRN	UNDREC, RSVTOP		; RSV.MAC  -- the captured change, and the
                                 					;   top of the reserve block = arena base
@@ -141,9 +142,9 @@
                                 ; from the word at 0006.  (WM's PGCONST tail runs from PAGE.MAC's OPENFIL.)
                                 ;============================================================
   0000'                         BINIT:				; WM 341
-  0000'   2A 0A75'              	LHLD	PBEGMEM
+  0000'   2A 0A80'              	LHLD	PBEGMEM
   0003'   EB                    	XCHG
-  0004'   21 0A1A'              	LXI	H,BUFBEG
+  0004'   21 0A25'              	LXI	H,BUFBEG
   0007'   3E 04                 	MVI	A,4
   0009'                         INIBAS:				 ; WM 346 -- copy PBEGMEM into each region base
   0009'   73                    	MOV	M,E
@@ -156,17 +157,17 @@
   0012'   12                    	STAX	D		; [PBEGMEM] = 0  (the sentinel)
   0013'   13                    	INX	D
   0014'   EB                    	XCHG
-  0015'   22 0A22'              	SHLD	TXTBAS		; TXTBAS = PBEGMEM+1
+  0015'   22 0A2D'              	SHLD	TXTBAS		; TXTBAS = PBEGMEM+1
   0018'                         INIGAP:				 ; WM 359 -- reset the gap pointers to TXTBAS
-  0018'   2A 0A22'              	LHLD	TXTBAS
-  001B'   22 0A24'              	SHLD	UBEG		; (appended) the undo region, empty, below the
-  001E'   22 0A26'              	SHLD	UEND		;   text -- see the UNDO section
+  0018'   2A 0A2D'              	LHLD	TXTBAS
+  001B'   22 0A2F'              	SHLD	UBEG		; (appended) the undo region, empty, below the
+  001E'   22 0A31'              	SHLD	UEND		;   text -- see the UNDO section
   0021'   CD 0741'              	CALL	UNDCLR		; ... and nothing to undo into it yet
-  0024'   2A 0A22'              	LHLD	TXTBAS
-  0027'   22 0A28'              	SHLD	TXTBEG
-  002A'   22 0A2A'              	SHLD	GAPBEG
-  002D'   22 0A2C'              	SHLD	GAPEND
-  0030'   22 0A2E'              	SHLD	TXTEND
+  0024'   2A 0A2D'              	LHLD	TXTBAS
+  0027'   22 0A33'              	SHLD	TXTBEG
+  002A'   22 0A35'              	SHLD	GAPBEG
+  002D'   22 0A37'              	SHLD	GAPEND
+  0030'   22 0A39'              	SHLD	TXTEND
   0033'   2A 0006               	LHLD	MEMTOP		; WM 378 -- word@0006 = BDOS base
   0036'   7D                    	MOV	A,L
   0037'   FE 06                 	CPI	6H
@@ -174,12 +175,12 @@
   003C'   7C                    	MOV	A,H
   003D'   D6 07                 	SUI	7H		; back off 7 pages below BDOS
   003F'   67                    	MOV	H,A
-  0040'                         INITOP:				 ; WM 386
 	MACRO-80 3.44	09-Dec-81	PAGE	1-3
 
 
+  0040'                         INITOP:				 ; WM 386
   0040'   2B                    	DCX	H
-  0041'   22 0A30'              	SHLD	BUFEND		; top of usable text RAM
+  0041'   22 0A3B'              	SHLD	BUFEND		; top of usable text RAM
   0044'   C9                    	RET
                                 
                                 ;============================================================
@@ -196,11 +197,11 @@
   004D'   77                    	MOV	M,A
   004E'   23                    	INX	H
   004F'   CD 0055'              	CALL	SETGAPB
-  0052'   C3 09A7'              	JMP	UNDPUT		; (appended) that byte, for 'u'
+  0052'   C3 09B2'              	JMP	UNDPUT		; (appended) that byte, for 'u'
                                 
                                 ;SETGAPB -- WM 1629: store GAPBEG, then UPDMARK.
   0055'                         SETGAPB:			; WM 1629
-  0055'   22 0A2A'              	SHLD	GAPBEG
+  0055'   22 0A35'              	SHLD	GAPBEG
   0058'   CD 0000*              	CALL	UPDMARK
   005B'   C9                    	RET
                                 
@@ -211,7 +212,7 @@
   005D'   06 00                 	MVI	B,0H
   005F'   C3 0065'              	JMP	INSCOM
   0062'                         INSBLK:				; WM 1853
-  0062'   21 0A2A'              	LXI	H,GAPBEG
+  0062'   21 0A35'              	LXI	H,GAPBEG
   0065'                         INSCOM:				 ; WM 1856
   0065'   CD 0000*              	CALL	MARKGB
   0068'   CD 00D5'              	CALL	CKLEN
@@ -233,10 +234,10 @@
                                 ;remember, as QGET does by hand.
   0078'                         INSSTR:				; WM 1848
   0078'   1A                    	LDAX	D		; the length, just below the string (WM 1849)
-  0079'   13                    	INX	D
 	MACRO-80 3.44	09-Dec-81	PAGE	1-4
 
 
+  0079'   13                    	INX	D
   007A'   B7                    	ORA	A
   007B'   C8                    	RZ
   007C'   4F                    	MOV	C,A
@@ -244,7 +245,7 @@
   007F'   C5                    	PUSH	B		; the length, for the 'u' capture
   0080'   CD 0062'              	CALL	INSBLK
   0083'   C1                    	POP	B
-  0084'   C3 09BA'              	JMP	UNDINS
+  0084'   C3 09C5'              	JMP	UNDINS
                                 
                                 ;CPYGAP -- WM 1870: copy C bytes [DE]->gap (masking bit 7), advance the ptr.
   0087'                         CPYGAP:				; WM 1870
@@ -271,15 +272,15 @@
                                 ;GAPRSV -- WM 1896: guarantee at least one free gap byte before an insert.
   009D'                         GAPRSV:				; WM 1896
   009D'   D5                    	PUSH	D
-  009E'   2A 0A2A'              	LHLD	GAPBEG
+  009E'   2A 0A35'              	LHLD	GAPBEG
   00A1'   EB                    	XCHG
-  00A2'   2A 0A2C'              	LHLD	GAPEND
+  00A2'   2A 0A37'              	LHLD	GAPEND
   00A5'   CD 05AC'              	CALL	CMP16
   00A8'   D1                    	POP	D
-  00A9'   21 0A2A'              	LXI	H,GAPBEG
+  00A9'   21 0A35'              	LXI	H,GAPBEG
   00AC'   D8                    	RC
   00AD'                         MKGAPB:				; WM 1907
-  00AD'   21 0A2A'              	LXI	H,GAPBEG
+  00AD'   21 0A35'              	LXI	H,GAPBEG
                                 
                                 ;MKGAP -- WM 1913: enlarge the gap when empty; relocate text (MOVGAP) or, when
                                 ;RAM is full, page out via MKROOM; 'MEM FULL' if no room can be made.
@@ -292,10 +293,10 @@
   00B6'   78                    	MOV	A,B
   00B7'   B7                    	ORA	A
   00B8'   C2 05D9'              	JNZ	POPRET
-  00BB'   CD 0474'              	CALL	BUFSUM
 	MACRO-80 3.44	09-Dec-81	PAGE	1-5
 
 
+  00BB'   CD 0474'              	CALL	BUFSUM
   00BE'   7A                    	MOV	A,D
   00BF'   B7                    	ORA	A
   00C0'   C2 042B'              	JNZ	MOVGAP
@@ -337,11 +338,11 @@
   00DE'   C5                    	PUSH	B
   00DF'   D5                    	PUSH	D
   00E0'   E5                    	PUSH	H
-  00E1'   21 0A1C'              	LXI	H,QBEG
+  00E1'   21 0A27'              	LXI	H,QBEG
   00E4'   CD 04DA'              	CALL	PRSPAN
-  00E7'   2A 0A1A'              	LHLD	BUFBEG
+  00E7'   2A 0A25'              	LHLD	BUFBEG
   00EA'   EB                    	XCHG
-  00EB'   2A 0A30'              	LHLD	BUFEND
+  00EB'   2A 0A3B'              	LHLD	BUFEND
   00EE'   CD 058E'              	CALL	SUBHD
   00F1'   CD 0583'              	CALL	NEGBC
   00F4'   09                    	DAD	B
@@ -351,10 +352,10 @@
   00FE'   CD 05EA'              	CALL	ERRMSG
   0101'   51 42 55 46           	DB	'QBUF FULL',0H
   0105'   20 46 55 4C           
-  0109'   4C 00                 
 	MACRO-80 3.44	09-Dec-81	PAGE	1-6
 
 
+  0109'   4C 00                 
                                 
                                 ;QCOPY -- WM 1563: copy the span BC out of the text into the Q-buffer whose
                                 ;insertion pointer is at HL, DELETING it as it goes.  The source is re-read from
@@ -369,11 +370,11 @@
   010F'   CD 00B0'              	CALL	MKGAP
   0112'   CD 00DE'              	CALL	QROOM
   0115'   EB                    	XCHG
-  0116'   2A 0A2C'              	LHLD	GAPEND
+  0116'   2A 0A37'              	LHLD	GAPEND
   0119'   EB                    	XCHG
   011A'   CD 0087'              	CALL	CPYGAP
   011D'   EB                    	XCHG
-  011E'   22 0A2C'              	SHLD	GAPEND		; the gap swallows the source: THIS is the delete
+  011E'   22 0A37'              	SHLD	GAPEND		; the gap swallows the source: THIS is the delete
   0121'   EB                    	XCHG
   0122'   CD 0000*              	CALL	UPDMARK
   0125'   05                    	DCR	B
@@ -400,30 +401,30 @@
                                 ;The caller is expected to have QKILLed: this appends, as QCOPY does.
   012A'                         QCPYN:				; (appended) BC = the span at the cursor
   012A'   21 0000               	LXI	H,0
-  012D'   22 0A56'              	SHLD	QCPDON		; nothing of it has gone in yet
+  012D'   22 0A61'              	SHLD	QCPDON		; nothing of it has gone in yet
   0130'   CD 00D5'              	CALL	CKLEN		; B = chunks, C = the first chunk's length
   0133'   CA 015F'              	JZ	QCPYND		; an empty span: nothing to do
   0136'                         QCPYNL:
-  0136'   21 0A1E'              	LXI	H,QEND
+  0136'   21 0A29'              	LXI	H,QEND
   0139'   CD 00B0'              	CALL	MKGAP		; room for a chunk above the register
   013C'   CD 00DE'              	CALL	QROOM		; ... and the register's own ceiling
-  013F'   2A 0A56'              	LHLD	QCPDON		; where this chunk's source lies NOW
+  013F'   2A 0A61'              	LHLD	QCPDON		; where this chunk's source lies NOW
   0142'   EB                    	XCHG
-  0143'   2A 0A2C'              	LHLD	GAPEND
-  0146'   19                    	DAD	D
+  0143'   2A 0A37'              	LHLD	GAPEND
 	MACRO-80 3.44	09-Dec-81	PAGE	1-7
 
 
+  0146'   19                    	DAD	D
   0147'   EB                    	XCHG			; DE = the source
-  0148'   21 0A1E'              	LXI	H,QEND
+  0148'   21 0A29'              	LXI	H,QEND
   014B'   CD 0087'              	CALL	CPYGAP		; C bytes [DE] -> the register, QEND advanced
   014E'   EB                    	XCHG			; HL = the source past the chunk
   014F'   E5                    	PUSH	H
-  0150'   2A 0A2C'              	LHLD	GAPEND		; (re-read: CPYGAP cannot have moved it, but the
+  0150'   2A 0A37'              	LHLD	GAPEND		; (re-read: CPYGAP cannot have moved it, but the
   0153'   EB                    	XCHG			;   next pass's MKGAP can, so the COUNT is what
   0154'   E1                    	POP	H		;   is kept)
   0155'   CD 058E'              	CALL	SUBHD		; HL = what has gone in altogether
-  0158'   22 0A56'              	SHLD	QCPDON
+  0158'   22 0A61'              	SHLD	QCPDON
   015B'   05                    	DCR	B
   015C'   C2 0136'              	JNZ	QCPYNL
   015F'                         QCPYND:
@@ -434,19 +435,19 @@
                                 
                                 ;QGET -- WM 1541: splice the whole Q-buffer into the text at the cursor.
   0161'                         QGET:				; WM 1541
-  0161'   21 0A1C'              	LXI	H,QBEG
+  0161'   21 0A27'              	LXI	H,QBEG
   0164'   CD 04DA'              	CALL	PRSPAN
   0167'   C5                    	PUSH	B		; (appended) the length, for the 'u' capture
   0168'   CD 05A7'              	CALL	LDHLI
   016B'   EB                    	XCHG
   016C'   CD 0062'              	CALL	INSBLK
   016F'   C1                    	POP	B
-  0170'   C3 09BA'              	JMP	UNDGET		; (appended) the register just put in, for 'u'
+  0170'   C3 09C5'              	JMP	UNDGET		; (appended) the register just put in, for 'u'
                                 
                                 ;QKILL -- WM 1529: empty the Q-buffer (QEND := QBEG).
   0173'                         QKILL:				; WM 1529
-  0173'   2A 0A1C'              	LHLD	QBEG
-  0176'   22 0A1E'              	SHLD	QEND
+  0173'   2A 0A27'              	LHLD	QBEG
+  0176'   22 0A29'              	SHLD	QEND
   0179'   C9                    	RET
                                 
                                 ;QPUTLN -- WM 1552: take the line at the cursor into the Q-buffer, DELETING it.
@@ -457,22 +458,22 @@
                                 ;the window a step -- so a count runs past the resident window, as dd's does.
                                 ;Ends on PAGESTP exactly as DELTO does, so the caller's CNTTST loop is the same.
   017A'                         QPUTLN:				; WM 1552
-  017A'   21 0A1E'              	LXI	H,QEND
+  017A'   21 0A29'              	LXI	H,QEND
   017D'   CD 00B0'              	CALL	MKGAP
   0180'   CD 0235'              	CALL	GOLINE
   0183'   EB                    	XCHG
-  0184'   2A 0A2C'              	LHLD	GAPEND
+  0184'   2A 0A37'              	LHLD	GAPEND
   0187'   EB                    	XCHG
   0188'   CD 0597'              	CALL	SPANBC
-  018B'   CD 09E4'              	CALL	UNDDLQ		; (appended) those lines, for 'u', before they go
-  018E'   21 0A1E'              	LXI	H,QEND
+  018B'   CD 09EF'              	CALL	UNDDLQ		; (appended) those lines, for 'u', before they go
+  018E'   21 0A29'              	LXI	H,QEND
   0191'   CD 010B'              	CALL	QCOPY
   0194'   CD 0498'              	CALL	HOLEQ
   0197'   C3 05E3'              	JMP	PAGESTP
-                                
 	MACRO-80 3.44	09-Dec-81	PAGE	1-8
 
 
+                                
                                 ;============================================================
                                 ; PROBE / DELETE -- WM.ASM 991-1001, 1790-1829
                                 ;============================================================
@@ -480,16 +481,16 @@
                                 ;CKLOW -- WM 1790: CY if HL is below TXTBEG (pages back via REWIND when paged).
   019A'                         CKLOW:				; WM 1790
   019A'   EB                    	XCHG
-  019B'   2A 0A28'              	LHLD	TXTBEG
+  019B'   2A 0A33'              	LHLD	TXTBEG
   019E'   CD 05AC'              	CALL	CMP16
   01A1'   EB                    	XCHG
   01A2'   D0                    	RNC
   01A3'   EB                    	XCHG
-  01A4'   2A 0A2A'              	LHLD	GAPBEG
+  01A4'   2A 0A35'              	LHLD	GAPBEG
   01A7'   CD 058D'              	CALL	SUBDH
   01AA'   E5                    	PUSH	H
   01AB'   CD 0000*              	CALL	REWIND
-  01AE'   2A 0A2A'              	LHLD	GAPBEG
+  01AE'   2A 0A35'              	LHLD	GAPBEG
   01B1'   D1                    	POP	D
   01B2'   F5                    	PUSH	PSW
   01B3'   19                    	DAD	D
@@ -499,7 +500,7 @@
                                 ;PEEKL -- WM 1812: char immediately left of the cursor (GAPBEG-1) into A;
                                 ;CY (A=0) at TXTBEG.
   01B6'                         PEEKL:				; WM 1812
-  01B6'   2A 0A2A'              	LHLD	GAPBEG
+  01B6'   2A 0A35'              	LHLD	GAPBEG
   01B9'   2B                    	DCX	H
   01BA'   D5                    	PUSH	D
   01BB'   CD 019A'              	CALL	CKLOW
@@ -521,17 +522,17 @@
                                 ;backward when S set, GAPEND forward otherwise), then UPDMARK + page.
   01CA'                         DELTO:				; WM 991
   01CA'   FA 01D3'              	JM	DELBK
-  01CD'   22 0A2C'              	SHLD	GAPEND
+  01CD'   22 0A37'              	SHLD	GAPEND
   01D0'   C3 01D6'              	JMP	DELUPD
   01D3'                         DELBK:				; WM 996 -- backward delete
-  01D3'   22 0A2A'              	SHLD	GAPBEG
+  01D3'   22 0A35'              	SHLD	GAPBEG
   01D6'                         DELUPD:				 ; WM 999
   01D6'   CD 0000*              	CALL	UPDMARK
   01D9'   C3 05E3'              	JMP	PAGESTP
-                                
 	MACRO-80 3.44	09-Dec-81	PAGE	1-9
 
 
+                                
                                 ;============================================================
                                 ; LINE MOVE -- WM.ASM 1007-1042 (MVLMAX..SETBWD), verbatim.
                                 ; CMDCNT/DIRFLG in, loop GOLINE + SCRLST until CNTTST says the count is spent,
@@ -587,10 +588,10 @@
   020D'                         SETBWD:				; WM 1039
   020D'   3E FF                 	MVI	A,0FFH
   020F'   FE AF                 	CPI	0AFH
-  0211'   C3 01DF'              	JMP	MVLIND
 	MACRO-80 3.44	09-Dec-81	PAGE	1-10
 
 
+  0211'   C3 01DF'              	JMP	MVLIND
                                 
                                 ;============================================================
                                 ; LINE SCAN -- WM.ASM 2224-2410 (GOLINE, NLFWD/SCANF, NLBACK/SCANB, WCMATCH,
@@ -646,10 +647,10 @@
   0246'   FA 0260'              	JM	GOLBK
   0249'   CD 04D7'              	CALL	AFTLEN
   024C'   CD 05A7'              	CALL	LDHLI
-  024F'                         GOLFLP:				; WM 2246 -- forward newline-count loop
 	MACRO-80 3.44	09-Dec-81	PAGE	1-11
 
 
+  024F'                         GOLFLP:				; WM 2246 -- forward newline-count loop
   024F'   CD 02AE'              	CALL	NLFWD
   0252'   DA 027C'              	JC	GOLSWP
   0255'   05                    	DCR	B
@@ -661,9 +662,9 @@
   025D'   C3 027C'              	JMP	GOLSWP
   0260'                         GOLBK:				; WM 2257 -- backward: count newlines toward TXTBEG
   0260'   13                    	INX	D
-  0261'   21 0A28'              	LXI	H,TXTBEG
+  0261'   21 0A33'              	LXI	H,TXTBEG
   0264'   CD 04DA'              	CALL	PRSPAN
-  0267'   2A 0A2A'              	LHLD	GAPBEG
+  0267'   2A 0A35'              	LHLD	GAPBEG
   026A'                         GOLBLP:				; WM 2263 -- backward newline-count loop
   026A'   CD 0000*              	CALL	KBPOLL		; WM: CALL GETKEY
   026D'   CD 02C5'              	CALL	NLBACK
@@ -688,7 +689,7 @@
   028D'                         GOLSAV:				; WM 2288 -- save CMDCNT and the target position
   028D'   22 0000*              	SHLD	CMDCNT
   0290'   EB                    	XCHG
-  0291'   22 0A54'              	SHLD	L2756
+  0291'   22 0A5F'              	SHLD	L2756
   0294'   3A 0000*              	LDA	DIRFLG
   0297'   B7                    	ORA	A
   0298'   E5                    	PUSH	H
@@ -705,10 +706,10 @@
   02AB'   C3 027E'              	JMP	GOLAUX
                                 
                                 ;NLFWD -- WM 2309: scan forward to the next newline.
-  02AE'                         NLFWD:				; WM 2309
 	MACRO-80 3.44	09-Dec-81	PAGE	1-12
 
 
+  02AE'                         NLFWD:				; WM 2309
   02AE'   3E 0A                 	MVI	A,LF
                                 ;SCANF -- WM 2313: scan forward over BC bytes for a char (wildcard-aware).
   02B0'                         SCANF:				; WM 2313
@@ -764,10 +765,10 @@
   02EA'   1B                    	DCX	D
   02EB'   B7                    	ORA	A
   02EC'   CA 02F6'              	JZ	WCYES
-  02EF'   BE                    	CMP	M
 	MACRO-80 3.44	09-Dec-81	PAGE	1-13
 
 
+  02EF'   BE                    	CMP	M
   02F0'   3E 0F                 	MVI	A,0FH
   02F2'   CA 0301'              	JZ	WCNO
   02F5'   13                    	INX	D
@@ -823,10 +824,10 @@
   0329'   FE 20                 	CPI	' '
   032B'   C8                    	RZ
   032C'   FE 0A                 	CPI	LF
-  032E'   C8                    	RZ
 	MACRO-80 3.44	09-Dec-81	PAGE	1-14
 
 
+  032E'   C8                    	RZ
   032F'   FE 0D                 	CPI	CR
   0331'   C9                    	RET
                                 
@@ -872,7 +873,7 @@
                                 
                                 ;SUBLEN -- WM 2061: HL := HL - the pattern length.
   0344'                         SUBLEN:				; WM 2061
-  0344'   3A 0A34'              	LDA	SRCHBF
+  0344'   3A 0A3F'              	LDA	SRCHBF
                                 
                                 ;SUBHA -- WM 2063: HL := HL - A, unsigned.
   0347'                         SUBHA:				; WM 2063
@@ -882,10 +883,10 @@
   034A'   94                    	SUB	H
   034B'   E1                    	POP	H
   034C'   6F                    	MOV	L,A
-  034D'   7C                    	MOV	A,H
 	MACRO-80 3.44	09-Dec-81	PAGE	1-15
 
 
+  034D'   7C                    	MOV	A,H
   034E'   DE 00                 	SBI	0H
   0350'   67                    	MOV	H,A
   0351'   C9                    	RET
@@ -941,10 +942,10 @@
   0386'   05                    	DCR	B
   0387'   0D                    	DCR	C
   0388'   E5                    	PUSH	H
-  0389'                         MATCBL:				; WM 2138 -- the rest of the pattern
 	MACRO-80 3.44	09-Dec-81	PAGE	1-16
 
 
+  0389'                         MATCBL:				; WM 2138 -- the rest of the pattern
   0389'   13                    	INX	D
   038A'   23                    	INX	H
   038B'   1A                    	LDAX	D
@@ -971,26 +972,26 @@
   03A2'   D5                    	PUSH	D
   03A3'   E5                    	PUSH	H
   03A4'   EB                    	XCHG
-  03A5'   2A 0A28'              	LHLD	TXTBEG
+  03A5'   2A 0A33'              	LHLD	TXTBEG
   03A8'   CD 05AC'              	CALL	CMP16
   03AB'   DC 03D9'              	CC	PUTCERR
-  03AE'   2A 0A2E'              	LHLD	TXTEND
+  03AE'   2A 0A39'              	LHLD	TXTEND
   03B1'   23                    	INX	H
   03B2'   CD 05AC'              	CALL	CMP16
   03B5'   D4 03D9'              	CNC	PUTCERR
-  03B8'   2A 0A2A'              	LHLD	GAPBEG
+  03B8'   2A 0A35'              	LHLD	GAPBEG
   03BB'   23                    	INX	H
   03BC'   CD 05AC'              	CALL	CMP16
   03BF'   D2 03C9'              	JNC	PUTCRT
   03C2'   EB                    	XCHG
-  03C3'   11 0A28'              	LXI	D,TXTBEG
+  03C3'   11 0A33'              	LXI	D,TXTBEG
   03C6'   C3 0407'              	JMP	GAPLF
   03C9'                         PUTCRT:				; WM 2438 -- target after the gap -> slide right
-  03C9'   2A 0A2C'              	LHLD	GAPEND
+  03C9'   2A 0A37'              	LHLD	GAPEND
   03CC'   CD 05AC'              	CALL	CMP16
   03CF'   DC 03D9'              	CC	PUTCERR
   03D2'   EB                    	XCHG
-  03D3'   11 0A2C'              	LXI	D,GAPEND
+  03D3'   11 0A37'              	LXI	D,GAPEND
   03D6'   C3 03E7'              	JMP	GAPRT
   03D9'                         PUTCERR:			; WM 2447
   03D9'   CD 05EA'              	CALL	ERRMSG
@@ -1000,10 +1001,10 @@
                                 
                                 ;============================================================
                                 ; GAP SLIDES + POINTER-ARRAY MECHANICS -- WM.ASM 4972-5175
-                                ;============================================================
 	MACRO-80 3.44	09-Dec-81	PAGE	1-17
 
 
+                                ;============================================================
                                 
                                 ;GAPRT -- WM 4972: slide the gap toward higher addresses (cursor right).
   03E7'                         GAPRT:				; WM 4972
@@ -1059,22 +1060,22 @@
   0425'   C3 05D9'              	JMP	POPRET
                                 
                                 ;PUTHOLE -- WM 5031: move the gap so it begins at address DE.
-  0428'                         PUTHOLE:			; WM 5031
 	MACRO-80 3.44	09-Dec-81	PAGE	1-18
 
 
+  0428'                         PUTHOLE:			; WM 5031
   0428'   C5                    	PUSH	B
   0429'   D5                    	PUSH	D
   042A'   E5                    	PUSH	H
   042B'                         MOVGAP:				; WM 5037 -- PUTHOLE body, no register save
   042B'   EB                    	XCHG
-  042C'   21 0A1C'              	LXI	H,QBEG
+  042C'   21 0A27'              	LXI	H,QBEG
   042F'   CD 05AC'              	CALL	CMP16
   0432'   DC 0465'              	CC	PUTHERR
-  0435'   21 0A31'              	LXI	H,MVGTOP
+  0435'   21 0A3C'              	LXI	H,MVGTOP
   0438'   CD 05AC'              	CALL	CMP16
   043B'   D4 0465'              	CNC	PUTHERR
-  043E'   21 0A1C'              	LXI	H,QBEG
+  043E'   21 0A27'              	LXI	H,QBEG
   0441'                         MVGUP:				; WM 5047 -- slide regions up until gap reaches DE
   0441'   23                    	INX	H
   0442'   CD 05AC'              	CALL	CMP16
@@ -1084,7 +1085,7 @@
   044C'   CD 048B'              	CALL	NEXTPR
   044F'   C3 0441'              	JMP	MVGUP
   0452'                         MVGDN:				; WM 5056 -- fix up the pointers past the gap
-  0452'   21 0A2E'              	LXI	H,TXTEND
+  0452'   21 0A39'              	LXI	H,TXTEND
   0455'                         MVGDNL:				 ; WM 5059
   0455'   CD 05AC'              	CALL	CMP16
   0458'   D2 05D9'              	JNC	POPRET
@@ -1107,7 +1108,7 @@
   0474'   C5                    	PUSH	B
   0475'   E5                    	PUSH	H
   0476'   11 0000               	LXI	D,0H
-  0479'   21 0A1A'              	LXI	H,BUFBEG
+  0479'   21 0A25'              	LXI	H,BUFBEG
   047C'                         BSUMLP:				 ; WM 5086
   047C'   CD 04DA'              	CALL	PRSPAN
   047F'   EB                    	XCHG
@@ -1118,10 +1119,10 @@
   0488'   E1                    	POP	H
   0489'   C1                    	POP	B
   048A'   C9                    	RET
-                                
 	MACRO-80 3.44	09-Dec-81	PAGE	1-19
 
 
+                                
                                 ;NEXTPR -- WM 5098: advance HL to the next pointer pair; CY past the array end.
   048B'                         NEXTPR:				; WM 5098
   048B'   D5                    	PUSH	D
@@ -1129,13 +1130,13 @@
   048D'   23                    	INX	H
   048E'   23                    	INX	H
   048F'   23                    	INX	H
-  0490'   11 0A2F'              	LXI	D,PRTERM
+  0490'   11 0A3A'              	LXI	D,PRTERM
   0493'   CD 05AC'              	CALL	CMP16
   0496'   D1                    	POP	D
   0497'   C9                    	RET
                                 
   0498'                         HOLEQ:				; WM 5110
-  0498'   21 0A20'              	LXI	H,HOLEQP
+  0498'   21 0A2B'              	LXI	H,HOLEQP
                                 ;HOLEUP -- WM 5114: slide one region up (MEMCPY) to grow the gap.
   049B'                         HOLEUP:				; WM 5114
   049B'   C5                    	PUSH	B
@@ -1177,10 +1178,10 @@
   04C8'   72                    	MOV	M,D
   04C9'   2B                    	DCX	H
   04CA'   73                    	MOV	M,E
-  04CB'   E3                    	XTHL
 	MACRO-80 3.44	09-Dec-81	PAGE	1-20
 
 
+  04CB'   E3                    	XTHL
   04CC'   CD 0543'              	CALL	MCPYR
   04CF'   E1                    	POP	H
   04D0'   2B                    	DCX	H
@@ -1191,7 +1192,7 @@
                                 
                                 ;AFTLEN -- WM 5164: BC := after-cursor text length (GAPEND..TXTEND).
   04D7'                         AFTLEN:				; WM 5164
-  04D7'   21 0A2C'              	LXI	H,GAPEND
+  04D7'   21 0A37'              	LXI	H,GAPEND
                                 ;PRSPAN -- WM 5168: BC := span (limit-base) of the pointer pair at HL.
   04DA'                         PRSPAN:				; WM 5168
   04DA'   D5                    	PUSH	D
@@ -1236,13 +1237,13 @@
   0505'   C9                    	RET
                                 
                                 ;AFTOFF -- WM 4028: HL = HL - GAPEND (survives the refill moving the text).
-  0506'                         AFTOFF:				; WM 4028
 	MACRO-80 3.44	09-Dec-81	PAGE	1-21
 
 
+  0506'                         AFTOFF:				; WM 4028
   0506'   D5                    	PUSH	D
   0507'   EB                    	XCHG
-  0508'   2A 0A2C'              	LHLD	GAPEND
+  0508'   2A 0A37'              	LHLD	GAPEND
   050B'   CD 058D'              	CALL	SUBDH
   050E'   D1                    	POP	D
   050F'   C9                    	RET
@@ -1295,10 +1296,10 @@
                                 
                                 ;MCPYR -- WM 5215: copy BC bytes [HL]->[DE] backward.
   0543'                         MCPYR:			      ; WM 5215
-  0543'   CD 0568'              	CALL	CKCOPY
 	MACRO-80 3.44	09-Dec-81	PAGE	1-22
 
 
+  0543'   CD 0568'              	CALL	CKCOPY
   0546'   CD 05AC'              	CALL	CMP16
   0549'   C2 0556'              	JNZ	MCPRSU
   054C'   CD 0583'              	CALL	NEGBC
@@ -1354,10 +1355,10 @@
   0586'   4F                    	MOV	C,A
   0587'   3E 00                 	MVI	A,0H
   0589'   98                    	SBB	B
-  058A'   47                    	MOV	B,A
 	MACRO-80 3.44	09-Dec-81	PAGE	1-23
 
 
+  058A'   47                    	MOV	B,A
   058B'   F1                    	POP	PSW
   058C'   C9                    	RET
                                 
@@ -1413,10 +1414,10 @@
   05B3'   7B                    	MOV	A,E
   05B4'   95                    	SUB	L
   05B5'                         CMPLOW:				 ; WM 5342
-  05B5'   78                    	MOV	A,B
 	MACRO-80 3.44	09-Dec-81	PAGE	1-24
 
 
+  05B5'   78                    	MOV	A,B
   05B6'   C1                    	POP	B
   05B7'   C9                    	RET
                                 
@@ -1472,10 +1473,10 @@
                                 ;are what page the window on past its edge.
                                 ;SCRLST -- WM 4307: poll type-ahead, PUTCUR to HL, then (count not spent)
                                 ;fall into PAGESTP to page the window one step in the DIRFLG direction.
-  05DD'                         SCRLST:				; WM 4307
 	MACRO-80 3.44	09-Dec-81	PAGE	1-25
 
 
+  05DD'                         SCRLST:				; WM 4307
   05DD'   CD 0000*              	CALL	POLLBRK
   05E0'   CD 03A1'              	CALL	PUTCUR
                                 
@@ -1496,7 +1497,7 @@
                                 ;============================================================
   05EA'                         ERRMSG:				; WM 664 (tail adapted)
   05EA'   3E FF                 	MVI	A,0FFH
-  05EC'   32 0A32'              	STA	ERRFLG		; record that an error fired
+  05EC'   32 0A3D'              	STA	ERRFLG		; record that an error fired
   05EF'   2A 060F'              	LHLD	ERRHK
   05F2'   CD 060D'              	CALL	ERMGO		; the cursor to where the message belongs
   05F5'   E1                    	POP	H		; HL -> inline message (after the CALL)
@@ -1531,22 +1532,22 @@
                                 ; Q-buffer), which page as they go, and a few read the pointer row directly.
                                 ;============================================================
                                 
-                                ;CUROFF -- HL = cursor logical offset (= before length).
 	MACRO-80 3.44	09-Dec-81	PAGE	1-26
 
 
+                                ;CUROFF -- HL = cursor logical offset (= before length).
   0611'                         CUROFF:
-  0611'   2A 0A28'              	LHLD	TXTBEG
+  0611'   2A 0A33'              	LHLD	TXTBEG
   0614'   EB                    	XCHG
-  0615'   2A 0A2A'              	LHLD	GAPBEG
+  0615'   2A 0A35'              	LHLD	GAPBEG
   0618'   CD 058E'              	CALL	SUBHD		; HL = GAPBEG - TXTBEG
   061B'   C9                    	RET
                                 
                                 ;AFTLN2 -- HL = after length (TXTEND - GAPEND).  Private helper for LOGLEN.
   061C'                         AFTLN2:
-  061C'   2A 0A2C'              	LHLD	GAPEND
+  061C'   2A 0A37'              	LHLD	GAPEND
   061F'   EB                    	XCHG
-  0620'   2A 0A2E'              	LHLD	TXTEND
+  0620'   2A 0A39'              	LHLD	TXTEND
   0623'   CD 058E'              	CALL	SUBHD
   0626'   C9                    	RET
                                 
@@ -1571,12 +1572,12 @@
   063D'   EB                    	XCHG			; HL=off, DE=before
   063E'   CD 058E'              	CALL	SUBHD		; HL = off - before
   0641'   EB                    	XCHG			; DE = off-before
-  0642'   2A 0A2C'              	LHLD	GAPEND
+  0642'   2A 0A37'              	LHLD	GAPEND
   0645'   19                    	DAD	D
   0646'   C9                    	RET
   0647'                         L2P_BEF:
                                 	;--- before region: phys = TXTBEG + off  (DE = off, HL = before) ---
-  0647'   2A 0A28'              	LHLD	TXTBEG
+  0647'   2A 0A33'              	LHLD	TXTBEG
   064A'   19                    	DAD	D
   064B'   C9                    	RET
                                 
@@ -1590,10 +1591,10 @@
   0651'                         CLAMPL:
   0651'   E5                    	PUSH	H
   0652'   CD 0627'              	CALL	LOGLEN
-  0655'   D1                    	POP	D		; DE = off
 	MACRO-80 3.44	09-Dec-81	PAGE	1-27
 
 
+  0655'   D1                    	POP	D		; DE = off
   0656'   CD 05AC'              	CALL	CMP16		; DE=off vs HL=LOGLEN
   0659'   DA 0660'              	JC	CLK_KEEP	; off < LOGLEN
   065C'   CA 0660'              	JZ	CLK_KEEP	; off == LOGLEN
@@ -1610,21 +1611,21 @@
   0665'   CD 0631'              	CALL	L2PHYS		; HL = physical address
   0668'   E5                    	PUSH	H
   0669'   EB                    	XCHG			; DE = target
-  066A'   2A 0A2C'              	LHLD	GAPEND
+  066A'   2A 0A37'              	LHLD	GAPEND
   066D'   CD 05AC'              	CALL	CMP16		; CY iff target < GAPEND (before the gap)
   0670'   DA 067E'              	JC	GTO_BK
   0673'   EB                    	XCHG			; forward: count [GAPEND, target)
   0674'   CD 0692'              	CALL	LFCNT
-  0677'   2A 0A73'              	LHLD	LNDLT
+  0677'   2A 0A7E'              	LHLD	LNDLT
   067A'   19                    	DAD	D
   067B'   C3 068A'              	JMP	GTO_ST
   067E'                         GTO_BK:
-  067E'   2A 0A2A'              	LHLD	GAPBEG		; back: count [target, GAPBEG)
+  067E'   2A 0A35'              	LHLD	GAPBEG		; back: count [target, GAPBEG)
   0681'   CD 0692'              	CALL	LFCNT
-  0684'   2A 0A73'              	LHLD	LNDLT
+  0684'   2A 0A7E'              	LHLD	LNDLT
   0687'   CD 058E'              	CALL	SUBHD
   068A'                         GTO_ST:
-  068A'   22 0A73'              	SHLD	LNDLT
+  068A'   22 0A7E'              	SHLD	LNDLT
   068D'   E1                    	POP	H
   068E'   CD 03A1'              	CALL	PUTCUR
   0691'   C9                    	RET
@@ -1649,10 +1650,10 @@
   06A7'   C3 069B'              	JMP	LFC_LP
                                 
                                 ;RDGET -- RGET, and CY also when a refill read nothing.  INRDY stays set after
-                                ;a file's last full record (no ^Z) until a read fails; NEEDIN then returns NC
 	MACRO-80 3.44	09-Dec-81	PAGE	1-28
 
 
+                                ;a file's last full record (no ^Z) until a read fails; NEEDIN then returns NC
                                 ;having added nothing, and RGET steps past TXTEND leaving BC = FFFFH.  That is
                                 ;reported as the end of the text, with BC = 0 so a later call asks NEEDIN again.
   06AA'                         RDGET:
@@ -1676,9 +1677,9 @@
   06BD'   7C                    	MOV	A,H
   06BE'   B5                    	ORA	L
   06BF'   C8                    	RZ			; nothing to delete
-  06C0'   CD 09D3'              	CALL	UNDDLF		; (appended) the span, for 'u', before it goes
+  06C0'   CD 09DE'              	CALL	UNDDLF		; (appended) the span, for 'u', before it goes
   06C3'   EB                    	XCHG			; DE = count
-  06C4'   2A 0A2C'              	LHLD	GAPEND
+  06C4'   2A 0A37'              	LHLD	GAPEND
   06C7'   19                    	DAD	D		; target = GAPEND + count
   06C8'   AF                    	XRA	A		; S clear -> forward delete
   06C9'   CD 01CA'              	CALL	DELTO
@@ -1694,12 +1695,12 @@
   06D0'   FE 0A                 	CPI	LF
   06D2'   C2 06DE'              	JNZ	DLP_GO
   06D5'   E5                    	PUSH	H
-  06D6'   2A 0A73'              	LHLD	LNDLT
+  06D6'   2A 0A7E'              	LHLD	LNDLT
   06D9'   2B                    	DCX	H
-  06DA'   22 0A73'              	SHLD	LNDLT
+  06DA'   22 0A7E'              	SHLD	LNDLT
   06DD'   E1                    	POP	H
   06DE'                         DLP_GO:				; WM 3263 DELL
-  06DE'   CD 09F3'              	CALL	UNDDLP		; (appended) that byte, for 'u', before it goes
+  06DE'   CD 09FE'              	CALL	UNDDLP		; (appended) that byte, for 'u', before it goes
   06E1'   CD 0055'              	CALL	SETGAPB
   06E4'   CD 01B6'              	CALL	PEEKL
   06E7'   FE 0D                 	CPI	CR
@@ -1708,21 +1709,21 @@
                                 
                                 
                                 ;UNDELF -- APPENDED, NOT WordMaster: give back the byte last swallowed forward
-                                ;into the gap.  A forward delete only moves GAPEND past the byte, so the byte
 	MACRO-80 3.44	09-Dec-81	PAGE	1-29
 
 
+                                ;into the gap.  A forward delete only moves GAPEND past the byte, so the byte
                                 ;itself is still there, inside the gap: GAPEND-1 through DELTO makes it text
                                 ;again, with the record marks updated exactly as a delete updates them.
                                 ;Replace mode ('R') puts back with it what it overwrote, as vim's BS in Replace
                                 ;mode does.  The caller must know the gap has not moved since the delete
                                 ;(CMD.MAC keeps GAPEND in RPGE for that); nothing else calls this.
   06ED'                         UNDELF:
-  06ED'   2A 0A2C'              	LHLD	GAPEND
+  06ED'   2A 0A37'              	LHLD	GAPEND
   06F0'   2B                    	DCX	H
   06F1'   AF                    	XRA	A		; S clear -> the forward (GAPEND) side
   06F2'   CD 01CA'              	CALL	DELTO
-  06F5'   C3 0A06'              	JMP	UNDUDF		; (appended) the byte just made text again
+  06F5'   C3 0A11'              	JMP	UNDUDF		; (appended) the byte just made text again
                                 
                                 
                                 ;============================================================
@@ -1767,10 +1768,10 @@
                                 ; thing and are not: UPDMARK raises them on every edit.
                                 ;============================================================
                                 
-  0001                          UR_INS	EQU	1		; text went IN  (undoing takes it back out)
 	MACRO-80 3.44	09-Dec-81	PAGE	1-30
 
 
+  0001                          UR_INS	EQU	1		; text went IN  (undoing takes it back out)
   0002                          UR_DEL	EQU	2		; text came OUT (undoing puts it back)
   0007                          URSIZE	EQU	7		; type, offset(2), length(2), region offset(2)
   0018                          URMAX	EQU	24		; primitive steps one change may hold
@@ -1793,9 +1794,9 @@
   06F8'   D5                    	PUSH	D
   06F9'   E5                    	PUSH	H
   06FA'   3E 01                 	MVI	A,1
-  06FC'   32 0A5B'              	STA	UNDNEW
+  06FC'   32 0A66'              	STA	UNDNEW
   06FF'   CD 0611'              	CALL	CUROFF
-  0702'   22 0A6F'              	SHLD	UNDPCU		; where the cursor was as this command began --
+  0702'   22 0A7A'              	SHLD	UNDPCU		; where the cursor was as this command began --
   0705'   CD 0714'              	CALL	UNDGRW		;   kept pending, because only a command that
   0708'   E1                    	POP	H		;   really changes text gets to claim it
   0709'   D1                    	POP	D
@@ -1809,7 +1810,7 @@
   070B'                         UNDHER:
   070B'   E5                    	PUSH	H
   070C'   CD 0611'              	CALL	CUROFF
-  070F'   22 0A6F'              	SHLD	UNDPCU
+  070F'   22 0A7A'              	SHLD	UNDPCU
   0712'   E1                    	POP	H
   0713'   C9                    	RET
                                 
@@ -1826,10 +1827,10 @@
                                 ;MOVGAP feeding an insert will walk straight through a hole reserved here, which
                                 ;is what made a 200-character insert lose its undo halfway.  Once the bytes are
                                 ;inside (UBEG,UEND) the text cannot have them: MOVGAP slides the region aside
-                                ;instead.  Nothing here holds an address across MKGAP either, because MKGAP
 	MACRO-80 3.44	09-Dec-81	PAGE	1-31
 
 
+                                ;instead.  Nothing here holds an address across MKGAP either, because MKGAP
                                 ;slides this very region (HOLEUP moves UBEG and UEND) -- UEND is re-read from
                                 ;its cell every time round.
   0714'                         UNDGRW:
@@ -1837,264 +1838,276 @@
   0715'   D5                    	PUSH	D
   0716'   E5                    	PUSH	H
   0717'                         UNDGRL:
-  0717'   21 0A24'              	LXI	H,UBEG
+  0717'   21 0A2F'              	LXI	H,UBEG
   071A'   CD 04DA'              	CALL	PRSPAN		; BC = the region's size
   071D'   50                    	MOV	D,B
   071E'   59                    	MOV	E,C
   071F'   21 0400               	LXI	H,UNDCAP
   0722'   CD 05AC'              	CALL	CMP16		; CY iff it is smaller than one change
   0725'   D2 05D9'              	JNC	POPRET
-  0728'   CD 08A0'              	CALL	UNDRM		; ... but never at the cost of paging
+  0728'   CD 08AB'              	CALL	UNDRM		; ... but never at the cost of paging
   072B'   DA 05D9'              	JC	POPRET
-  072E'   21 0A26'              	LXI	H,UEND
+  072E'   21 0A31'              	LXI	H,UEND
   0731'   CD 00B0'              	CALL	MKGAP		; 256 free above the region ...
-  0734'   2A 0A26'              	LHLD	UEND
+  0734'   2A 0A31'              	LHLD	UEND
   0737'   11 0100               	LXI	D,100H
   073A'   19                    	DAD	D
-  073B'   22 0A26'              	SHLD	UEND		; ... taken into it, so the text cannot take
+  073B'   22 0A31'              	SHLD	UEND		; ... taken into it, so the text cannot take
   073E'   C3 0717'              	JMP	UNDGRL		;     them back
                                 
                                 ;UNDCLR -- nothing is undoable (a fresh buffer; BINIT calls it through INIGAP).
   0741'                         UNDCLR:
   0741'   AF                    	XRA	A
-  0742'   32 0A58'              	STA	UNDN
-  0745'   32 0A59'              	STA	UNDST
-  0748'   32 0A5A'              	STA	UNDBAD
+  0742'   32 0A63'              	STA	UNDN
+  0745'   32 0A64'              	STA	UNDST
+  0748'   32 0A65'              	STA	UNDBAD
   074B'   3E 01                 	MVI	A,1
-  074D'   32 0A5B'              	STA	UNDNEW
+  074D'   32 0A66'              	STA	UNDNEW
   0750'   C9                    	RET
                                 
                                 ;UNDRST -- the first capture of a new change: drop the last one and note where
                                 ;the file window was, so 'u' can tell the pager has since moved off this change.
   0751'                         UNDRST:
   0751'   AF                    	XRA	A
-  0752'   32 0A5B'              	STA	UNDNEW
-  0755'   32 0A58'              	STA	UNDN
-  0758'   32 0A5A'              	STA	UNDBAD
+  0752'   32 0A66'              	STA	UNDNEW
+  0755'   32 0A63'              	STA	UNDN
+  0758'   32 0A65'              	STA	UNDBAD
   075B'   21 0000               	LXI	H,0
-  075E'   22 0A6C'              	SHLD	UNDPTR		; the region's content empties (its SIZE stays:
+  075E'   22 0A77'              	SHLD	UNDPTR		; the region's content empties (its SIZE stays:
                                 				;   that is the room UNDGRW claimed)
   0761'   2A 0000*              	LHLD	PGTOPM
-  0764'   22 0A6A'              	SHLD	UNDPG
-  0767'   2A 0A6F'              	LHLD	UNDPCU
-  076A'   22 0A71'              	SHLD	UNDCUR		; ... and this command does change text, so this
+  0764'   22 0A75'              	SHLD	UNDPG
+  0767'   2A 0A7A'              	LHLD	UNDPCU
+  076A'   22 0A7C'              	SHLD	UNDCUR		; ... and this command does change text, so this
                                 				;   is where 'u' will put the cursor back
   076D'   3E 01                 	MVI	A,1
-  076F'   32 0A59'              	STA	UNDST		; a change is on the buffer: 'u' undoes it
+  076F'   32 0A64'              	STA	UNDST		; a change is on the buffer: 'u' undoes it
   0772'   C9                    	RET
                                 
                                 ;UNDCHG -- the capture every hooked primitive uses.  A = UR_INS / UR_DEL,
                                 ;HL = the logical offset it acted at, BC = how many bytes.  The bytes are read
-                                ;back out of the resident TEXT at that offset -- for a delete before they go,
 	MACRO-80 3.44	09-Dec-81	PAGE	1-32
 
 
+                                ;back out of the resident TEXT at that offset -- for a delete before they go,
                                 ;for an insert once they have arrived -- so no caller hands over a pointer that
                                 ;growing the region could leave stale.
   0773'                         UNDCHG:
   0773'   C5                    	PUSH	B
   0774'   D5                    	PUSH	D
   0775'   E5                    	PUSH	H
-  0776'   32 0A5F'              	STA	UNDTY		; the record type, kept out of the registers
-  0779'   3A 0A5C'              	LDA	UNDRPL
-  077C'   B7                    	ORA	A
-  077D'   C2 05D9'              	JNZ	POPRET		; 'u' replaying: its own edits are not a change
-  0780'   3A 0A5B'              	LDA	UNDNEW
-  0783'   B7                    	ORA	A
-  0784'   CA 078A'              	JZ	UNDC1
-  0787'   CD 0751'              	CALL	UNDRST		; the first step of a new change
-  078A'                         UNDC1:
-  078A'   3A 0A5A'              	LDA	UNDBAD
-  078D'   B7                    	ORA	A
-  078E'   C2 05D9'              	JNZ	POPRET		; this change has already been given up on
-  0791'   78                    	MOV	A,B
-  0792'   B1                    	ORA	C
-  0793'   CA 05D9'              	JZ	POPRET		; a zero-length step is no step
-  0796'   60                    	MOV	H,B
-  0797'   69                    	MOV	L,C
-  0798'   22 0A66'              	SHLD	UNDCL		; UNDAPT spends BC as its countdown, so the
+  0776'   32 0A6A'              	STA	UNDTY		; the record type, kept out of the registers
+  0779'   CD 07F1'              	CALL	EDTGO		; whoever else follows an edit (BC is kept)
+  077C'   3A 0A67'              	LDA	UNDRPL
+  077F'   B7                    	ORA	A
+  0780'   C2 05D9'              	JNZ	POPRET		; 'u' replaying: its own edits are not a change
+  0783'   3A 0A66'              	LDA	UNDNEW
+  0786'   B7                    	ORA	A
+  0787'   CA 078D'              	JZ	UNDC1
+  078A'   CD 0751'              	CALL	UNDRST		; the first step of a new change
+  078D'                         UNDC1:
+  078D'   3A 0A65'              	LDA	UNDBAD
+  0790'   B7                    	ORA	A
+  0791'   C2 05D9'              	JNZ	POPRET		; this change has already been given up on
+  0794'   78                    	MOV	A,B
+  0795'   B1                    	ORA	C
+  0796'   CA 05D9'              	JZ	POPRET		; a zero-length step is no step
+  0799'   60                    	MOV	H,B
+  079A'   69                    	MOV	L,C
+  079B'   22 0A71'              	SHLD	UNDCL		; UNDAPT spends BC as its countdown, so the
                                 				;   length has to be kept somewhere else
-  079B'   3A 0A58'              	LDA	UNDN
-  079E'   FE 18                 	CPI	URMAX
-  07A0'   D2 07E6'              	JNC	UNDCBD		; no room for another step
+  079E'   3A 0A63'              	LDA	UNDN
+  07A1'   FE 18                 	CPI	URMAX
+  07A3'   D2 07E9'              	JNC	UNDCBD		; no room for another step
                                 	;--- where this step's bytes will land in the region ---
-  07A3'   2A 0A6C'              	LHLD	UNDPTR
-  07A6'   22 0A64'              	SHLD	UNDBO
-  07A9'   E1                    	POP	H
-  07AA'   E5                    	PUSH	H		; HL = the logical offset again
-  07AB'   CD 0856'              	CALL	UNDAPT		; BC bytes of the text there -> the region
-  07AE'   DA 07E6'              	JC	UNDCBD
+  07A6'   2A 0A77'              	LHLD	UNDPTR
+  07A9'   22 0A6F'              	SHLD	UNDBO
+  07AC'   E1                    	POP	H
+  07AD'   E5                    	PUSH	H		; HL = the logical offset again
+  07AE'   CD 0861'              	CALL	UNDAPT		; BC bytes of the text there -> the region
+  07B1'   DA 07E9'              	JC	UNDCBD
                                 	;--- fold it into the last record when it only carries that one on ---
-  07B1'   E1                    	POP	H
-  07B2'   E5                    	PUSH	H
-  07B3'   CD 07FE'              	CALL	UNDEXT
-  07B6'   CA 05D9'              	JZ	POPRET
+  07B4'   E1                    	POP	H
+  07B5'   E5                    	PUSH	H
+  07B6'   CD 0809'              	CALL	UNDEXT
+  07B9'   CA 05D9'              	JZ	POPRET
                                 	;--- otherwise a record of its own ---
-  07B9'   3A 0A58'              	LDA	UNDN
-  07BC'   CD 07EE'              	CALL	URADDR
-  07BF'   3A 0A5F'              	LDA	UNDTY
-  07C2'   77                    	MOV	M,A
-  07C3'   23                    	INX	H
-  07C4'   D1                    	POP	D
-  07C5'   D5                    	PUSH	D		; DE = the logical offset
-  07C6'   73                    	MOV	M,E
-  07C7'   23                    	INX	H
-  07C8'   72                    	MOV	M,D
-  07C9'   23                    	INX	H
-  07CA'   EB                    	XCHG			; DE = the record, past the offset
-  07CB'   2A 0A66'              	LHLD	UNDCL
-  07CE'   EB                    	XCHG			; ... and HL back, with DE = the length
-  07CF'   73                    	MOV	M,E
+  07BC'   3A 0A63'              	LDA	UNDN
+  07BF'   CD 07F9'              	CALL	URADDR
+  07C2'   3A 0A6A'              	LDA	UNDTY
+  07C5'   77                    	MOV	M,A
+  07C6'   23                    	INX	H
+  07C7'   D1                    	POP	D
+  07C8'   D5                    	PUSH	D		; DE = the logical offset
+  07C9'   73                    	MOV	M,E
+  07CA'   23                    	INX	H
+  07CB'   72                    	MOV	M,D
+  07CC'   23                    	INX	H
+  07CD'   EB                    	XCHG			; DE = the record, past the offset
+  07CE'   2A 0A71'              	LHLD	UNDCL
 	MACRO-80 3.44	09-Dec-81	PAGE	1-33
 
 
-  07D0'   23                    	INX	H
-  07D1'   72                    	MOV	M,D
-  07D2'   23                    	INX	H
-  07D3'   3A 0A64'              	LDA	UNDBO
-  07D6'   77                    	MOV	M,A
-  07D7'   23                    	INX	H
-  07D8'   3A 0A65'              	LDA	UNDBO+1
-  07DB'   77                    	MOV	M,A
-  07DC'   3A 0A58'              	LDA	UNDN
-  07DF'   3C                    	INR	A
-  07E0'   32 0A58'              	STA	UNDN
-  07E3'   C3 05D9'              	JMP	POPRET
-  07E6'                         UNDCBD:
-  07E6'   3E 01                 	MVI	A,1
-  07E8'   32 0A5A'              	STA	UNDBAD		; too big to keep: not undoable at all
-  07EB'   C3 05D9'              	JMP	POPRET
+  07D1'   EB                    	XCHG			; ... and HL back, with DE = the length
+  07D2'   73                    	MOV	M,E
+  07D3'   23                    	INX	H
+  07D4'   72                    	MOV	M,D
+  07D5'   23                    	INX	H
+  07D6'   3A 0A6F'              	LDA	UNDBO
+  07D9'   77                    	MOV	M,A
+  07DA'   23                    	INX	H
+  07DB'   3A 0A70'              	LDA	UNDBO+1
+  07DE'   77                    	MOV	M,A
+  07DF'   3A 0A63'              	LDA	UNDN
+  07E2'   3C                    	INR	A
+  07E3'   32 0A63'              	STA	UNDN
+  07E6'   C3 05D9'              	JMP	POPRET
+  07E9'                         UNDCBD:
+  07E9'   3E 01                 	MVI	A,1
+  07EB'   32 0A65'              	STA	UNDBAD		; too big to keep: not undoable at all
+  07EE'   C3 05D9'              	JMP	POPRET
+                                
+                                ;EDTGO -- UNDCHG is the one place every change to the text goes by, the
+                                ;replay's own included, so it is also where the editor hears of one: EDTHK is
+                                ;called with A = UR_INS / UR_DEL, HL = the logical offset and BC = the length,
+                                ;and must keep BC.  VI.MAC points it at the marks; a harness leaves it a RET.
+  07F1'                         EDTGO:
+  07F1'   E5                    	PUSH	H
+  07F2'   2A 07F7'              	LHLD	EDTHK
+  07F5'   E3                    	XTHL
+  07F6'   C9                    	RET
+  07F7'   060E'                 EDTHK:	DW	ERMNUL
                                 
                                 ;URADDR -- A = a record index -> HL = its address (base + n*8 - n).
-  07EE'                         URADDR:
-  07EE'   6F                    	MOV	L,A
-  07EF'   26 00                 	MVI	H,0
-  07F1'   5D                    	MOV	E,L
-  07F2'   54                    	MOV	D,H
-  07F3'   29                    	DAD	H
-  07F4'   29                    	DAD	H
-  07F5'   29                    	DAD	H		; HL = n*8
-  07F6'   CD 058E'              	CALL	SUBHD		; HL = n*7
-  07F9'   11 0000*              	LXI	D,UNDREC
-  07FC'   19                    	DAD	D
-  07FD'   C9                    	RET
+  07F9'                         URADDR:
+  07F9'   6F                    	MOV	L,A
+  07FA'   26 00                 	MVI	H,0
+  07FC'   5D                    	MOV	E,L
+  07FD'   54                    	MOV	D,H
+  07FE'   29                    	DAD	H
+  07FF'   29                    	DAD	H
+  0800'   29                    	DAD	H		; HL = n*8
+  0801'   CD 058E'              	CALL	SUBHD		; HL = n*7
+  0804'   11 0000*              	LXI	D,UNDREC
+  0807'   19                    	DAD	D
+  0808'   C9                    	RET
                                 
                                 ;UNDEXT -- A = 0 (Z) when this step only carries the last record on: an insert
                                 ;starting exactly where the last insert ended, which is what typing does.  Its
                                 ;bytes already sit contiguously behind that record's, so only the length grows.
                                 ;HL = this step's offset, BC = its length.
-  07FE'                         UNDEXT:
-  07FE'   C5                    	PUSH	B
-  07FF'   D5                    	PUSH	D
-  0800'   E5                    	PUSH	H
-  0801'   3A 0A5F'              	LDA	UNDTY
-  0804'   FE 01                 	CPI	UR_INS
-  0806'   C2 0850'              	JNZ	UNDXNO		; only inserts fold
-  0809'   3A 0A58'              	LDA	UNDN
-  080C'   B7                    	ORA	A
-  080D'   CA 0850'              	JZ	UNDXNO		; nothing to fold into
-  0810'   3D                    	DCR	A
-  0811'   CD 07EE'              	CALL	URADDR
-  0814'   22 0A68'              	SHLD	UNDLSA
-  0817'   7E                    	MOV	A,M
-  0818'   FE 01                 	CPI	UR_INS
-  081A'   C2 0850'              	JNZ	UNDXNO
-  081D'   2A 0A68'              	LHLD	UNDLSA
-  0820'   23                    	INX	H
-  0821'   CD 05A7'              	CALL	LDHLI		; HL = the last record's offset
-  0824'   EB                    	XCHG
-  0825'   2A 0A68'              	LHLD	UNDLSA
+  0809'                         UNDEXT:
+  0809'   C5                    	PUSH	B
+  080A'   D5                    	PUSH	D
+  080B'   E5                    	PUSH	H
+  080C'   3A 0A6A'              	LDA	UNDTY
+  080F'   FE 01                 	CPI	UR_INS
+  0811'   C2 085B'              	JNZ	UNDXNO		; only inserts fold
+  0814'   3A 0A63'              	LDA	UNDN
 	MACRO-80 3.44	09-Dec-81	PAGE	1-34
 
 
-  0828'   23                    	INX	H
-  0829'   23                    	INX	H
-  082A'   23                    	INX	H
-  082B'   CD 05A7'              	CALL	LDHLI		; HL = its length
-  082E'   19                    	DAD	D		; HL = where it ends
+  0817'   B7                    	ORA	A
+  0818'   CA 085B'              	JZ	UNDXNO		; nothing to fold into
+  081B'   3D                    	DCR	A
+  081C'   CD 07F9'              	CALL	URADDR
+  081F'   22 0A73'              	SHLD	UNDLSA
+  0822'   7E                    	MOV	A,M
+  0823'   FE 01                 	CPI	UR_INS
+  0825'   C2 085B'              	JNZ	UNDXNO
+  0828'   2A 0A73'              	LHLD	UNDLSA
+  082B'   23                    	INX	H
+  082C'   CD 05A7'              	CALL	LDHLI		; HL = the last record's offset
   082F'   EB                    	XCHG
-  0830'   E1                    	POP	H
-  0831'   E5                    	PUSH	H		; HL = this step's offset
-  0832'   CD 05AC'              	CALL	CMP16		; Z iff this step starts exactly there
-  0835'   C2 0850'              	JNZ	UNDXNO
-  0838'   2A 0A68'              	LHLD	UNDLSA
-  083B'   23                    	INX	H
-  083C'   23                    	INX	H
-  083D'   23                    	INX	H
-  083E'   E5                    	PUSH	H
-  083F'   CD 05A7'              	CALL	LDHLI		; HL = the last record's length
-  0842'   EB                    	XCHG
-  0843'   2A 0A66'              	LHLD	UNDCL
-  0846'   19                    	DAD	D		; ... grown by this step's
-  0847'   EB                    	XCHG
-  0848'   E1                    	POP	H
-  0849'   73                    	MOV	M,E
-  084A'   23                    	INX	H
-  084B'   72                    	MOV	M,D
-  084C'   AF                    	XRA	A		; Z: folded, no new record
-  084D'   C3 05D9'              	JMP	POPRET
-  0850'                         UNDXNO:
-  0850'   3E 01                 	MVI	A,1
-  0852'   B7                    	ORA	A		; NZ: it needs a record of its own
-  0853'   C3 05D9'              	JMP	POPRET
+  0830'   2A 0A73'              	LHLD	UNDLSA
+  0833'   23                    	INX	H
+  0834'   23                    	INX	H
+  0835'   23                    	INX	H
+  0836'   CD 05A7'              	CALL	LDHLI		; HL = its length
+  0839'   19                    	DAD	D		; HL = where it ends
+  083A'   EB                    	XCHG
+  083B'   E1                    	POP	H
+  083C'   E5                    	PUSH	H		; HL = this step's offset
+  083D'   CD 05AC'              	CALL	CMP16		; Z iff this step starts exactly there
+  0840'   C2 085B'              	JNZ	UNDXNO
+  0843'   2A 0A73'              	LHLD	UNDLSA
+  0846'   23                    	INX	H
+  0847'   23                    	INX	H
+  0848'   23                    	INX	H
+  0849'   E5                    	PUSH	H
+  084A'   CD 05A7'              	CALL	LDHLI		; HL = the last record's length
+  084D'   EB                    	XCHG
+  084E'   2A 0A71'              	LHLD	UNDCL
+  0851'   19                    	DAD	D		; ... grown by this step's
+  0852'   EB                    	XCHG
+  0853'   E1                    	POP	H
+  0854'   73                    	MOV	M,E
+  0855'   23                    	INX	H
+  0856'   72                    	MOV	M,D
+  0857'   AF                    	XRA	A		; Z: folded, no new record
+  0858'   C3 05D9'              	JMP	POPRET
+  085B'                         UNDXNO:
+  085B'   3E 01                 	MVI	A,1
+  085D'   B7                    	ORA	A		; NZ: it needs a record of its own
+  085E'   C3 05D9'              	JMP	POPRET
                                 
                                 ;UNDAPT -- append BC bytes of resident text, from logical offset HL, to the
                                 ;undo region.  One byte at a time, re-reading the offset through CHARAT and the
                                 ;region through its pointer cell every time, so growing the region (which
                                 ;slides regions about) can never leave this loop holding a stale address.
                                 ;CY if it outgrows the claim, and the caller then gives the change up.
-  0856'                         UNDAPT:
-  0856'   78                    	MOV	A,B
-  0857'   B1                    	ORA	C
-  0858'   C8                    	RZ			; nothing to append
-  0859'                         UNDAPL:
-  0859'   C5                    	PUSH	B
-  085A'   E5                    	PUSH	H
-  085B'   CD 064C'              	CALL	CHARAT		; A = the text byte at this offset
-  085E'   CD 086C'              	CALL	UNDAPB		; ... into the region
-  0861'   E1                    	POP	H
-  0862'   C1                    	POP	B
-  0863'   D8                    	RC
-  0864'   23                    	INX	H
-  0865'   0B                    	DCX	B
-  0866'   78                    	MOV	A,B
-  0867'   B1                    	ORA	C
-  0868'   C2 0859'              	JNZ	UNDAPL
-  086B'   C9                    	RET
-                                
-                                ;UNDAPB -- put the byte in A into the room UNDGRW claimed.  It does NOT grow
+  0861'                         UNDAPT:
+  0861'   78                    	MOV	A,B
+  0862'   B1                    	ORA	C
+  0863'   C8                    	RZ			; nothing to append
+  0864'                         UNDAPL:
+  0864'   C5                    	PUSH	B
+  0865'   E5                    	PUSH	H
 	MACRO-80 3.44	09-Dec-81	PAGE	1-35
 
 
+  0866'   CD 064C'              	CALL	CHARAT		; A = the text byte at this offset
+  0869'   CD 0877'              	CALL	UNDAPB		; ... into the region
+  086C'   E1                    	POP	H
+  086D'   C1                    	POP	B
+  086E'   D8                    	RC
+  086F'   23                    	INX	H
+  0870'   0B                    	DCX	B
+  0871'   78                    	MOV	A,B
+  0872'   B1                    	ORA	C
+  0873'   C2 0864'              	JNZ	UNDAPL
+  0876'   C9                    	RET
+                                
+                                ;UNDAPB -- put the byte in A into the room UNDGRW claimed.  It does NOT grow
                                 ;the region -- see UNDGRW -- so CY, and the change given up on, once the room
                                 ;is used up: a change bigger than the region is simply not undoable.
-  086C'                         UNDAPB:
-  086C'   C5                    	PUSH	B
-  086D'   D5                    	PUSH	D
-  086E'   E5                    	PUSH	H
-  086F'   32 0A6E'              	STA	UNDB1
-  0872'   21 0A24'              	LXI	H,UBEG
-  0875'   CD 04DA'              	CALL	PRSPAN		; BC = the region's size
-  0878'   2A 0A6C'              	LHLD	UNDPTR
-  087B'   EB                    	XCHG			; DE = where the next byte goes
-  087C'   60                    	MOV	H,B
-  087D'   69                    	MOV	L,C
-  087E'   CD 05AC'              	CALL	CMP16		; CY iff that is still inside the region
-  0881'   D2 0897'              	JNC	UNDAPF
-  0884'   2A 0A24'              	LHLD	UBEG		; re-read: a relocation moves the region
-  0887'   19                    	DAD	D
-  0888'   3A 0A6E'              	LDA	UNDB1
-  088B'   77                    	MOV	M,A
-  088C'   2A 0A6C'              	LHLD	UNDPTR
-  088F'   23                    	INX	H
-  0890'   22 0A6C'              	SHLD	UNDPTR
-  0893'   B7                    	ORA	A		; CY clear: it went in
-  0894'   C3 05D9'              	JMP	POPRET
-  0897'                         UNDAPF:
-  0897'   3E 01                 	MVI	A,1
-  0899'   32 0A5A'              	STA	UNDBAD
-  089C'   37                    	STC
-  089D'   C3 05D9'              	JMP	POPRET
+  0877'                         UNDAPB:
+  0877'   C5                    	PUSH	B
+  0878'   D5                    	PUSH	D
+  0879'   E5                    	PUSH	H
+  087A'   32 0A79'              	STA	UNDB1
+  087D'   21 0A2F'              	LXI	H,UBEG
+  0880'   CD 04DA'              	CALL	PRSPAN		; BC = the region's size
+  0883'   2A 0A77'              	LHLD	UNDPTR
+  0886'   EB                    	XCHG			; DE = where the next byte goes
+  0887'   60                    	MOV	H,B
+  0888'   69                    	MOV	L,C
+  0889'   CD 05AC'              	CALL	CMP16		; CY iff that is still inside the region
+  088C'   D2 08A2'              	JNC	UNDAPF
+  088F'   2A 0A2F'              	LHLD	UBEG		; re-read: a relocation moves the region
+  0892'   19                    	DAD	D
+  0893'   3A 0A79'              	LDA	UNDB1
+  0896'   77                    	MOV	M,A
+  0897'   2A 0A77'              	LHLD	UNDPTR
+  089A'   23                    	INX	H
+  089B'   22 0A77'              	SHLD	UNDPTR
+  089E'   B7                    	ORA	A		; CY clear: it went in
+  089F'   C3 05D9'              	JMP	POPRET
+  08A2'                         UNDAPF:
+  08A2'   3E 01                 	MVI	A,1
+  08A4'   32 0A65'              	STA	UNDBAD
+  08A7'   37                    	STC
+  08A8'   C3 05D9'              	JMP	POPRET
                                 
                                 ;UNDRM -- CY, and the change given up on, unless the arena still holds UNDRSV
                                 ;free.  The capture must never page: paging moves the window off the change and
@@ -2102,194 +2115,197 @@
                                 ;free also keeps MKGAP off its MKROOM path, so the capture cannot page even by
                                 ;accident, and it fails QUIETLY where QROOM raises 'QBUF FULL' -- undo going
                                 ;away must never stop the editing.
-  08A0'                         UNDRM:
-  08A0'   C5                    	PUSH	B
-  08A1'   D5                    	PUSH	D
-  08A2'   E5                    	PUSH	H
-  08A3'   CD 0474'              	CALL	BUFSUM		; DE = the arena's free bytes
-  08A6'   21 0200               	LXI	H,UNDRSV
-  08A9'   CD 05AC'              	CALL	CMP16		; CY iff less than that is left
-  08AC'   D2 05D9'              	JNC	POPRET
-  08AF'   3E 01                 	MVI	A,1
-  08B1'   32 0A5A'              	STA	UNDBAD
-  08B4'   37                    	STC
-  08B5'   C3 05D9'              	JMP	POPRET
+  08AB'                         UNDRM:
+  08AB'   C5                    	PUSH	B
+  08AC'   D5                    	PUSH	D
+  08AD'   E5                    	PUSH	H
+  08AE'   CD 0474'              	CALL	BUFSUM		; DE = the arena's free bytes
+  08B1'   21 0200               	LXI	H,UNDRSV
+  08B4'   CD 05AC'              	CALL	CMP16		; CY iff less than that is left
+	MACRO-80 3.44	09-Dec-81	PAGE	1-36
+
+
+  08B7'   D2 05D9'              	JNC	POPRET
+  08BA'   3E 01                 	MVI	A,1
+  08BC'   32 0A65'              	STA	UNDBAD
+  08BF'   37                    	STC
+  08C0'   C3 05D9'              	JMP	POPRET
                                 
                                 ;---------------------------------------------------------------- the replay
                                 
                                 ;UNDO -- 'u'.  CY when there is nothing to undo: no change captured, a change
                                 ;too big to have been captured, or the pager has moved the window off it.
-  08B8'                         UNDO:
-  08B8'   AF                    	XRA	A
-  08B9'   32 0A5E'              	STA	UNDWHY		; refused for want of a change, until told else
-	MACRO-80 3.44	09-Dec-81	PAGE	1-36
-
-
-  08BC'   3A 0A58'              	LDA	UNDN
-  08BF'   B7                    	ORA	A
-  08C0'   37                    	STC
-  08C1'   C8                    	RZ			; nothing captured
-  08C2'   3A 0A5A'              	LDA	UNDBAD
-  08C5'   B7                    	ORA	A
-  08C6'   CA 08D0'              	JZ	UND_OK
-  08C9'   3E 02                 	MVI	A,2
-  08CB'   32 0A5E'              	STA	UNDWHY		; too big to have been captured: CMD.MAC says
-  08CE'   37                    	STC			;   so, rather than ringing the bell at a user
-  08CF'   C9                    	RET			;   who has no way to know why
-  08D0'                         UND_OK:
-  08D0'   2A 0000*              	LHLD	PGTOPM
-  08D3'   EB                    	XCHG
-  08D4'   2A 0A6A'              	LHLD	UNDPG
-  08D7'   CD 05AC'              	CALL	CMP16
-  08DA'   C2 0901'              	JNZ	UNDPGD		; the pager has moved the window's top since,
+  08C3'                         UNDO:
+  08C3'   AF                    	XRA	A
+  08C4'   32 0A69'              	STA	UNDWHY		; refused for want of a change, until told else
+  08C7'   3A 0A63'              	LDA	UNDN
+  08CA'   B7                    	ORA	A
+  08CB'   37                    	STC
+  08CC'   C8                    	RZ			; nothing captured
+  08CD'   3A 0A65'              	LDA	UNDBAD
+  08D0'   B7                    	ORA	A
+  08D1'   CA 08DB'              	JZ	UND_OK
+  08D4'   3E 02                 	MVI	A,2
+  08D6'   32 0A69'              	STA	UNDWHY		; too big to have been captured: CMD.MAC says
+  08D9'   37                    	STC			;   so, rather than ringing the bell at a user
+  08DA'   C9                    	RET			;   who has no way to know why
+  08DB'                         UND_OK:
+  08DB'   2A 0000*              	LHLD	PGTOPM
+  08DE'   EB                    	XCHG
+  08DF'   2A 0A75'              	LHLD	UNDPG
+  08E2'   CD 05AC'              	CALL	CMP16
+  08E5'   C2 090C'              	JNZ	UNDPGD		; the pager has moved the window's top since,
                                 				;   so every offset the records hold has shifted
-  08DD'   3E 01                 	MVI	A,1
-  08DF'   32 0A5C'              	STA	UNDRPL		; the replay's own edits are not a new change
-  08E2'   3A 0A59'              	LDA	UNDST
-  08E5'   FE 01                 	CPI	1
-  08E7'   CA 0908'              	JZ	UNDREV
+  08E8'   3E 01                 	MVI	A,1
+  08EA'   32 0A67'              	STA	UNDRPL		; the replay's own edits are not a new change
+  08ED'   3A 0A64'              	LDA	UNDST
+  08F0'   FE 01                 	CPI	1
+  08F2'   CA 0913'              	JZ	UNDREV
                                 	;--- the last 'u' undid it: apply the records forward again (a redo) ---
-  08EA'   AF                    	XRA	A
-  08EB'   32 0A5D'              	STA	UNDDIR
-  08EE'   AF                    	XRA	A
-  08EF'                         UNDFWL:
-  08EF'   CD 0929'              	CALL	URSTEP
-  08F2'   3C                    	INR	A
-  08F3'   47                    	MOV	B,A
-  08F4'   3A 0A58'              	LDA	UNDN
-  08F7'   B8                    	CMP	B
-  08F8'   78                    	MOV	A,B
-  08F9'   C2 08EF'              	JNZ	UNDFWL
-  08FC'   3E 01                 	MVI	A,1
-  08FE'   C3 091A'              	JMP	UNDFIN
-  0901'                         UNDPGD:
-  0901'   3E 01                 	MVI	A,1
-  0903'   32 0A5E'              	STA	UNDWHY		; the change is no longer in the window
-  0906'   37                    	STC
-  0907'   C9                    	RET
-  0908'                         UNDREV:
-                                	;--- undo: the records backward, each one's inverse ---
-  0908'   3E 01                 	MVI	A,1
-  090A'   32 0A5D'              	STA	UNDDIR
-  090D'   3A 0A58'              	LDA	UNDN
-  0910'                         UNDRVL:
-  0910'   3D                    	DCR	A
-  0911'   CD 0929'              	CALL	URSTEP
-  0914'   B7                    	ORA	A
-  0915'   C2 0910'              	JNZ	UNDRVL
-  0918'   3E 02                 	MVI	A,2
-  091A'                         UNDFIN:
-  091A'   32 0A59'              	STA	UNDST
-  091D'   AF                    	XRA	A
+  08F5'   AF                    	XRA	A
+  08F6'   32 0A68'              	STA	UNDDIR
+  08F9'   AF                    	XRA	A
+  08FA'                         UNDFWL:
+  08FA'   CD 0934'              	CALL	URSTEP
+  08FD'   3C                    	INR	A
+  08FE'   47                    	MOV	B,A
+  08FF'   3A 0A63'              	LDA	UNDN
+  0902'   B8                    	CMP	B
+  0903'   78                    	MOV	A,B
+  0904'   C2 08FA'              	JNZ	UNDFWL
+  0907'   3E 01                 	MVI	A,1
+  0909'   C3 0925'              	JMP	UNDFIN
+  090C'                         UNDPGD:
+  090C'   3E 01                 	MVI	A,1
+  090E'   32 0A69'              	STA	UNDWHY		; the change is no longer in the window
+  0911'   37                    	STC
+  0912'   C9                    	RET
+  0913'                         UNDREV:
 	MACRO-80 3.44	09-Dec-81	PAGE	1-37
 
 
-  091E'   32 0A5C'              	STA	UNDRPL
+                                	;--- undo: the records backward, each one's inverse ---
+  0913'   3E 01                 	MVI	A,1
+  0915'   32 0A68'              	STA	UNDDIR
+  0918'   3A 0A63'              	LDA	UNDN
+  091B'                         UNDRVL:
+  091B'   3D                    	DCR	A
+  091C'   CD 0934'              	CALL	URSTEP
+  091F'   B7                    	ORA	A
+  0920'   C2 091B'              	JNZ	UNDRVL
+  0923'   3E 02                 	MVI	A,2
+  0925'                         UNDFIN:
+  0925'   32 0A64'              	STA	UNDST
+  0928'   AF                    	XRA	A
+  0929'   32 0A67'              	STA	UNDRPL
                                 	;--- the cursor goes back where the command that changed it began:
                                 	;    measured from vim, which restores that and not the change's own
                                 	;    offset (CMD.MAC's VC_UNDO holds it inside the line) ---
-  0921'   2A 0A71'              	LHLD	UNDCUR
-  0924'   CD 0662'              	CALL	GOTO
-  0927'   B7                    	ORA	A		; CY clear: it happened
-  0928'   C9                    	RET
+  092C'   2A 0A7C'              	LHLD	UNDCUR
+  092F'   CD 0662'              	CALL	GOTO
+  0932'   B7                    	ORA	A		; CY clear: it happened
+  0933'   C9                    	RET
                                 
                                 ;URSTEP -- apply record A: as it stands when UNDDIR is 0 (a redo), inverted
                                 ;when it is 1 (an undo).  An insert applied puts its saved bytes back at its
                                 ;offset; an insert inverted deletes that many bytes there; a delete is the
                                 ;mirror of both.  A is preserved -- UNDO's loops count with it.
-  0929'                         URSTEP:
-  0929'   F5                    	PUSH	PSW
-  092A'   CD 07EE'              	CALL	URADDR
-  092D'   7E                    	MOV	A,M
-  092E'   32 0A5F'              	STA	UNDTY
-  0931'   23                    	INX	H
-  0932'   7E                    	MOV	A,M
-  0933'   32 0A60'              	STA	UNDOF
-  0936'   23                    	INX	H
-  0937'   7E                    	MOV	A,M
-  0938'   32 0A61'              	STA	UNDOF+1
-  093B'   23                    	INX	H
-  093C'   7E                    	MOV	A,M
-  093D'   32 0A62'              	STA	UNDLN
-  0940'   23                    	INX	H
-  0941'   7E                    	MOV	A,M
-  0942'   32 0A63'              	STA	UNDLN+1
-  0945'   23                    	INX	H
-  0946'   7E                    	MOV	A,M
-  0947'   32 0A64'              	STA	UNDBO
-  094A'   23                    	INX	H
-  094B'   7E                    	MOV	A,M
-  094C'   32 0A65'              	STA	UNDBO+1
-  094F'   3A 0A5F'              	LDA	UNDTY
-  0952'   47                    	MOV	B,A
-  0953'   3A 0A5D'              	LDA	UNDDIR
-  0956'   B7                    	ORA	A
-  0957'   CA 0963'              	JZ	URS_AP
-  095A'   78                    	MOV	A,B		; an undo inverts the record
-  095B'   FE 01                 	CPI	UR_INS
-  095D'   CA 0969'              	JZ	URS_DL
-  0960'   C3 0977'              	JMP	URS_IN
-  0963'                         URS_AP:
-  0963'   78                    	MOV	A,B		; a redo applies it as it stands
-  0964'   FE 01                 	CPI	UR_INS
-  0966'   CA 0977'              	JZ	URS_IN
-  0969'                         URS_DL:
-                                	;--- take the record's length back out at its offset ---
-  0969'   2A 0A60'              	LHLD	UNDOF
-  096C'   CD 0662'              	CALL	GOTO
-  096F'   2A 0A62'              	LHLD	UNDLN
-  0972'   CD 06BD'              	CALL	DELFWD
-  0975'   F1                    	POP	PSW
+  0934'                         URSTEP:
+  0934'   F5                    	PUSH	PSW
+  0935'   CD 07F9'              	CALL	URADDR
+  0938'   7E                    	MOV	A,M
+  0939'   32 0A6A'              	STA	UNDTY
+  093C'   23                    	INX	H
+  093D'   7E                    	MOV	A,M
+  093E'   32 0A6B'              	STA	UNDOF
+  0941'   23                    	INX	H
+  0942'   7E                    	MOV	A,M
+  0943'   32 0A6C'              	STA	UNDOF+1
+  0946'   23                    	INX	H
+  0947'   7E                    	MOV	A,M
+  0948'   32 0A6D'              	STA	UNDLN
+  094B'   23                    	INX	H
+  094C'   7E                    	MOV	A,M
+  094D'   32 0A6E'              	STA	UNDLN+1
+  0950'   23                    	INX	H
+  0951'   7E                    	MOV	A,M
+  0952'   32 0A6F'              	STA	UNDBO
+  0955'   23                    	INX	H
+  0956'   7E                    	MOV	A,M
+  0957'   32 0A70'              	STA	UNDBO+1
+  095A'   3A 0A6A'              	LDA	UNDTY
+  095D'   47                    	MOV	B,A
+  095E'   3A 0A68'              	LDA	UNDDIR
+  0961'   B7                    	ORA	A
+  0962'   CA 096E'              	JZ	URS_AP
+  0965'   78                    	MOV	A,B		; an undo inverts the record
+  0966'   FE 01                 	CPI	UR_INS
 	MACRO-80 3.44	09-Dec-81	PAGE	1-38
 
 
-  0976'   C9                    	RET
-  0977'                         URS_IN:
+  0968'   CA 0974'              	JZ	URS_DL
+  096B'   C3 0982'              	JMP	URS_IN
+  096E'                         URS_AP:
+  096E'   78                    	MOV	A,B		; a redo applies it as it stands
+  096F'   FE 01                 	CPI	UR_INS
+  0971'   CA 0982'              	JZ	URS_IN
+  0974'                         URS_DL:
+                                	;--- take the record's length back out at its offset ---
+  0974'   2A 0A6B'              	LHLD	UNDOF
+  0977'   CD 0662'              	CALL	GOTO
+  097A'   2A 0A6D'              	LHLD	UNDLN
+  097D'   CD 06BD'              	CALL	DELFWD
+  0980'   F1                    	POP	PSW
+  0981'   C9                    	RET
+  0982'                         URS_IN:
                                 	;--- put the record's saved bytes back in at its offset ---
-  0977'   2A 0A60'              	LHLD	UNDOF
-  097A'   CD 0662'              	CALL	GOTO
-  097D'   2A 0A62'              	LHLD	UNDLN
-  0980'   44                    	MOV	B,H
-  0981'   4D                    	MOV	C,L
-  0982'   2A 0A64'              	LHLD	UNDBO
-  0985'                         URSILP:
-  0985'   C5                    	PUSH	B
-  0986'   E5                    	PUSH	H
-  0987'   EB                    	XCHG			; DE = the byte's offset within the region
-  0988'   2A 0A24'              	LHLD	UBEG		; ... re-read every byte: inserting text can
-  098B'   19                    	DAD	D		;     slide the region out from under it
-  098C'   7E                    	MOV	A,M
-  098D'   CD 0045'              	CALL	PUTGAP
-  0990'   FE 0A                 	CPI	LF
-  0992'   C2 099C'              	JNZ	URSILN
-  0995'   2A 0A73'              	LHLD	LNDLT		; a line end put back is the cursor crossing
-  0998'   23                    	INX	H		;   one, and GOTO keeps LNDLT for every move the
-  0999'   22 0A73'              	SHLD	LNDLT		;   replay makes -- so the renderer needs no
-  099C'                         URSILN:				;   whole-window rescan to find that out
-  099C'   E1                    	POP	H
-  099D'   C1                    	POP	B
-  099E'   23                    	INX	H
-  099F'   0B                    	DCX	B
-  09A0'   78                    	MOV	A,B
-  09A1'   B1                    	ORA	C
-  09A2'   C2 0985'              	JNZ	URSILP
-  09A5'   F1                    	POP	PSW
-  09A6'   C9                    	RET
+  0982'   2A 0A6B'              	LHLD	UNDOF
+  0985'   CD 0662'              	CALL	GOTO
+  0988'   2A 0A6D'              	LHLD	UNDLN
+  098B'   44                    	MOV	B,H
+  098C'   4D                    	MOV	C,L
+  098D'   2A 0A6F'              	LHLD	UNDBO
+  0990'                         URSILP:
+  0990'   C5                    	PUSH	B
+  0991'   E5                    	PUSH	H
+  0992'   EB                    	XCHG			; DE = the byte's offset within the region
+  0993'   2A 0A2F'              	LHLD	UBEG		; ... re-read every byte: inserting text can
+  0996'   19                    	DAD	D		;     slide the region out from under it
+  0997'   7E                    	MOV	A,M
+  0998'   CD 0045'              	CALL	PUTGAP
+  099B'   FE 0A                 	CPI	LF
+  099D'   C2 09A7'              	JNZ	URSILN
+  09A0'   2A 0A7E'              	LHLD	LNDLT		; a line end put back is the cursor crossing
+  09A3'   23                    	INX	H		;   one, and GOTO keeps LNDLT for every move the
+  09A4'   22 0A7E'              	SHLD	LNDLT		;   replay makes -- so the renderer needs no
+  09A7'                         URSILN:				;   whole-window rescan to find that out
+  09A7'   E1                    	POP	H
+  09A8'   C1                    	POP	B
+  09A9'   23                    	INX	H
+  09AA'   0B                    	DCX	B
+  09AB'   78                    	MOV	A,B
+  09AC'   B1                    	ORA	C
+  09AD'   C2 0990'              	JNZ	URSILP
+  09B0'   F1                    	POP	PSW
+  09B1'   C9                    	RET
                                 
                                 ;---------------------------------------------------------------- the hooks
                                 
                                 ;UNDPUT -- PUTGAP's tail: the one byte now sitting just below the cursor.
-  09A7'                         UNDPUT:
-  09A7'   F5                    	PUSH	PSW
-  09A8'   C5                    	PUSH	B
-  09A9'   D5                    	PUSH	D
-  09AA'   E5                    	PUSH	H
-  09AB'   CD 0611'              	CALL	CUROFF
-  09AE'   2B                    	DCX	H
-  09AF'   01 0001               	LXI	B,1
-  09B2'   3E 01                 	MVI	A,UR_INS
-  09B4'   CD 0773'              	CALL	UNDCHG
-  09B7'   C3 0A15'              	JMP	UNDHX
+  09B2'                         UNDPUT:
+  09B2'   F5                    	PUSH	PSW
+  09B3'   C5                    	PUSH	B
+  09B4'   D5                    	PUSH	D
+  09B5'   E5                    	PUSH	H
+  09B6'   CD 0611'              	CALL	CUROFF
+  09B9'   2B                    	DCX	H
+	MACRO-80 3.44	09-Dec-81	PAGE	1-39
+
+
+  09BA'   01 0001               	LXI	B,1
+  09BD'   3E 01                 	MVI	A,UR_INS
+  09BF'   CD 0773'              	CALL	UNDCHG
+  09C2'   C3 0A20'              	JMP	UNDHX
                                 
                                 ;UNDGET -- QGET's tail: BC bytes of register now in, the cursor past them.
                                 ;UNDINS is the same entry by its general name: INSBLK itself carries NO hook
@@ -2297,94 +2313,91 @@
                                 ;splices a block in -- ':s' replacing a match -- has to say so itself, exactly
                                 ;as QGET does.  Without it 'u' puts the deleted text back and leaves the
                                 ;inserted text there ('a-a-a' undid to 'aZ-aZ-aZ').
-  09BA'                         UNDINS:
-  09BA'                         UNDGET:
-	MACRO-80 3.44	09-Dec-81	PAGE	1-39
-
-
-  09BA'   F5                    	PUSH	PSW
-  09BB'   C5                    	PUSH	B
-  09BC'   D5                    	PUSH	D
-  09BD'   E5                    	PUSH	H
-  09BE'   78                    	MOV	A,B
-  09BF'   B1                    	ORA	C
-  09C0'   CA 0A15'              	JZ	UNDHX
-  09C3'   CD 0611'              	CALL	CUROFF
-  09C6'   50                    	MOV	D,B
-  09C7'   59                    	MOV	E,C
-  09C8'   CD 058E'              	CALL	SUBHD		; HL = where the put began
-  09CB'   3E 01                 	MVI	A,UR_INS
-  09CD'   CD 0773'              	CALL	UNDCHG
-  09D0'   C3 0A15'              	JMP	UNDHX
+  09C5'                         UNDINS:
+  09C5'                         UNDGET:
+  09C5'   F5                    	PUSH	PSW
+  09C6'   C5                    	PUSH	B
+  09C7'   D5                    	PUSH	D
+  09C8'   E5                    	PUSH	H
+  09C9'   78                    	MOV	A,B
+  09CA'   B1                    	ORA	C
+  09CB'   CA 0A20'              	JZ	UNDHX
+  09CE'   CD 0611'              	CALL	CUROFF
+  09D1'   50                    	MOV	D,B
+  09D2'   59                    	MOV	E,C
+  09D3'   CD 058E'              	CALL	SUBHD		; HL = where the put began
+  09D6'   3E 01                 	MVI	A,UR_INS
+  09D8'   CD 0773'              	CALL	UNDCHG
+  09DB'   C3 0A20'              	JMP	UNDHX
                                 
                                 ;UNDDLF -- DELFWD's head: HL bytes about to go forward from the cursor.
-  09D3'                         UNDDLF:
-  09D3'   F5                    	PUSH	PSW
-  09D4'   C5                    	PUSH	B
-  09D5'   D5                    	PUSH	D
-  09D6'   E5                    	PUSH	H
-  09D7'   44                    	MOV	B,H
-  09D8'   4D                    	MOV	C,L
-  09D9'   CD 0611'              	CALL	CUROFF
-  09DC'   3E 02                 	MVI	A,UR_DEL
-  09DE'   CD 0773'              	CALL	UNDCHG
-  09E1'   C3 0A15'              	JMP	UNDHX
+  09DE'                         UNDDLF:
+  09DE'   F5                    	PUSH	PSW
+  09DF'   C5                    	PUSH	B
+  09E0'   D5                    	PUSH	D
+  09E1'   E5                    	PUSH	H
+  09E2'   44                    	MOV	B,H
+  09E3'   4D                    	MOV	C,L
+  09E4'   CD 0611'              	CALL	CUROFF
+  09E7'   3E 02                 	MVI	A,UR_DEL
+  09E9'   CD 0773'              	CALL	UNDCHG
+  09EC'   C3 0A20'              	JMP	UNDHX
                                 
                                 ;UNDDLQ -- QPUTLN's head: BC bytes of whole lines about to go into the register.
-  09E4'                         UNDDLQ:
-  09E4'   F5                    	PUSH	PSW
-  09E5'   C5                    	PUSH	B
-  09E6'   D5                    	PUSH	D
-  09E7'   E5                    	PUSH	H
-  09E8'   CD 0611'              	CALL	CUROFF
-  09EB'   3E 02                 	MVI	A,UR_DEL
-  09ED'   CD 0773'              	CALL	UNDCHG
-  09F0'   C3 0A15'              	JMP	UNDHX
+  09EF'                         UNDDLQ:
+  09EF'   F5                    	PUSH	PSW
+  09F0'   C5                    	PUSH	B
+  09F1'   D5                    	PUSH	D
+  09F2'   E5                    	PUSH	H
+  09F3'   CD 0611'              	CALL	CUROFF
+  09F6'   3E 02                 	MVI	A,UR_DEL
+  09F8'   CD 0773'              	CALL	UNDCHG
+  09FB'   C3 0A20'              	JMP	UNDHX
                                 
                                 ;UNDDLP -- DELPRV's head: the one byte just below the cursor, about to go.
-  09F3'                         UNDDLP:
-  09F3'   F5                    	PUSH	PSW
-  09F4'   C5                    	PUSH	B
-  09F5'   D5                    	PUSH	D
-  09F6'   E5                    	PUSH	H
-  09F7'   CD 0611'              	CALL	CUROFF
-  09FA'   2B                    	DCX	H
-  09FB'   01 0001               	LXI	B,1
-  09FE'   3E 02                 	MVI	A,UR_DEL
-  0A00'   CD 0773'              	CALL	UNDCHG
-  0A03'   C3 0A15'              	JMP	UNDHX
-                                
-                                ;UNDUDF -- UNDELF's tail: the byte DELTO just made text again, at the cursor.
-  0A06'                         UNDUDF:
-  0A06'   F5                    	PUSH	PSW
-  0A07'   C5                    	PUSH	B
+  09FE'                         UNDDLP:
+  09FE'   F5                    	PUSH	PSW
+  09FF'   C5                    	PUSH	B
 	MACRO-80 3.44	09-Dec-81	PAGE	1-40
 
 
-  0A08'   D5                    	PUSH	D
-  0A09'   E5                    	PUSH	H
-  0A0A'   CD 0611'              	CALL	CUROFF
-  0A0D'   01 0001               	LXI	B,1
-  0A10'   3E 01                 	MVI	A,UR_INS
-  0A12'   CD 0773'              	CALL	UNDCHG
+  0A00'   D5                    	PUSH	D
+  0A01'   E5                    	PUSH	H
+  0A02'   CD 0611'              	CALL	CUROFF
+  0A05'   2B                    	DCX	H
+  0A06'   01 0001               	LXI	B,1
+  0A09'   3E 02                 	MVI	A,UR_DEL
+  0A0B'   CD 0773'              	CALL	UNDCHG
+  0A0E'   C3 0A20'              	JMP	UNDHX
+                                
+                                ;UNDUDF -- UNDELF's tail: the byte DELTO just made text again, at the cursor.
+  0A11'                         UNDUDF:
+  0A11'   F5                    	PUSH	PSW
+  0A12'   C5                    	PUSH	B
+  0A13'   D5                    	PUSH	D
+  0A14'   E5                    	PUSH	H
+  0A15'   CD 0611'              	CALL	CUROFF
+  0A18'   01 0001               	LXI	B,1
+  0A1B'   3E 01                 	MVI	A,UR_INS
+  0A1D'   CD 0773'              	CALL	UNDCHG
                                 ;UNDHX -- every hook leaves the primitive's own registers and flags alone.
-  0A15'                         UNDHX:
-  0A15'   E1                    	POP	H
-  0A16'   D1                    	POP	D
-  0A17'   C1                    	POP	B
-  0A18'   F1                    	POP	PSW
-  0A19'   C9                    	RET
+  0A20'                         UNDHX:
+  0A20'   E1                    	POP	H
+  0A21'   D1                    	POP	D
+  0A22'   C1                    	POP	B
+  0A23'   F1                    	POP	PSW
+  0A24'   C9                    	RET
                                 
                                 ;============================================================
                                 ; DATA -- the (base,limit) pointer row (WM 6828-6871 layout) + scratch.
                                 ; The disassembly's DB values for these cells are aliased code bytes; only the
                                 ; order/adjacency is authoritative.  BINIT sets every cell at run time.
                                 ;============================================================
-  0A1A'   0000                  BUFBEG: DW	0		; region-array base
-  0A1C'   0000                  QBEG:	DW	0		; ^Q scratch buffer begin
-  0A1E'   0000                  QEND:	DW	0		; ^Q scratch buffer end
-  0A20'   0000                  HOLEQP:	 DW	 0
-  0A22'   0000                  TXTBAS: DW	0		; text base = PBEGMEM+1 (past the 0 sentinel)
+  0A25'   0000                  BUFBEG: DW	0		; region-array base
+  0A27'   0000                  QBEG:	DW	0		; ^Q scratch buffer begin
+  0A29'   0000                  QEND:	DW	0		; ^Q scratch buffer end
+  0A2B'   0000                  HOLEQP:	 DW	 0
+  0A2D'   0000                  TXTBAS: DW	0		; text base = PBEGMEM+1 (past the 0 sentinel)
                                 ;UBEG/UEND -- APPENDED: the undo region, a region of the arena like the Q
                                 ;buffer, with UEND its insertion point.  It goes HERE, between the slider and
                                 ;the text, so both of the row's interleaved walks stay aligned: the holes from
@@ -2393,52 +2406,52 @@
                                 ;(QBEG,QEND) (HOLEQP,TXTBAS) (UBEG,UEND) (TXTBEG,GAPBEG) (GAPEND,TXTEND).
                                 ;NEXTPR, MOVGAP, BUFSUM, HOLEUP/HOLEDN, PRSPAN and INIBAS's count are all
                                 ;untouched by it; INIGAP empties it.
-  0A24'   0000                  UBEG:	DW	0		; undo region begin
-  0A26'   0000                  UEND:	DW	0		; undo region end = its insertion point
-  0A28'   0000                  TXTBEG: DW	0		; window start
-  0A2A'   0000                  GAPBEG: DW	0		; cursor / gap start
-  0A2C'   0000                  GAPEND: DW	0		; gap end / first char after cursor
-  0A2E'   0000                  TXTEND: DW	0		; window end
-  0A2F'                         PRTERM	 EQU	 TXTEND+1	 ; NEXTPR terminator = high byte of TXTEND
-  0A30'   0000                  BUFEND: DW	0		; top of usable text RAM
-  0A31'                         MVGTOP	 EQU	 BUFEND+1	 ; MOVGAP upper bound = high byte of BUFEND
+  0A2F'   0000                  UBEG:	DW	0		; undo region begin
+  0A31'   0000                  UEND:	DW	0		; undo region end = its insertion point
+  0A33'   0000                  TXTBEG: DW	0		; window start
+  0A35'   0000                  GAPBEG: DW	0		; cursor / gap start
+  0A37'   0000                  GAPEND: DW	0		; gap end / first char after cursor
+  0A39'   0000                  TXTEND: DW	0		; window end
+  0A3A'                         PRTERM	 EQU	 TXTEND+1	 ; NEXTPR terminator = high byte of TXTEND
+  0A3B'   0000                  BUFEND: DW	0		; top of usable text RAM
+  0A3C'                         MVGTOP	 EQU	 BUFEND+1	 ; MOVGAP upper bound = high byte of BUFEND
                                 
-  0A32'   00                    ERRFLG: DB	0		; nonzero after ERRMSG fired (harness reads it)
+  0A3D'   00                    ERRFLG: DB	0		; nonzero after ERRMSG fired (harness reads it)
+	MACRO-80 3.44	09-Dec-81	PAGE	1-41
+
+
                                 
                                 ;The search pattern, in WM's SRCHBUF layout (WM 6900): the length, then the
                                 ;string, 0-terminated.  CMD.MAC fills it from the '/' line and passes DE =
                                 ;SRCHST; FWDCNT reads the length from the byte below that, as WM does.
-  0A33'   1E                    SRCMAX: DB	SRMAX		; ... its capacity, so CMD.MAC cannot drift
-  0A34'   00                    SRCHBF: DB	0		; the pattern length
-  0A35'                         SRCHST: DS	SRMAX+1		; the pattern, 0-terminated
+  0A3E'   1E                    SRCMAX: DB	SRMAX		; ... its capacity, so CMD.MAC cannot drift
+  0A3F'   00                    SRCHBF: DB	0		; the pattern length
+  0A40'                         SRCHST: DS	SRMAX+1		; the pattern, 0-terminated
                                 
-  0A54'   0000                  L2756:	DW	0		; WM L2756 -- GOLINE's last target position
-  0A56'   0000                  QCPDON: DW	0		; (appended) QCPYN: bytes already copied in
+  0A5F'   0000                  L2756:	DW	0		; WM L2756 -- GOLINE's last target position
+  0A61'   0000                  QCPDON: DW	0		; (appended) QCPYN: bytes already copied in
                                 ;--- 'u' (undo): see the UNDO section above for how these are driven.
-  0A58'   00                    UNDN:	DB	0		; steps captured (0 = nothing to undo)
-  0A59'   00                    UNDST:	DB	0		; 0 none, 1 change applied ('u' undoes it),
-	MACRO-80 3.44	09-Dec-81	PAGE	1-41
-
-
+  0A63'   00                    UNDN:	DB	0		; steps captured (0 = nothing to undo)
+  0A64'   00                    UNDST:	DB	0		; 0 none, 1 change applied ('u' undoes it),
                                 				;   2 already undone ('u' puts it back)
-  0A5A'   00                    UNDBAD: DB	0		; 1 = this change was too big to capture
-  0A5B'   01                    UNDNEW: DB	1		; 1 = the next capture starts a new change
-  0A5C'   00                    UNDRPL: DB	0		; 1 = 'u' replaying, so nothing is captured
-  0A5D'   00                    UNDDIR: DB	0		; the replay's direction (0 forward, 1 inverse)
-  0A5E'   00                    UNDWHY: DB	0		; 0 = nothing to undo, 1 = it has paged away
-  0A5F'   00                    UNDTY:	DB	0		; the step / record type being handled
-  0A60'   0000                  UNDOF:	DW	0		; ... its logical offset
-  0A62'   0000                  UNDLN:	DW	0		; ... its length
-  0A64'   0000                  UNDBO:	DW	0		; ... where its bytes lie in the region
-  0A66'   0000                  UNDCL:	DW	0		; the length being captured (BC does not survive)
-  0A68'   0000                  UNDLSA: DW	0		; the last record's address (UNDEXT's scratch)
-  0A6A'   0000                  UNDPG:	DW	0		; PGTOPM when this change was captured
-  0A6C'   0000                  UNDPTR: DW	0		; the region's write point, as an OFFSET
-  0A6E'   00                    UNDB1:	DB	0		; the byte going in (PRSPAN wants BC)
-  0A6F'   0000                  UNDPCU: DW	0		; the cursor as the current command began
-  0A71'   0000                  UNDCUR: DW	0		; ... as the command that made THIS change began
+  0A65'   00                    UNDBAD: DB	0		; 1 = this change was too big to capture
+  0A66'   01                    UNDNEW: DB	1		; 1 = the next capture starts a new change
+  0A67'   00                    UNDRPL: DB	0		; 1 = 'u' replaying, so nothing is captured
+  0A68'   00                    UNDDIR: DB	0		; the replay's direction (0 forward, 1 inverse)
+  0A69'   00                    UNDWHY: DB	0		; 0 = nothing to undo, 1 = it has paged away
+  0A6A'   00                    UNDTY:	DB	0		; the step / record type being handled
+  0A6B'   0000                  UNDOF:	DW	0		; ... its logical offset
+  0A6D'   0000                  UNDLN:	DW	0		; ... its length
+  0A6F'   0000                  UNDBO:	DW	0		; ... where its bytes lie in the region
+  0A71'   0000                  UNDCL:	DW	0		; the length being captured (BC does not survive)
+  0A73'   0000                  UNDLSA: DW	0		; the last record's address (UNDEXT's scratch)
+  0A75'   0000                  UNDPG:	DW	0		; PGTOPM when this change was captured
+  0A77'   0000                  UNDPTR: DW	0		; the region's write point, as an OFFSET
+  0A79'   00                    UNDB1:	DB	0		; the byte going in (PRSPAN wants BC)
+  0A7A'   0000                  UNDPCU: DW	0		; the cursor as the current command began
+  0A7C'   0000                  UNDCUR: DW	0		; ... as the command that made THIS change began
                                 
-  0A73'   0000                  LNDLT:	DW	0		; (appended) lines the cursor moved since the last
+  0A7E'   0000                  LNDLT:	DW	0		; (appended) lines the cursor moved since the last
                                 				;   screen layout (signed; SCRN.MAC consumes it)
                                 
                                 ;PBEGMEM -- base of the text arena: the first RAM byte past everything the
@@ -2446,9 +2459,9 @@
                                 ;links last but RSV.MAC links after it, holding the reserve block in the RAM
                                 ;immediately above the image (it emits no bytes of its own), so the arena
                                 ;starts at RSVTOP -- past the reserves -- and is the size it always was.
-  0A75'   0000*                 PBEGMEM:DW	RSVTOP
+  0A80'   0000*                 PBEGMEM:DW	RSVTOP
                                 
-  0A77'                         MEMBAS:				; top of the linked image (RSV.MAC's base)
+  0A82'                         MEMBAS:				; top of the linked image (RSV.MAC's base)
                                 
                                 	END
 	MACRO-80 3.44	09-Dec-81	PAGE	S
@@ -2459,8 +2472,8 @@ Macros:
 Symbols:
 04D7I'	AFTLEN          061C'	AFTLN2          0506'	AFTOFF          
 028B*	AUXCNT          0005 	BDOS            0000I'	BINIT           
-0008 	BS              047C'	BSUMLP          0A1AI'	BUFBEG          
-0A30I'	BUFEND          0474I'	BUFSUM          064CI'	CHARAT          
+0008 	BS              047C'	BSUMLP          0A25I'	BUFBEG          
+0A3BI'	BUFEND          0474I'	BUFSUM          064CI'	CHARAT          
 0568'	CKCOPY          00D5'	CKLEN           019A'	CKLOW           
 0651'	CLAMPL          0660'	CLK_KEEP        0204I'	CLRCNT          
 028E*	CMDCNT          05ACI'	CMP16           05B5'	CMPLOW          
@@ -2469,89 +2482,90 @@ Symbols:
 01D3'	DELBK           06BDI'	DELFWD          01F2I'	DELLN           
 06CDI'	DELPRV          01CAI'	DELTO           01D6'	DELUPD          
 0295*	DIRFLG          0608*	DISCRD          06DE'	DLP_GO          
-001A 	EOF             0607'	ERMEND          060D'	ERMGO           
-05F6'	ERMLP           060E'	ERMNUL          0A32I'	ERRFLG          
-060FI'	ERRHK           05EAI'	ERRMSG          001B 	ESC             
-0332I'	FWDCNT          0A2AI'	GAPBEG          0A2CI'	GAPEND          
-0407'	GAPLF           009D'	GAPRSV          03E7'	GAPRT           
-027E'	GOLAUX          02A7'	GOLBEX          0260'	GOLBK           
-026A'	GOLBLP          0244'	GOLDIR          027D'	GOLFIN          
-024F'	GOLFLP          0235I'	GOLINE          028D'	GOLSAV          
-027C'	GOLSWP          0662I'	GOTO            067E'	GTO_BK          
-068A'	GTO_ST          04B7'	HOLEDN          0498'	HOLEQ           
-0A20'	HOLEQP          049B'	HOLEUP          0009'	INIBAS          
-0018'	INIGAP          0040'	INITOP          0062I'	INSBLK          
-005CI'	INSCNT          0065'	INSCOM          006C'	INSLP           
-0078I'	INSSTR          0308'	ISALNUM         0316'	ISDIGIT         
-0303'	ISWBRK          0326'	ISWHITE         04FB*	KBPOLL          
-0A54'	L2756           0631'	L2PHYS          0647'	L2P_BEF         
-05A7I'	LDHLI           05A1'	LDPAI2          05A3'	LDPAIR          
-000A 	LF              0692I'	LFCNT           069B'	LFC_LP          
-0219'	LINEPOS         0214'	LINPOSB         0214I'	LINPSB          
-0A73I'	LNDLT           022F'	LNPSTO          0627I'	LOGLEN          
-0066*	MARKGB          039A'	MATCBE          0389'	MATCBL          
-037E'	MATCBS          035F'	MATCFL          0377'	MATCFY          
-037AI'	MATCHB          0352I'	MATCHF          0378'	MATCHX          
-055B'	MCPRBO          055F'	MCPRCT          0556'	MCPRSU          
-0536'	MCPYBO          053A'	MCPYCT          0543'	MCPYR           
-0531'	MCPYSU          0A77'	MEMBAS          0521I'	MEMCPY          
-0006 	MEMTOP          00B0'	MKGAP           00AD'	MKGAPB          
-00B3'	MKGAPL          00C4*	MKROOM          0282*	MOREIN          
-042B'	MOVGAP          0452'	MVGDN           0455'	MVGDNL          
-0A31'	MVGTOP          0441'	MVGUP           01DFI'	MVLIND          
-01E2'	MVLINS          01E5'	MVLLOOP         01DCI'	MVLMAX          
-04F6*	NEEDIN          0583'	NEGBC           0579'	NEGHL           
-02A1*	NEWFIL          048B'	NEXTPR          02C5'	NLBACK          
-02AE'	NLFWD           05E8*	PAGEDIR         05E3'	PAGESTP         
-0227*	PAGEWIN         0A75I'	PBEGMEM         01B6I'	PEEKL           
-01C3I'	PEEKLX          08D1*	PGTOPM          05DE*	POLLBRK         
-05D9I'	POPRET          04DAI'	PRSPAN          0A2F'	PRTERM          
-03D9'	PUTCERR         03C9'	PUTCRT          03A1I'	PUTCUR          
-0045I'	PUTGAP          0465'	PUTHERR         0428I'	PUTHOLE         
-0A1CI'	QBEG            010BI'	QCOPY           0A56'	QCPDON          
+07F1'	EDTGO           07F7I'	EDTHK           001A 	EOF             
+0607'	ERMEND          060D'	ERMGO           05F6'	ERMLP           
+060E'	ERMNUL          0A3DI'	ERRFLG          060FI'	ERRHK           
+05EAI'	ERRMSG          001B 	ESC             0332I'	FWDCNT          
+0A35I'	GAPBEG          0A37I'	GAPEND          0407'	GAPLF           
+009D'	GAPRSV          03E7'	GAPRT           027E'	GOLAUX          
+02A7'	GOLBEX          0260'	GOLBK           026A'	GOLBLP          
+0244'	GOLDIR          027D'	GOLFIN          024F'	GOLFLP          
+0235I'	GOLINE          028D'	GOLSAV          027C'	GOLSWP          
+0662I'	GOTO            067E'	GTO_BK          068A'	GTO_ST          
+04B7'	HOLEDN          0498'	HOLEQ           0A2B'	HOLEQP          
+049B'	HOLEUP          0009'	INIBAS          0018'	INIGAP          
+0040'	INITOP          0062I'	INSBLK          005CI'	INSCNT          
+0065'	INSCOM          006C'	INSLP           0078I'	INSSTR          
+0308'	ISALNUM         0316'	ISDIGIT         0303'	ISWBRK          
+0326'	ISWHITE         04FB*	KBPOLL          0A5F'	L2756           
+0631'	L2PHYS          0647'	L2P_BEF         05A7I'	LDHLI           
+05A1'	LDPAI2          05A3'	LDPAIR          000A 	LF              
+0692I'	LFCNT           069B'	LFC_LP          0219'	LINEPOS         
+0214'	LINPOSB         0214I'	LINPSB          0A7EI'	LNDLT           
+022F'	LNPSTO          0627I'	LOGLEN          0066*	MARKGB          
+039A'	MATCBE          0389'	MATCBL          037E'	MATCBS          
+035F'	MATCFL          0377'	MATCFY          037AI'	MATCHB          
+0352I'	MATCHF          0378'	MATCHX          055B'	MCPRBO          
+055F'	MCPRCT          0556'	MCPRSU          0536'	MCPYBO          
+053A'	MCPYCT          0543'	MCPYR           0531'	MCPYSU          
+0A82'	MEMBAS          0521I'	MEMCPY          0006 	MEMTOP          
+00B0'	MKGAP           00AD'	MKGAPB          00B3'	MKGAPL          
+00C4*	MKROOM          0282*	MOREIN          042B'	MOVGAP          
+0452'	MVGDN           0455'	MVGDNL          0A3C'	MVGTOP          
+0441'	MVGUP           01DFI'	MVLIND          01E2'	MVLINS          
+01E5'	MVLLOOP         01DCI'	MVLMAX          04F6*	NEEDIN          
+0583'	NEGBC           0579'	NEGHL           02A1*	NEWFIL          
+048B'	NEXTPR          02C5'	NLBACK          02AE'	NLFWD           
+05E8*	PAGEDIR         05E3'	PAGESTP         0227*	PAGEWIN         
+0A80I'	PBEGMEM         01B6I'	PEEKL           01C3I'	PEEKLX          
+08DC*	PGTOPM          05DE*	POLLBRK         05D9I'	POPRET          
+04DAI'	PRSPAN          0A3A'	PRTERM          03D9'	PUTCERR         
+03C9'	PUTCRT          03A1I'	PUTCUR          0045I'	PUTGAP          
+0465'	PUTHERR         0428I'	PUTHOLE         0A27I'	QBEG            
 	MACRO-80 3.44	09-Dec-81	PAGE	S-1
 
 
-010F'	QCPYLP          012AI'	QCPYN           015F'	QCPYND          
-0136'	QCPYNL          0A1EI'	QEND            0161I'	QGET            
-0173I'	QKILL           017AI'	QPUTLN          00DEI'	QROOM           
-06AAI'	RDGET           06B7'	RDG_EF          0510'	RECOUNT         
-0D80 	RESVMEM         01AC*	REWIND          04ECI'	RGET            
-04E5I'	RGET0           0502'	RGETCH          0A75*	RSVTOP          
-02C7'	SCANB           02B0'	SCANF           02CC'	SCBCMP          
-02D2'	SCBCNT          02B5'	SCFCMP          02BB'	SCFCNT          
-05C3'	SCLPPO          05BE'	SCLPZ           05DDI'	SCRLST          
-020DI'	SETBWD          01F8I'	SETC0           01F9'	SETCNT          
-0055'	SETGAPB         0597I'	SPANBC          0A34I'	SRCHBF          
-0A35I'	SRCHST          0A33I'	SRCMAX          001E 	SRMAX           
-05B8'	SUBCLP          05CAI'	SUBCP2          058D'	SUBDH           
-0347'	SUBHA           058EI'	SUBHD           0344I'	SUBLEN          
-0009 	TAB             0A22I'	TXTBAS          0A28I'	TXTBEG          
-0A2EI'	TXTEND          0A24I'	UBEG            0A26I'	UEND            
-086C'	UNDAPB          0897'	UNDAPF          0859'	UNDAPL          
-0856'	UNDAPT          0A6E'	UNDB1           0A5AI'	UNDBAD          
-06F8I'	UNDBEG          0A64'	UNDBO           078A'	UNDC1           
-0400 	UNDCAP          07E6'	UNDCBD          0773'	UNDCHG          
-0A66'	UNDCL           0741'	UNDCLR          0A71I'	UNDCUR          
-0A5D'	UNDDIR          09D3'	UNDDLF          09F3'	UNDDLP          
-09E4'	UNDDLQ          06EDI'	UNDELF          07FE'	UNDEXT          
-091A'	UNDFIN          08EF'	UNDFWL          09BA'	UNDGET          
-0717'	UNDGRL          0714'	UNDGRW          070BI'	UNDHER          
-0A15'	UNDHX           09BAI'	UNDINS          0A62'	UNDLN           
-0A68'	UNDLSA          0A58I'	UNDN            0A5BI'	UNDNEW          
-08B8I'	UNDO            0A60'	UNDOF           0A6F'	UNDPCU          
-0A6A'	UNDPG           0901'	UNDPGD          0A6C'	UNDPTR          
-09A7'	UNDPUT          07FA*	UNDREC          0908'	UNDREV          
-08A0'	UNDRM           0A5CI'	UNDRPL          0751'	UNDRST          
-0200 	UNDRSV          0910'	UNDRVL          0A59I'	UNDST           
-0A5F'	UNDTY           0A06'	UNDUDF          0A5EI'	UNDWHY          
-0850'	UNDXNO          08D0'	UND_OK          031D'	UPCASE          
-01D7*	UPDMARK         07EE'	URADDR          0018 	URMAX           
-099C'	URSILN          0985'	URSILP          0007 	URSIZE          
-0929'	URSTEP          0963'	URS_AP          0969'	URS_DL          
-0977'	URS_IN          0002 	UR_DEL          0001 	UR_INS          
-0000 	WBOOT           02DC'	WCMATCH         0301'	WCNO            
-02F8'	WCSEP           02F6'	WCYES           
+010BI'	QCOPY           0A61'	QCPDON          010F'	QCPYLP          
+012AI'	QCPYN           015F'	QCPYND          0136'	QCPYNL          
+0A29I'	QEND            0161I'	QGET            0173I'	QKILL           
+017AI'	QPUTLN          00DEI'	QROOM           06AAI'	RDGET           
+06B7'	RDG_EF          0510'	RECOUNT         0D80 	RESVMEM         
+01AC*	REWIND          04ECI'	RGET            04E5I'	RGET0           
+0502'	RGETCH          0A80*	RSVTOP          02C7'	SCANB           
+02B0'	SCANF           02CC'	SCBCMP          02D2'	SCBCNT          
+02B5'	SCFCMP          02BB'	SCFCNT          05C3'	SCLPPO          
+05BE'	SCLPZ           05DDI'	SCRLST          020DI'	SETBWD          
+01F8I'	SETC0           01F9'	SETCNT          0055'	SETGAPB         
+0597I'	SPANBC          0A3FI'	SRCHBF          0A40I'	SRCHST          
+0A3EI'	SRCMAX          001E 	SRMAX           05B8'	SUBCLP          
+05CAI'	SUBCP2          058D'	SUBDH           0347'	SUBHA           
+058EI'	SUBHD           0344I'	SUBLEN          0009 	TAB             
+0A2DI'	TXTBAS          0A33I'	TXTBEG          0A39I'	TXTEND          
+0A2FI'	UBEG            0A31I'	UEND            0877'	UNDAPB          
+08A2'	UNDAPF          0864'	UNDAPL          0861'	UNDAPT          
+0A79'	UNDB1           0A65I'	UNDBAD          06F8I'	UNDBEG          
+0A6F'	UNDBO           078D'	UNDC1           0400 	UNDCAP          
+07E9'	UNDCBD          0773'	UNDCHG          0A71'	UNDCL           
+0741'	UNDCLR          0A7CI'	UNDCUR          0A68'	UNDDIR          
+09DE'	UNDDLF          09FE'	UNDDLP          09EF'	UNDDLQ          
+06EDI'	UNDELF          0809'	UNDEXT          0925'	UNDFIN          
+08FA'	UNDFWL          09C5'	UNDGET          0717'	UNDGRL          
+0714'	UNDGRW          070BI'	UNDHER          0A20'	UNDHX           
+09C5I'	UNDINS          0A6D'	UNDLN           0A73'	UNDLSA          
+0A63I'	UNDN            0A66I'	UNDNEW          08C3I'	UNDO            
+0A6B'	UNDOF           0A7A'	UNDPCU          0A75'	UNDPG           
+090C'	UNDPGD          0A77'	UNDPTR          09B2'	UNDPUT          
+0805*	UNDREC          0913'	UNDREV          08AB'	UNDRM           
+0A67I'	UNDRPL          0751'	UNDRST          0200 	UNDRSV          
+091B'	UNDRVL          0A64I'	UNDST           0A6A'	UNDTY           
+0A11'	UNDUDF          0A69I'	UNDWHY          085B'	UNDXNO          
+08DB'	UND_OK          031D'	UPCASE          01D7*	UPDMARK         
+07F9'	URADDR          0018 	URMAX           09A7'	URSILN          
+0990'	URSILP          0007 	URSIZE          0934'	URSTEP          
+096E'	URS_AP          0974'	URS_DL          0982'	URS_IN          
+0002 	UR_DEL          0001 	UR_INS          0000 	WBOOT           
+02DC'	WCMATCH         0301'	WCNO            02F8'	WCSEP           
+02F6'	WCYES           
 
 
 

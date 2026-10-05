@@ -32,6 +32,7 @@
 	PUBLIC	ICHAPP				; ... 1 = an R_ICH needs no ICH
 	PUBLIC	ILABOV				; ... 1 = an R_ILIN's row above is stale
 	PUBLIC	CNTTST				; count-test (BUF.MAC PAGESTP reads)
+	PUBLIC	MKSHFT				; the marks follow an edit (VI.MAC hooks it)
 	PUBLIC	CURRW				; cursor's screen row (SCRN.MAC reads)
 	PUBLIC	FOPEN				; open the command-line file
 	PUBLIC	ARGSCN, ARGGO			; the rest of the command line
@@ -364,7 +365,6 @@ DOTQ1:
 ;MARKMOD -- the text has changed: mark the buffer modified, and mark the command
 ; being typed as a change so '.' records it.
 MARKMOD:
-	CALL	MKDROP		; any mark this edit leaves pointing wrong
 	MVI	A,1
 	STA	MODF
 	STA	DOTCHG
@@ -438,14 +438,14 @@ DOTBEL:
 ; A mark is a 3-byte position in the FILE (FPOS: the records paged out ahead
 ; of the window, plus the offset into it), so it does not care which part of
 ; the file is resident: a jump pages until the window holds it (MKPAGE).  It
-; is DROPPED, never shifted, the moment it could no longer point at the same
-; text: MKDROP clears it when an edit happens at or before it -- a mark that
-; survived an edit above it would point somewhere plausible and wrong, which
-; is worse than one that admits it is gone.
+; FOLLOWS its text, as vim's does: every edit passes MKSHFT, which moves the
+; marks past it by the bytes that went in or came out.
 ;
-; DEVIATION from vim, deliberate and in COMMANDS.md: vim shifts a mark to
-; follow the text.  A consequence worth knowing is that '.' after a 'd''a'
-; refuses, because the delete drops the very mark the replay would need.
+; DEVIATIONS from vim, in COMMANDS.md: a mark whose own text is deleted closes
+; up to where the delete was, where vim deletes the mark with its line; and
+; within its line a mark stays with its CHARACTER, where vim keeps the column
+; number.  '.' after a 'd''a' still refuses: the mark letter is read inside
+; the command and never recorded.
 ;
 ; The three keys arm a pending code in GPEND exactly as 'r' does, and VICMD
 ; hands the NEXT key to MKOP instead of dispatching it: a mark letter is an
@@ -739,7 +739,7 @@ MKOP:
 				; ... otherwise fall into MKJMP
 
 ;MKJMP -- go back to the mark, paging to it if the window has left it.
-;'Mark not set', as vim says it, when it was never set or an edit dropped it.
+;'Mark not set', as vim says it, when it was never set.
 ;Under an OPERATOR a mark the window does not hold is refused with the bell
 ;and stays set: the operator measures its span in logical offsets, which are
 ;only good inside one window.
@@ -749,7 +749,7 @@ MKJMP:
 	MOV	A,M
 	POP	H
 	ORA	A
-	JZ	MKNSET		; never set, or dropped
+	JZ	MKNSET		; never set
 	MOV	E,M
 	INX	H
 	MOV	D,M
@@ -870,59 +870,141 @@ MKSET:
 	MVI	M,1		; ... and the mark is live
 	JMP	SETMOV		; 'm' draws nothing and moves nothing
 
-;MKDROP -- an edit is happening at the cursor: drop every mark it could have
-;left pointing at different text.  A mark BEFORE the edit still names what it
-;named; one at or after it does not, because the text moved under it.  Called
-;from MARKMOD, so it must come back with every register as it found it.
-MKDROP:
-	PUSH	PSW
+;MKSHFT -- the text is changing: every mark follows its own text.  BUF.MAC's
+;UNDCHG calls this through EDTHK from all six edit primitives -- 'u's replay
+;of them included -- with A = 1 for an insert (the text is in) or 2 for a
+;delete (it is about to go), HL = the edit's logical offset and BC = its
+;length.  A mark before the edit stays; one after it moves by the length; one
+;INSIDE a delete closes up to where the delete was.  An insert AT a mark
+;leaves the mark in front of the new text, unless that text ends a line -- a
+;line opened or put above the mark's is above the mark too.
+;The edit is found from the CURSOR's file position less its distance behind
+;the cursor, never from the offset alone: a put bigger than the window pages
+;its own start out, and that offset has then wrapped.  BC is kept.
+MKSHFT:
+	STA	MKTYP
 	LDA	MKHOLD		; a yank that could not copy takes its lines out
 	ORA	A		;   and puts them back unchanged (YKGO): the text
-	JNZ	MKD_HL		;   every mark points into is still there
+	RNZ			;   every mark points into is still there
 	PUSH	B
-	PUSH	D
-	PUSH	H
+	MOV	D,B
+	MOV	E,C
+	XCHG
+	SHLD	MKN		; the edit's length
+	PUSH	D		; ... and its offset
+	CALL	CUROFF
+	POP	D
+	CALL	SUBHD
+	XCHG			; DE = how far behind the cursor it is
 	LHLD	GAPBEG
-	CALL	FPOS		; A:HL = where in the file the edit is
+	CALL	FPOS		; A:HL = the cursor's file position
+	MOV	B,A
+	MOV	A,L
+	SUB	E
+	MOV	L,A
+	MOV	A,H
+	SBB	D
+	MOV	H,A
+	MOV	A,B
+	SBI	0
 	SHLD	MKEDIT
-	STA	MKEDIT+2
+	STA	MKEDIT+2	; where in the file the edit is
 	LXI	H,MKVAL
 	LXI	D,MKTAB
 	MVI	B,MKMAX
-MKD_LP:
+MKS_LP:
 	MOV	A,M
 	ORA	A
-	JZ	MKD_NX		; that mark is not set: nothing to drop
+	JZ	MKS_N0		; that mark is not set
 	PUSH	H
+	PUSH	B
 	LXI	H,MKEDIT
 	LDAX	D		; the mark's position less the edit's, a byte
 	SUB	M		;   at a time (neither INX nor LDAX touch CY)
+	MOV	C,A
 	INX	D
 	INX	H
 	LDAX	D
 	SBB	M
+	MOV	B,A
 	INX	D
 	INX	H
 	LDAX	D
-	SBB	M		; CY iff the mark is BEFORE the edit
+	SBB	M		; A:BC = how far past the edit the mark is
+	JC	MKS_PP		; before it: nothing moves
+	MOV	L,A
+	LDA	MKTYP
+	DCR	A
+	JZ	MKS_IN
+	;--- a delete: back by its length, or to it if the mark is inside ---
+	MOV	A,L
+	LHLD	MKN
+	ORA	A
+	JNZ	MKS_DL		; 64K or more past it
+	MOV	A,C
+	SUB	L
+	MOV	A,B
+	SBB	H
+	JNC	MKS_DL		; past the end of what goes
+	MOV	H,B
+	MOV	L,C		; inside it: close up to the edit
+MKS_DL:
 	DCX	D
 	DCX	D
-	POP	H
-	JC	MKD_NX
-	MVI	M,0		; at it or after it: the mark is dropped
-MKD_NX:
-	INX	H
+	LDAX	D
+	SUB	L
+	STAX	D
 	INX	D
+	LDAX	D
+	SBB	H
+	STAX	D
 	INX	D
+	LDAX	D
+	SBI	0
+	STAX	D
+	JMP	MKS_PP
+	;--- an insert: on by its length ---
+MKS_IN:
+	MOV	A,L
+	ORA	B
+	ORA	C
+	JNZ	MKS_AD		; the mark is past it
+	LHLD	GAPBEG		; AT the mark: only a line end carries it on
+	DCX	H
+	MOV	A,M		; the last byte that went in
+	CPI	LF
+	JZ	MKS_AD
+	CPI	CR
+	JNZ	MKS_PP
+MKS_AD:
+	LHLD	MKN
+	DCX	D
+	DCX	D
+	LDAX	D
+	ADD	L
+	STAX	D
 	INX	D
+	LDAX	D
+	ADC	H
+	STAX	D
 	INX	D
-	DCR	B
-	JNZ	MKD_LP
-	POP	H
-	POP	D
+	LDAX	D
+	ACI	0
+	STAX	D
+MKS_PP:
 	POP	B
-MKD_HL:
-	POP	PSW
+	POP	H
+	JMP	MKS_NX
+MKS_N0:
+	INX	D
+	INX	D
+MKS_NX:
+	INX	D
+	INX	D
+	INX	H
+	DCR	B
+	JNZ	MKS_LP
+	POP	B
 	RET
 
 
@@ -949,7 +1031,6 @@ VC_UNDO:
 	LHLD	UNDCUR
 	CALL	UCLAMP		; vi never sits on a line terminator
 	CALL	GOTO		; ... and this keeps LNDLT, as the replay did
-	CALL	MKDROP		; the undo moved text back under any mark past it
 	MVI	A,1
 	STA	MODF		; undone past a ':w' still differs from the file
 	CALL	GLSTAL		; the cursor jumped to the change: no goal column
@@ -3719,7 +3800,7 @@ YKGO:
 	STA	YURPL		;   back are not a change to undo either
 	MVI	A,1
 	STA	UNDRPL
-	STA	MKHOLD		; ... nor a change to drop a mark for: MKDROP
+	STA	MKHOLD		; ... nor a change for a mark to follow: MKSHFT
 	LHLD	LNDLT		; GOTO does not maintain this and VD_DD moves it
 	SHLD	YLDLT
 	CALL	LOGLEN
@@ -3855,7 +3936,7 @@ YNPRE:
 ;YNDONE -- the tail of a yank that copied: the cursor back where it started and
 ; the cheapest paint there is.  Nothing else is owed -- the text was never
 ; changed, so MODF, DOTCHG and UNDRPL were never disturbed, no mark was
-; dropped, and 'u' saw nothing go by.  The WINDOW is the one thing that could
+; moved, and 'u' saw nothing go by.  The WINDOW is the one thing that could
 ; still have moved (LNSTRT pages back to reach a line start the window has
 ; cut), and PGTOPM is what says whether it did.
 YNDONE:
@@ -6242,11 +6323,13 @@ GPKEEP: DB	0		; GPLACE: keep the column (a search) not FNBLNK
 MKVAL:	DB	0,0,0		; marks: nonzero once 'm' has set that one.  It
 				;   lives HERE and not in MKTAB because the image
 				;   guarantees a DB, and nothing guarantees a DS
-MKEDIT: DB	0,0,0		; MKDROP: where the edit that may drop them is
+MKEDIT: DB	0,0,0		; MKSHFT: where in the file the edit is
+MKN:	DW	0		; ... how long it is
+MKTYP:	DB	0		; ... and which way: 1 text went in, 2 came out
 MKPOS:	DB	0,0,0		; MKJMP: the file position being jumped to
 MKWHAT: DB	0		; which of 'm' / '`' / ''' is running
 MKHOLD: DB	0		; set across YKGO's delete + put back (a yank
-				;   that could not copy): MKDROP must leave the
+				;   that could not copy): MKSHFT must leave the
 				;   marks alone through it
 YACT:	DW	0		; how this yank takes its lines (VD_DD / YSPAN)
 YTGT:	DW	0		; YSPAN: the text's length once the span is out

@@ -111,6 +111,7 @@ RESVMEM EQU	0D80H		; WM 25: the arena QROOM keeps free past
 	EXTRN	PGTOPM			; PAGE.MAC -- the paged-window signature
 	EXTRN	DISCRD			; PAGE.MAC -- drop the work files (ERRMSG)
 	PUBLIC	ERRHK			; VI.MAC   -- ERRMSG's screen hook
+	PUBLIC	EDTHK			; VI.MAC   -- UNDCHG's hook for the marks
 	EXTRN	KBPOLL			; KEY.MAC  -- WM GETKEY (type-ahead drain)
 	EXTRN	UNDREC, RSVTOP		; RSV.MAC  -- the captured change, and the
 					;   top of the reserve block = arena base
@@ -1787,6 +1788,7 @@ UNDCHG:
 	PUSH	D
 	PUSH	H
 	STA	UNDTY		; the record type, kept out of the registers
+	CALL	EDTGO		; whoever else follows an edit (BC is kept)
 	LDA	UNDRPL
 	ORA	A
 	JNZ	POPRET		; 'u' replaying: its own edits are not a change
@@ -1852,6 +1854,17 @@ UNDCBD:
 	MVI	A,1
 	STA	UNDBAD		; too big to keep: not undoable at all
 	JMP	POPRET
+
+;EDTGO -- UNDCHG is the one place every change to the text goes by, the
+;replay's own included, so it is also where the editor hears of one: EDTHK is
+;called with A = UR_INS / UR_DEL, HL = the logical offset and BC = the length,
+;and must keep BC.  VI.MAC points it at the marks; a harness leaves it a RET.
+EDTGO:
+	PUSH	H
+	LHLD	EDTHK
+	XTHL
+	RET
+EDTHK:	DW	ERMNUL
 
 ;URADDR -- A = a record index -> HL = its address (base + n*8 - n).
 URADDR:

@@ -158,9 +158,10 @@ MARKS ----------------------------------------------------------------------
     '{a-c}          back to that line's first non-blank
     d'a  d`a  y'a   operate from here to the mark
 
-Only three marks.  A mark is DROPPED, not moved, when the text above it
-changes; a jump to a lost mark says "Mark not set".  An operator over a
-mark far off in a large file is refused; jump to it instead.
+Only three marks.  A mark follows its text when lines above it come and
+go.  If the marked text itself is deleted, the mark moves to where the
+delete was.  A jump to a mark never set says "Mark not set".  An operator
+over a mark far off in a large file is refused; jump to it instead.
 
 
 SEARCH ---------------------------------------------------------------------

@@ -4743,10 +4743,9 @@ def marks_files():
 #   - an edit BELOW a mark leaves it alone -- the one edit case where vim and
 #     this editor agree.
 #
-# DELIBERATELY NOT HERE, because this editor is documented to deviate: an edit
-# ABOVE a mark (vim shifts the mark to follow the text, this editor drops it).
-# That is asserted in marks_cmds() instead -- recording vim for it would be
-# recording a reference this editor is designed not to match.
+# NOT HERE: a mark following its text through an edit, and through paging.
+# Those are asserted in marks_cmds(), which also holds the three places this
+# editor is documented not to match vim (COMMANDS.md).
 VIM_MARKS = [
     ('mk', ['ma', 'G', "'a"], 'd0c2cb8e681aa18f',
      [(0, 0, 'alpha beta', 'alpha beta'),
@@ -5077,12 +5076,13 @@ def marks_like_vim():
 
 
 def marks_cmds():
-    """Marks where vim cannot be the reference: this editor DROPS a mark as
-    soon as it could no longer point at the same text, where vim shifts it to
-    follow (COMMANDS.md).  A jump to a mark that will not answer -- never set,
-    dropped, or a key that names none -- moves nothing and says 'Mark not set'
-    on the bottom row, vim's E20 without the number; like every message here
-    it does not ring.  'm' with a key that names no mark only rings."""
+    """Marks beyond the recorded vim rows: a mark follows its text through
+    every kind of edit and through paging, on small files and on 100 K; where
+    its own text is deleted it closes up to the delete, which is not vim's
+    answer (COMMANDS.md).  A jump to a mark that will not answer -- never set,
+    or a key that names none -- moves nothing and says 'Mark not set' on the
+    bottom row, vim's E20 without the number; like every message here it does
+    not ring.  'm' with a key that names no mark only rings."""
     files = marks_files()
 
     def refuses(e, keys, tag):
@@ -5143,16 +5143,109 @@ def marks_cmds():
     finally:
         e.close()
 
-    # ---- an edit ABOVE a mark drops it (vim would shift it) ----
-    e = Editor(files['mk'])
-    try:
-        e.key('3G'); e.key('ma')                 # mark line 3
-        e.key('gg'); e.key('x')                  # edit line 1, above it
-        check('an edit above a mark: the edit happened',
-              rows(e)[0] == 'lpha beta')
-        notset(e, "'a", 'an edit above a mark drops it')
-    finally:
-        e.close()
+    big = make(12800)
+
+    def landed(e, tag, n, col, at=None):
+        at = n if at is None else at             # the line ^G should count
+        v = e.screen(); scr = [''.join(r).rstrip() for r in v.screen[:23]]
+        check(f'{tag}: on line {n}, column {col} ({scr[v.row]!r}, {v.col})',
+              scr[v.row] == txt(n) and v.col == col)
+        e.key('\x0c')
+        v2 = e.screen(); scr2 = [''.join(r).rstrip() for r in v2.screen[:23]]
+        check(f'{tag}: the screen is what ^L draws (top {scr[0]!r}, '
+              f'^L {scr2[0]!r})',
+              scr == scr2 and (v.row, v.col) == (v2.row, v2.col))
+        g = ctrlg(e)
+        check(f'{tag}: ^G agrees ({g!r})', f'line {at} ' in g + ' ')
+
+    # ---- a mark FOLLOWS its text: an edit above it moves it, it is not lost.
+    #      The mark is on 'epsilon zeta' (line 3), four characters in, and
+    #      after each edit '`a' must find that same 'o' and ''a' that line.
+    def follows(setup, tag, row, col, line='epsilon zeta', f='mk', nb=0):
+        for q in ('`', "'"):
+            e = Editor(files[f])
+            try:
+                e.key('3G'); e.key('4l'); e.key('ma')
+                for k in setup:
+                    e.key(k)
+                    if '\x1b' in k or k.endswith('\r'):
+                        e.s.run_until_quiet(quiet=1.5, timeout=40)
+                e.key('\x0c')                    # no message on the row yet
+                e.key(q + 'a')
+                v = e.screen(); r = rows(e)
+                want = (row, col if q == '`' else nb)  # ''': the first non-blank
+                check(f'{tag}: {q}a lands at {want} on {line[:12]!r} '
+                      f'({(v.row, v.col)} {r[v.row][:12]!r}, {bottom(e)!r})',
+                      (v.row, v.col) == want and r[v.row] == line
+                      and bottom(e) == '')
+            finally:
+                e.close()
+
+    follows(['gg', 'x'],              'x above',                 2, 4)
+    follows(['gg', 'dd'],             'dd above',                1, 4)
+    follows(['gg', '2dd'],            '2dd above',               0, 4)
+    follows(['gg', 'Onew\x1b'],       'O above',                 3, 4)
+    follows(['gg', 'onew\x1b'],       'o above',                 3, 4)
+    follows(['gg', 'ione\rtwo\x1b'],  'a typed line break above', 3, 4)
+    follows(['Onew\x1b'],             'O on the marked line',    3, 4)
+    follows(['gg', 'yy', '3G', 'P'],  'P on the marked line',    3, 4)
+    follows(['gg', 'yy', 'p'],        'p above',                 3, 4)
+    follows(['gg', 'J'],              'J above',                 1, 4)
+    follows(['gg', 'dw'],             'dw above',                2, 4)
+    follows(['gg', 'cwXYZZY\x1b'],    'cw above',                2, 4)
+    follows(['gg', 'D'],              'D above',                 2, 4)
+    follows(['gg', '~'],              '~ above (nothing moves)', 2, 4)
+    follows(['gg', 'x', 'j', '.'],    'x and . above',           2, 4)
+    follows(['gg', 'dd', 'u'],        'dd above, undone',        2, 4)
+    follows(['gg', 'dd', 'u', 'u'],   'dd above, undone, redone', 1, 4)
+    follows(['gg', 'Onew\x1b', 'u'],  'O above, undone',         2, 4)
+    follows([':1s/alpha/A/\r'],       ':s above',                2, 4)
+    follows([':1,2s/a/AAA/g\r'],      ':s growing two lines above', 2, 4)
+    follows(['G', 'x'],               'x below',                 2, 4)
+    follows(['G', 'dd'],              'dd below',                2, 4)
+    # ... and on the marked line itself, the mark stays with its CHARACTER
+    follows(['0', 'x'],               'x before it on the line', 2, 3,
+            line='psilon zeta')
+    follows(['0', 'iab\x1b'],         'an insert before it on the line', 2, 6,
+            line='abepsilon zeta')
+    follows(['$', 'x'],               'x after it on the line',  2, 4,
+            line='epsilon zet')
+    follows(['rX'],                   'r on the marked character', 2, 4,
+            line='epsiXon zeta')
+    follows(['~'],                    '~ on the marked character', 2, 4,
+            line='epsiLon zeta')
+    follows(['RXY\x1b'],              'R over the marked character', 2, 4,
+            line='epsiXYn zeta')
+    follows(['iab\x1b'],              'an insert AT the mark: it stays there',
+            2, 4, line='epsiablon zeta')
+    follows(['2G', 'J'],              'J joins the marked line up', 1, 18,
+            line='  gamma delta epsilon zeta', nb=2)
+
+    # ---- text deleted from UNDER a mark: the mark closes up to where the
+    #      delete was (vim deletes the mark with its line; COMMANDS.md) ----
+    follows(['dd'],                   'dd on the marked line',   2, 0, line='')
+    follows(['0', 'D'],               'D through the mark',      2, 0, line='')
+    follows(['2G', '3dd'],            '3dd through the marked line', 1, 0,
+            line='  last line here', nb=2)
+
+    # ---- the same on a 100 K file, with the mark and the edit in different
+    #      windows: 'a at line 6000, the edit at the top or the end ----
+    for q, col in (("'", 0), ('`', 3)):
+        e = Editor(big)
+        try:
+            e.key('6000G'); e.key('3l'); e.key('ma')
+            e.key('gg'); e.key('3dd')
+            e.key(q + 'a'); landed(e, f'3dd at the top, {q}a', 6000, col, 5997)
+            e.key('40G'); e.key('Otwo\rlines\x1b')
+            e.s.run_until_quiet(quiet=1.5, timeout=40)
+            e.key(q + 'a'); landed(e, f'O far above, {q}a', 6000, col, 5999)
+            e.key('G'); e.key('dd')
+            e.key(q + 'a'); landed(e, f'dd far below, {q}a', 6000, col, 5999)
+            e.key(':w\r'); ex_settled(e)
+            e.key('gg'); e.key(q + 'a')
+            landed(e, f'after :w, {q}a', 6000, col, 5999)
+        finally:
+            e.close()
 
     # ---- an edit BELOW a mark leaves it alone ----
     e = Editor(files['mk'])
@@ -5229,8 +5322,8 @@ def marks_cmds():
     finally:
         e.close()
 
-    # ---- '.' after "d'a" refuses: the delete drops the mark, and the mark
-    #      letter is read inside the command so it is never recorded ----
+    # ---- '.' after "d'a" refuses: the mark letter is read inside the
+    #      command, so it is never recorded ----
     e = Editor(files['mk'])
     try:
         e.key('3G'); e.key('ma'); e.key('gg')
@@ -5349,20 +5442,6 @@ def marks_cmds():
     #      100 K, so every jump here crosses the resident window; each landing
     #      is held to the line's text, '^G's line number and the screen a '^L'
     #      draws.
-    big = make(12800)
-
-    def landed(e, tag, n, col):
-        v = e.screen(); scr = [''.join(r).rstrip() for r in v.screen[:23]]
-        check(f'{tag}: on line {n}, column {col} ({scr[v.row]!r}, {v.col})',
-              scr[v.row] == txt(n) and v.col == col)
-        e.key('\x0c')
-        v2 = e.screen(); scr2 = [''.join(r).rstrip() for r in v2.screen[:23]]
-        check(f'{tag}: the screen is what ^L draws (top {scr[0]!r}, '
-              f'^L {scr2[0]!r})',
-              scr == scr2 and (v.row, v.col) == (v2.row, v2.col))
-        g = ctrlg(e)
-        check(f'{tag}: ^G agrees ({g!r})', f'line {n} ' in g + ' ')
-
     for q, col in (("'", 0), ('`', 3)):
         e = Editor(big)
         try:
