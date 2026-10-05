@@ -235,11 +235,17 @@ repaint.
 **The yank register is WordMaster's Q-buffer.** It is a second gap buffer inside
 the arena, part of the pointer row, so it slides with the gap and grows through
 the same `MKGAP` machinery as the text. Its limit is the arena less `RESVMEM`,
-about 27 K. WordMaster has no copy without delete:
+about 27 K. WordMaster has no copy without delete, so the copy is appended
+(`QCPYN`, BUF.MAC):
 
-- **`yy` deletes the lines into the register and puts them straight back.**
-  `YKGO` puts nothing back when nothing was taken. Without that check, a refused
-  yank would splice a stale register into the file.
+- **A yank copies the lines where they lie** (`YNCOPY` for `yy`, `YNSPAN` for
+  `y{motion}`), and the text is never touched.
+- **When the copy cannot run, the lines are deleted into the register and put
+  straight back** (`YKGO`). That is when the arena has no room for the span, or
+  a count's lines are not all in the resident text to be measured. `YKGO` holds
+  the changed flag, `.`, undo and the marks still while it runs, and puts
+  nothing back when nothing was taken. Without that check, a refused yank would
+  splice a stale register into the file.
 - **`dd` deletes forward only**, from the start of the line, because `QCOPY`
   always reads from `GAPEND`. A backward delete cannot reach the register.
 
@@ -272,7 +278,8 @@ command can forget to record itself.
 stored in the reserve block. A mark is **dropped, never moved**. `MKDROP` runs
 from `MARKMOD`, one 16-bit compare per mark with nothing to update, which is
 why this rule was chosen over vim's. A mark is also lost to `:e` or to paging
-away. `MKHOLD` holds the drop off across `yy`'s round trip.
+away. A yank drops none: the copy never reaches `MARKMOD`, and `MKHOLD` holds
+the drop off across the delete and put back when `YKGO` has to run instead.
 
 **Search** is WordMaster's `MATCHF`/`MATCHB` swept across the whole file by
 WordMaster's `FINDA` loop (`SRCHW`), paging one step per miss. The pattern is

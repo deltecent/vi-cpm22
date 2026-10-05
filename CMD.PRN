@@ -992,9 +992,9 @@
                                 ;from MARKMOD, so it must come back with every register as it found it.
   03F5'                         MKDROP:
   03F5'   F5                    	PUSH	PSW
-  03F6'   3A 2489'              	LDA	MKHOLD		; a yank takes its lines out and puts them back
-  03F9'   B7                    	ORA	A		;   unchanged (VY_YY): the text every mark points
-  03FA'   C2 042F'              	JNZ	MKD_HL		;   into is still there, so none of them goes
+  03F6'   3A 2489'              	LDA	MKHOLD		; a yank that could not copy takes its lines out
+  03F9'   B7                    	ORA	A		;   and puts them back unchanged (YKGO): the text
+  03FA'   C2 042F'              	JNZ	MKD_HL		;   every mark points into is still there
   03FD'   C5                    	PUSH	B
   03FE'   D5                    	PUSH	D
   03FF'   E5                    	PUSH	H
@@ -6715,18 +6715,19 @@
                                 				;   guarantees a DB, and nothing guarantees a DS
   2486'   0000                  MKEDIT: DW	0		; MKDROP: where the edit that may drop them is
   2488'   00                    MKWHAT: DB	0		; which of 'm' / '`' / ''' is running
-  2489'   00                    MKHOLD: DB	0		; set across a yank's delete + put back: MKDROP
-                                				;   must leave the marks alone through it
+  2489'   00                    MKHOLD: DB	0		; set across YKGO's delete + put back (a yank
+                                				;   that could not copy): MKDROP must leave the
+                                				;   marks alone through it
   248A'   0000                  YACT:	DW	0		; how this yank takes its lines (VD_DD / YSPAN)
   248C'   0000                  YTGT:	DW	0		; YSPAN: the text's length once the span is out
   248E'   0000                  YWAS:	DW	0		; ... and its length BEFORE the lines came out
   2490'   0000                  YCOL:	DW	0		; ... how far into them the cursor sat
   2492'   0000                  YBLK:	DW	0		; ... and where they ended when they came back
                                 ;--- the yank that copies instead (YNCOPY / YNSPAN) ---
-  2494'   0000                  YNPG:	DW	0		; the window the yank started in (YNDONE's paint)
 	MACRO-80 3.44	09-Dec-81	PAGE	1-114
 
 
+  2494'   0000                  YNPG:	DW	0		; the window the yank started in (YNDONE's paint)
   2496'   0000                  YNCNT:	DW	0		; YNLINE: the lines it still wants
   2498'   0000                  SCNT:	DW	0		; searches still to do (the count)
   249A'   0000                  SOFF:	DW	0		; where the cursor was when the search began

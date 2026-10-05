@@ -830,9 +830,9 @@ MKSET:
 ;from MARKMOD, so it must come back with every register as it found it.
 MKDROP:
 	PUSH	PSW
-	LDA	MKHOLD		; a yank takes its lines out and puts them back
-	ORA	A		;   unchanged (VY_YY): the text every mark points
-	JNZ	MKD_HL		;   into is still there, so none of them goes
+	LDA	MKHOLD		; a yank that could not copy takes its lines out
+	ORA	A		;   and puts them back unchanged (YKGO): the text
+	JNZ	MKD_HL		;   every mark points into is still there
 	PUSH	B
 	PUSH	D
 	PUSH	H
@@ -6190,8 +6190,9 @@ MKVAL:	DB	0,0,0		; marks: nonzero once 'm' has set that one.  It
 				;   guarantees a DB, and nothing guarantees a DS
 MKEDIT: DW	0		; MKDROP: where the edit that may drop them is
 MKWHAT: DB	0		; which of 'm' / '`' / ''' is running
-MKHOLD: DB	0		; set across a yank's delete + put back: MKDROP
-				;   must leave the marks alone through it
+MKHOLD: DB	0		; set across YKGO's delete + put back (a yank
+				;   that could not copy): MKDROP must leave the
+				;   marks alone through it
 YACT:	DW	0		; how this yank takes its lines (VD_DD / YSPAN)
 YTGT:	DW	0		; YSPAN: the text's length once the span is out
 YWAS:	DW	0		; ... and its length BEFORE the lines came out
