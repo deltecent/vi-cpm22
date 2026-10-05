@@ -5491,10 +5491,10 @@ def marks_cmds():
         finally:
             e.close()
 
-    # ---- an OPERATOR cannot take a span the window does not hold whole, so
-    #      over a mark that is paged out it is refused -- the bell, nothing
-    #      deleted -- and the mark is still there for a plain jump ----
-    for op in ("d'a", 'd`a', "y'a"):
+    # ---- only a LINE DELETE can take a span the window does not hold whole,
+    #      so any other operator over a mark that is paged out is refused --
+    #      the bell, nothing taken -- and the mark is still there for a jump
+    for op in ('d`a', "y'a"):                    # ("d'a" is not: pgop)
         e = Editor(big)
         try:
             e.key('40G'); e.key('ma'); e.key('G')
@@ -5511,6 +5511,155 @@ def marks_cmds():
         finally:
             e.close()
 
+
+
+def pgop_cmds():
+    """An operator over a motion that PAGES.  The span's start is kept as a
+    place in the file, so 'dG', 'dgg', 'd{n}G', a counted 'dj' / 'dk' and
+    "d'a" take the lines they name however far apart the two ends are, on
+    40 K and 100 K, and write back byte-exact.  What cannot be done over a
+    span the window does not hold -- a yank, a charwise delete -- rings, takes
+    nothing and leaves the cursor where it was.  A delete that large is not
+    kept for 'u', which says so.  And on a file that fits, 'dgg' is a motion
+    at all, where it used to be dropped."""
+    def L(a, b):
+        return b''.join(line(i) for i in range(a, b + 1))
+
+    def after(e, tag, want, n, at, text=True):
+        """The file is *want*; the cursor is on old line *n*, now line *at*."""
+        e.s.run_until_quiet(quiet=1.5, timeout=240)
+        v = e.screen(); scr = [''.join(r).rstrip() for r in v.screen[:23]]
+        if text:
+            check(f'{tag}: the cursor is on {txt(n)} ({scr[v.row]!r}, {v.col})',
+                  scr[v.row] == txt(n) and v.col == 0)
+            e.key('\x0c')
+            v2 = e.screen()
+            scr2 = [''.join(r).rstrip() for r in v2.screen[:23]]
+            check(f'{tag}: the screen is what ^L draws (top {scr[0]!r}, '
+                  f'^L {scr2[0]!r})',
+                  scr == scr2 and (v.row, v.col) == (v2.row, v2.col))
+            g = ctrlg(e)
+            check(f'{tag}: ^G agrees ({g!r})',
+                  f'line {at} ' in g + ' ' and 'Modified' in g)
+        e.key(':w\r'); ex_settled(e)
+        got = saved_bytes(e)
+        check(f'{tag}: the file is byte-exact ({len(got)} bytes, '
+              f'{len(want)} wanted; ends {got[-8:]!r})', got == want)
+
+    for size, tall, mid in (('100 K', 12800, 6000), ('40 K', 5120, 2500)):
+        big = make(tall)
+        for keys, want, n, at in (
+                (['%dG' % mid, 'dG'], L(1, mid - 1), mid - 1, mid - 1),
+                (['%dG' % mid, 'dgg'], L(mid + 1, tall), mid + 1, 1),
+                (['%dG' % mid, 'd1G'], L(mid + 1, tall), mid + 1, 1),
+                (['G', 'd1G'], b'', None, None),
+                (['dG'], b'', None, None),
+                (['G', 'dgg'], b'', None, None),
+                (['%dG' % mid, 'd%dG' % (mid + 5)],
+                 L(1, mid - 1) + L(mid + 6, tall), mid + 6, mid),
+                (['%dG' % mid, 'd%dG' % (mid - 5)],
+                 L(1, mid - 6) + L(mid + 1, tall), mid + 1, mid - 5),
+                (['%dG' % mid, 'd%dG' % (tall - 100)],
+                 L(1, mid - 1) + L(tall - 99, tall), tall - 99, mid),
+                (['%dG' % mid, 'd40G'],
+                 L(1, 39) + L(mid + 1, tall), mid + 1, 40),
+                (['%dG' % mid, 'd2000j'],
+                 L(1, mid - 1) + L(mid + 2001, tall), mid + 2001, mid),
+                (['%dG' % mid, 'd2000k'],
+                 L(1, mid - 2001) + L(mid + 1, tall), mid + 1, mid - 2000),
+                (['%dG' % mid, 'ma', 'G', "d'a"], L(1, mid - 1),
+                 mid - 1, mid - 1),
+                (['%dG' % mid, 'ma', 'gg', "d'a"], L(mid + 1, tall),
+                 mid + 1, 1)):
+            e = Editor(big)
+            try:
+                for k in keys:
+                    e.key(k)
+                after(e, f'{size}, {" ".join(keys)}', want, n, at,
+                      text=n is not None)
+            finally:
+                e.close()
+
+    big = make(12800)
+
+    # ---- what the window cannot hold whole and is not a line delete: the
+    #      bell, nothing taken, the cursor back where it started ----
+    for setup, op in ((['6000G', '3l'], 'yG'), (['6000G', '3l'], 'ygg'),
+                      (['40G', 'ma', '6000G', '3l'], 'd`a'),
+                      (['40G', 'ma', '6000G', '3l'], "y'a")):
+        e = Editor(big)
+        try:
+            for k in setup:
+                e.key(k)
+            n = len(e.cap.getvalue())
+            e.key(op)
+            e.s.run_until_quiet(quiet=1.5, timeout=240)
+            v = e.screen(); scr = [''.join(r).rstrip() for r in v.screen[:23]]
+            check(f'{op} past the window: rings',
+                  '\x07' in e.cap.getvalue()[n:])
+            check(f'{op} past the window: the cursor is where it was '
+                  f'({scr[v.row]!r}, {v.col})',
+                  scr[v.row] == txt(6000) and v.col == 3)
+            g = ctrlg(e)
+            check(f'{op} past the window: takes nothing ({g!r})',
+                  'Modified' not in g and 'line 6000 ' in g)
+            e.key('x'); e.key(':w\r'); ex_settled(e)
+            got = saved_bytes(e)
+            check(f'{op} past the window: the next command is its own '
+                  f'({len(got)} bytes)',
+                  got == L(1, 5999) + b'00600\r\n' + L(6001, 12800))
+        finally:
+            e.close()
+
+    # ---- a yank whose 'G' pages away and comes back is still a yank ----
+    e = Editor(big)
+    try:
+        e.key('6000G'); e.key('y6002G'); e.key('p')
+        e.s.run_until_quiet(quiet=1.5, timeout=240)
+        e.key(':w\r'); ex_settled(e)
+        got = saved_bytes(e)
+        check(f'y6002G then p puts the three lines ({len(got)} bytes)',
+              got == L(1, 6000) + L(6000, 6002) + L(6001, 12800))
+    finally:
+        e.close()
+
+    # ---- a delete that size is not kept for 'u', and 'u' says so ----
+    e = Editor(big)
+    try:
+        e.key('6000G'); e.key('dG')
+        e.s.run_until_quiet(quiet=1.5, timeout=240)
+        e.key('u')
+        check(f"u after a paged dG says why not ({bottom(e)!r})",
+              bottom(e) == 'Too large to undo')
+        e.key(':w\r'); ex_settled(e)
+        got = saved_bytes(e)
+        check(f'u after a paged dG changes nothing ({len(got)} bytes)',
+              got == L(1, 5999))
+    finally:
+        e.close()
+
+    # ---- the same commands on a file that fits ----
+    small = make(20)
+    for keys, want in ((['10G', 'dgg'], L(11, 20)),
+                       (['10G', 'dG'], L(1, 9)),
+                       (['10G', 'd12G'], L(1, 9) + L(13, 20)),
+                       (['10G', 'd3gg'], L(1, 2) + L(11, 20)),
+                       (['10G', 'dgg', 'u'], L(1, 20)),
+                       (['10G', 'dgx'], L(1, 20)),
+                       (['10G', 'cgg'], L(1, 20)),
+                       (['10G', 'ygg', 'G', 'p'], L(1, 20) + L(1, 10)),
+                       (['dG'], b'')):
+        e = Editor(small)
+        try:
+            for k in keys:
+                e.key(k)
+            e.s.run_until_quiet(quiet=1.5, timeout=40)
+            e.key(':w\r'); ex_settled(e)
+            got = saved_bytes(e)
+            check(f'20 lines, {" ".join(keys)}: byte-exact ({got[:8]!r}.. '
+                  f'{len(got)} bytes)', got == want)
+        finally:
+            e.close()
 
 
 def disk_full():
@@ -5639,6 +5788,9 @@ def main():
         print('\n=== m / ` / \' (marks) vs vim ===', flush=True)
         marks_like_vim()
         marks_cmds()
+    if not args or 'vim' in args or 'pgop' in args:
+        print('\n=== operators over a motion that pages ===', flush=True)
+        pgop_cmds()
     if not args or 'vim' in args or 'find' in args:
         print('\n=== f F t T ; , vs vim ===', flush=True)
         find_like_vim()

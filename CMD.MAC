@@ -741,8 +741,9 @@ MKOP:
 ;MKJMP -- go back to the mark, paging to it if the window has left it.
 ;'Mark not set', as vim says it, when it was never set.
 ;Under an OPERATOR a mark the window does not hold is refused with the bell
-;and stays set: the operator measures its span in logical offsets, which are
-;only good inside one window.
+;and stays set, all but "d'a": a line delete is the one operator that can take
+;a span the window does not hold whole (OPPGD), and going there only to be
+;turned away by it would page the file twice for nothing.
 MKJMP:
 	PUSH	H
 	CALL	MKVAD
@@ -750,19 +751,17 @@ MKJMP:
 	POP	H
 	ORA	A
 	JZ	MKNSET		; never set
-	MOV	E,M
-	INX	H
-	MOV	D,M
-	INX	H
-	MOV	A,M
-	XCHG
-	SHLD	MKPOS
-	STA	MKPOS+2		; the file position it holds
+	CALL	MKLOAD		; the file position it holds
 	CALL	MKWIN
 	JC	MKJ_GO		; in the window: any command may go there
 	LDA	PSAVE
 	ORA	A
-	JNZ	MKBAD		; paged out, and an operator wants the span
+	JZ	MKJ_GO
+	CPI	'd'		; paged out, and an operator wants the span
+	JNZ	MKBAD
+	LDA	MKWHAT
+	CPI	PJL
+	JNZ	MKBAD
 MKJ_GO:
 	CALL	GZONE		; the screen's top line, before the cursor
 				;   moves: GPLACE measures the landing against
@@ -797,6 +796,18 @@ MKPAGE:
 	CALL	MKWIN		; the file ran out: that was its last step
 	RC
 	LXI	H,0FFFFH	; (not expected) past the end: GOTO clamps it
+	RET
+
+;MKLOAD -- MKPOS = the 3-byte file position at HL.
+MKLOAD:
+	MOV	E,M
+	INX	H
+	MOV	D,M
+	INX	H
+	MOV	A,M
+	XCHG
+	SHLD	MKPOS
+	STA	MKPOS+2
 	RET
 
 ;MKWIN -- CY and HL = MKPOS as a logical offset if the window holds it; NC and
@@ -849,8 +860,8 @@ MKBAD:
 	STA	PSAVE
 	JMP	DOTBEL
 
-;MKSET -- remember where in the FILE the cursor is.
-MKSET:
+;FPSTO -- the cursor's file position into the 3 bytes at HL.  Keeps BC.
+FPSTO:
 	PUSH	H
 	CALL	CURFP		; A:HL = the cursor's file position
 	XCHG
@@ -860,6 +871,11 @@ MKSET:
 	MOV	M,D
 	INX	H
 	MOV	M,A
+	RET
+
+;MKSET -- remember where in the FILE the cursor is.
+MKSET:
+	CALL	FPSTO
 	CALL	MKVAD
 	MVI	M,1		; ... and the mark is live
 	JMP	SETMOV		; 'm' draws nothing and moves nothing
@@ -2855,6 +2871,17 @@ OPP_W:
 	MVI	A,1		; ... but it is still a 'w' where the line ends:
 	STA	CWEOL		;   see the clamp in OPA_F
 OPP_ND:
+	MOV	A,C		; 'gg' is two keys, and the second has to be read
+	CPI	'g'		;   HERE, as a mark's letter is: left to the next
+	JNZ	OPP_NG		;   dispatch it would arrive with the operator
+	CALL	MKGETK		;   gone.  Anything but a second 'g' drops both
+	JC	OPABRT
+	MOV	A,C
+	CPI	'g'
+	JNZ	OPABRT
+	MVI	A,PG
+	STA	GSAVE		; ... and VC_LG runs it as the 'gg' it is
+OPP_NG:
 	MOV	A,C		; doubled operator (dd / cc)?
 	LXI	H,PSAVE
 	CMP	M
@@ -2893,12 +2920,22 @@ OPP_GO:
 	STA	WPULL		; only this motion's own answer counts (OPA_EX)
 	CALL	CUROFF		; span start = cursor before the motion
 	SHLD	OPSTA
+	PUSH	B
+	LXI	H,OPSFP		; ... and as a place in the FILE: an offset is
+	CALL	FPSTO		;   only good until the motion pages the window
+	LDA	OPCLSV
+	CPI	2
+	CZ	OPENDS		; a line motion: the start LINE's two ends too
+	POP	B
 	LXI	H,CMDTAB
 	CALL	VSCAN		; run the motion (moves the cursor; miss -> no move)
 	LDA	PSAVE		; the motion may have cancelled the operator -- a
 	ORA	A		;   mark that would not answer clears PSAVE.  The
 	JZ	SETMOV		;   span is empty then, and an empty LINEWISE span
 				;   still takes a whole line, so stop here instead
+	CALL	OPSFIX		; where the start is in the window NOW
+	JNC	OPPGD		; ... and it is not: the motion paged it out
+	SHLD	OPSTA
 	CALL	CUROFF		; span end = cursor after the motion
 	SHLD	OPEND2
 	LDA	PSAVE
@@ -2914,6 +2951,162 @@ OPP_GO:
 	JMP	SETINS
 OPABRT:
 	JMP	SETMOV		; not a motion -> operator cancelled, nothing drew
+
+;OPENDS -- OPSLO / OPSHI = where in the file the cursor's line starts, and
+; where the line after it does.  Whichever way a line motion then goes, one of
+; them is an end of the span, and if the motion pages it is too late to ask.
+; The cursor is walked to each and put back: all three are on its own line.
+OPENDS:
+	LHLD	OPSTA
+	CALL	BOL
+	LXI	D,OPSLO
+	CALL	OPE_ST
+	LHLD	OPSTA
+	CALL	NLSTART
+	LXI	D,OPSHI
+	CALL	OPE_ST
+	LHLD	OPSTA
+	JMP	GOTO
+OPE_ST:				; the file position of offset HL, into DE's 3 bytes
+	PUSH	D
+	CALL	GOTO
+	POP	H
+	JMP	FPSTO
+
+;CURBD -- B:DE = the cursor's file position, for SUB24 to take away.
+CURBD:
+	CALL	CURFP
+	XCHG
+	MOV	B,A
+	RET
+
+;OPSFIX -- after the motion: CY and HL = the span's start as an offset in the
+; window as it is now; NC and A = which way it lies (MKWIN) if the window no
+; longer holds it.  A motion that went nowhere is asked first: the cursor at
+; the very end of the text -- an empty file -- is past MKWIN's last byte.
+OPSFIX:
+	LXI	H,OPSFP
+	CALL	MKLOAD
+	CALL	CURBD
+	LHLD	MKPOS
+	LDA	MKPOS+2
+	CALL	SUB24
+	ORA	H
+	ORA	L
+	JNZ	MKWIN
+	CALL	CUROFF
+	STC
+	RET
+
+;OPPGD -- the motion paged the span's start out of the window; A says which
+; way it lies (FFH above, 0 below).  A LINE DELETE is carried through the
+; pager: the cursor goes to the low line's start and the text is taken a
+; window at a time -- DELFWD to the window's end with the count unspent, so
+; DELTO's PAGESTP pages the next of it in, as it does for 'dd's count -- until
+; what is left to take is in the window, and that goes as any line delete
+; does.  It is not kept in the register (no 'd{motion}' is) and it is far too
+; big for 'u', which says so.  The cursor lands as 'dd' lands, on the middle
+; row: the screen it started from may be gone with the text.
+; Anything else -- a yank, a charwise span -- cannot be taken from a window
+; that does not hold it: the bell, and the cursor back where it started.
+OPPGD:
+	MOV	B,A
+	LDA	OPCLSV
+	CPI	2
+	JNZ	OPG_NO
+	LDA	PSAVE
+	CPI	'd'
+	JNZ	OPG_NO
+	INR	B
+	JZ	OPG_FW
+	CALL	CUROFF		; the motion went BACK: its line is the low one,
+	CALL	BOL		;   and the high end is OPSHI as it stands
+	CALL	GOTO
+	JMP	OPG_GO
+OPG_FW:
+	CALL	CUROFF		; it went ON: the high end is past the line it
+	CALL	NLSTART		;   landed on, and the low one is where the
+	LXI	D,OPSHI		;   start line began
+	CALL	OPE_ST
+	LXI	H,OPSLO
+	CALL	MKLOAD
+	CALL	MKPAGE
+	CALL	GOTO
+OPG_GO:
+	CALL	CURBD
+	LHLD	OPSHI
+	LDA	OPSHI+2
+	CALL	SUB24		; A:HL = the bytes to take
+OPG_SV:
+	SHLD	OPTOGO
+	STA	OPTOGO+2
+OPG_NX:
+	CALL	ATENDQ		; HL = the text's length, DE = the cursor
+	CALL	SUBHD
+	XCHG			; DE = what the window holds past the cursor
+	LHLD	OPTOGO
+	LDA	OPTOGO+2
+	ORA	A
+	JNZ	OPG_PG		; 64K or more to go
+	CALL	CMP16		; DE = held vs HL = to go
+	JC	OPG_PG
+	JZ	OPG_PG		; just all of it: take it, and page before looking
+OPG_FN:				; the rest of it is here
+	PUSH	H
+	CALL	CLRCNT		; (the count spent: this delete must not page)
+	CALL	CUROFF
+	SHLD	OPLO
+	POP	D
+	DAD	D
+	SHLD	OPHI
+	CALL	OPDSPN
+	CALL	ATEOF
+	JNC	OPMID
+	CALL	ONFST		; deleted to the end of the file: onto the new
+	JZ	OPMID		;   last line, if there is one -- and the pager
+	LXI	H,1		;   may have to fetch it, as for 'dd' there
+	CALL	SETBWD
+	JMP	OPMID
+OPG_PG:
+	MOV	A,D
+	ORA	E
+	JNZ	OPG_DL
+	CALL	ATEOF		; nothing held past the cursor
+	LXI	H,0
+	JC	OPG_FN		; ... and no more to come: the file ran out
+	DCX	H
+	CALL	SETC0
+	CALL	GOLINE
+	CALL	SCRLST		; page a step, as MKPAGE does
+	JMP	OPG_NX
+OPG_DL:
+	PUSH	D
+	LXI	H,0FFFFH
+	CALL	SETC0		; the count unspent: DELTO pages on behind it
+	POP	H
+	PUSH	H
+	CALL	DELFWD
+	POP	D
+	MVI	B,0
+	LHLD	OPTOGO
+	LDA	OPTOGO+2
+	CALL	SUB24
+	JMP	OPG_SV
+OPG_NO:
+	LXI	H,OPSFP
+	CALL	MKLOAD
+	CALL	MKPAGE
+	CALL	GOTO
+	XRA	A
+	STA	PSAVE
+	INR	A
+	STA	GPKEEP		; the column it had, not the first non-blank
+	MVI	C,BEL
+	CALL	BCONOU
+;OPMID -- the cursor's line on the middle row and the screen drawn whole.
+OPMID:
+	CALL	ZSAVE
+	JMP	GP_MID
 
 ;ONWHIT -- CY iff there is no ordinary char under the cursor to change: a blank
 ; (a space or a TAB), a line's end -- the CR,LF, so an empty line too -- or the
@@ -3203,6 +3396,7 @@ OPCTAB:
 				;   these two only have to be IN the table
 	DB	'e',1, 'E',1, '$',1
 	DB	'j',2, 'k',2, 'G',2, 'H',2, 'M',2, 'L',2
+	DB	'g',2		; 'gg' -- OPPEND reads the second 'g' itself
 	DB	27H,2		; '{a-c} -- linewise, as j and G are
 	DB	0
 
@@ -6259,6 +6453,11 @@ CWEOL:	DB	0		; operator: the motion is 'cw' rewritten to 'ce',
 				;   so it stops at the line's content end
 OPSTA:	DW	0		; operator: span start (cursor before the motion)
 OPEND2: DW	0		; operator: span end (cursor after the motion)
+OPSFP:	DB	0,0,0		; operator: the start as a place in the file
+OPSLO:	DB	0,0,0		; ... where its line starts
+OPSHI:	DB	0,0,0		; ... where the next line does (OPPGD: the span's
+				;   high end, whichever line that turned out to be)
+OPTOGO: DB	0,0,0		; OPPGD: bytes still to take
 OPLO:	DW	0		; operator: low offset of the delete range
 OPHI:	DW	0		; operator: high offset of the delete range
 

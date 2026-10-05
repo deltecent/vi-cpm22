@@ -161,8 +161,8 @@ move would break:
               pointer row, text + gap, Q-buffer (the yank register), undo region
     BUFEND  = BDOS base - 700H - 1
 
-In this build: the image is 17092 bytes, the `.COM` file 17152 bytes (134
-records), the reserve block 791 bytes (`43C4H`–`46DAH`), and the stack 128
+In this build: the image is 17474 bytes, the `.COM` file 17536 bytes (137
+records), the reserve block 791 bytes (`4542H`–`4858H`), and the stack 128
 bytes. **The size that matters is a 4 K BLOCK BOUNDARY**, because that is what
 the 8 MB disk allocates in: 16384 bytes occupy four blocks and one byte more
 occupies five. This build is past that line by design (`f F t T ; ,` would not
@@ -231,6 +231,17 @@ repaint.
   does nothing.
 - `y` takes only class 2 because there is no charwise register.
 - A span that takes no line break asks for a one-row repaint.
+- The span's start is kept as a **file position** as well as an offset, because
+  an offset is good inside one window only and the motion may page (`G` with a
+  count always does: it goes by way of line 1). After the motion `OPSFIX` turns
+  the position back into an offset if the window still holds it. If it does
+  not, a **line delete** is carried through the pager (`OPPGD`): the cursor goes
+  to the low line and the text is deleted a window at a time until what is left
+  is resident. Such a delete is too big for `u`, which says so. Any other
+  operator over a span the window does not hold (a yank, a charwise delete) is
+  refused with the bell and the cursor is put back where it started.
+- `gg` under an operator reads its second `g` inside the command, as a mark
+  reads its letter, so `.` cannot repeat `dgg`.
 
 **The yank register is WordMaster's Q-buffer.** It is a second gap buffer inside
 the arena, part of the pointer row, so it slides with the gap and grows through
@@ -279,9 +290,10 @@ out ahead of the window, times 128, plus the offset into the window), stored
 in the reserve block. Setting one costs no disk access, and it does not care
 which part of the file is resident: a jump pages until the window holds the
 position (`MKPAGE`, WordMaster's whole-file line move stopped by where the
-window is instead of by a count) and places the line as `G` does. An operator
-measures its span in logical offsets, which are good inside one window only,
-so `d'a` over a mark that is paged out is refused and the mark kept. A mark
+window is instead of by a count) and places the line as `G` does. Under an
+operator, `d'a` pages to the mark and deletes through the pager like any line
+delete; `` d`a `` and `y'a` over a mark that is paged out are refused before
+they move, and the mark is kept. A mark
 **follows its text**. Every change to the text, `u`'s replay included, goes
 through `UNDCHG` in `BUF.MAC` with its offset and length, and `UNDCHG` calls
 `EDTHK`, a vector `VI.MAC` points at `MKSHFT` (a test harness leaves it on a
