@@ -4253,8 +4253,9 @@ VI_ACT:
 ; (WM LINEPOP + BSCHAR).  On return: A = 0 for a completed line (length in
 ; RLLEN), A = 0FFH if cancelled.
 ; vim, NOT WordMaster: DEL erases like BS (WM echoes the dropped char); BS or DEL
-; on an empty line cancels, as ESC does; a control char is ignored (WM stores it
-; and shows ^X).  WM's ^X ^U ^\ ^R ^E ^C line edits are not kept.
+; on an empty line cancels, as ESC does, and a cancel blanks the row, prompt
+; char and all; a control char is ignored (WM stores it and shows ^X).  WM's
+; ^X ^U ^\ ^R ^E ^C line edits are not kept.
 RDLINE:
 	XCHG			; HL = buffer
 	SHLD	RLPTR
@@ -4311,7 +4312,9 @@ RL_ACT:
 	CPI	ACT_ESC
 	JNZ	RL_LP
 RL_CAN:
-	CALL	SETLIN		; redraw one row; the cancelled line stays, as vim's
+	MVI	A,' '		; vim: the cancelled line goes, its prompt char too
+	CALL	EXPRM		;   (the row cleared, a blank where the prompt was)
+	CALL	SETLIN		; redraw one row
 	MVI	A,0FFH		; cancelled
 	RET
 RL_DONE:
@@ -5020,7 +5023,7 @@ EXERR:
 	STC
 	RET
 
-SVER:	DB	'V1.1',0
+SVER:	DB	'V1.2',0
 SNFN:	DB	'No file name',0
 SNWR:	DB	'File changed',0
 SEXI:	DB	'File exists',0

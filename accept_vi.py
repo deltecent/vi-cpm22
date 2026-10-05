@@ -33,6 +33,11 @@ from smoke_vi import Editor, SYM, rows, HERE, SIMDIR, TEMPLATE, WORK
 
 PROMPT = re.compile(r'[A-P][0-9]*>')
 
+# What ':ve' must say: read from the source, so a version bump cannot leave the
+# check behind (it sat at 'V1.0' through V1.1).
+with open(os.path.join(HERE, 'CMD.MAC'), encoding='latin-1') as _f:
+    VERSION = re.search(r"^SVER:\s+DB\s+'([^']+)',0", _f.read(), re.M).group(1)
+
 
 def at_ccp(e, cmd):
     """Send *cmd* to the editor and report whether it returned to the CP/M
@@ -1033,7 +1038,8 @@ def ndd_like_vim():
 
 # The ':' line as vim's: the bottom row shows ':' and each char typed, BS and
 # DEL erase the last one, and BS/DEL on an empty line or ESC cancels it (vim
-# leaves the cancelled line on the row, and so does this).  (setup keys, file).
+# 9.1 blanks the row on all three, prompt char included -- measured -- and so
+# does this).  (setup keys, file).
 EX_FILES = [
     ([], 3),
     (['44G', '$'], 'wide'),               # a panned wide line
@@ -1059,9 +1065,9 @@ def ex_like_vim():
             def cancelled(tag):
                 v = e.screen(); scr = [''.join(r) for r in v.screen]
                 check(f'ex {f} {tag}: text rows kept', scr[:23] == scr0[:23])
-                check(f'ex {f} {tag}: the cancelled line stays on the row '
-                      f'({scr[23].rstrip()!r}), as vim leaves it there too',
-                      scr[23].lstrip()[:1] in (':', '/', '?'))
+                check(f'ex {f} {tag}: the cancelled line is gone from the row '
+                      f'({scr[23].rstrip()!r}), as vim blanks it too',
+                      scr[23].strip() == '')
                 check(f'ex {f} {tag}: cursor back {(v.row, v.col)} == {cur0}',
                       (v.row, v.col) == cur0)
 
@@ -4072,7 +4078,7 @@ def file_cmds():
                           (':W\r', 'Invalid command: W'),
                           (':q x\r', 'Trailing chars: x'),
                           (':q! x\r', 'Trailing chars: x'),
-                          (':ve\r', 'V1.0'),
+                          (':ve\r', VERSION),
                           (':ve x\r', 'Trailing chars: x'),
                           (':1ve\r', 'Invalid command: 1ve'),
                           (':ver\r', 'Invalid command: ver'),
