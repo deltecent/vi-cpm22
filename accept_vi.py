@@ -5461,6 +5461,21 @@ def marks_cmds():
         finally:
             e.close()
 
+    # ---- the jump pages with a count of its own, and must not leave it for
+    #      the next command: 'x' after a paged jump took the rest of the line
+    for q in ("'", '`'):
+        e = Editor(big)
+        try:
+            e.key('40G'); e.key('2l'); e.key('ma'); e.key('G')
+            e.key(q + 'a'); e.key('x')
+            e.s.run_until_quiet(quiet=1.5, timeout=40)
+            v = e.screen(); scr = [''.join(r).rstrip() for r in v.screen[:23]]
+            want = '00040'
+            check(f'x after a paged {q}a deletes ONE character '
+                  f'({scr[v.row]!r})', scr[v.row] == want)
+        finally:
+            e.close()
+
     # ---- an OPERATOR cannot take a span the window does not hold whole, so
     #      over a mark that is paged out it is refused -- the bell, nothing
     #      deleted -- and the mark is still there for a plain jump ----

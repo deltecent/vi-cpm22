@@ -785,7 +785,8 @@ MKJ_LN:
 ;only behind the cursor, and the cursor is on the edge nearer the mark.
 MKPAGE:
 	CALL	MKWIN
-	RC
+	JC	CLRCNT		; there: and the count that paged is spent,
+				;   not left for the next command to take
 	STA	DIRFLG
 	LXI	H,0FFFFH
 	SHLD	CMDCNT
