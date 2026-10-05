@@ -2840,6 +2840,21 @@ def undo_cmds():
               got == b'00001\r\n' + big[8:])
     finally:
         e.close()
+    # --- a change too big from its FIRST step leaves no record at all, and
+    #     that is still 'too large', not 'nothing to undo': it rang the bell
+    e = Editor(big)
+    try:
+        e.key('6000G'); e.key('2000dd')
+        e.s.run_until_quiet(quiet=1.5, timeout=120)
+        e.key('u')
+        check(f"undo: a 16 K 'dd' says it is too large ({bottom(e)!r})",
+              bottom(e) == 'Too large to undo')
+        e.key(':w\r'); ex_settled(e)
+        got = saved_bytes(e)
+        check('undo: ... and the lines stay deleted',
+              got == big[:5999 * 8] + big[7999 * 8:])
+    finally:
+        e.close()
 
 
 # Rows the editor is deliberately NOT held to, both recorded as deviations in

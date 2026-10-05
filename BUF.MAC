@@ -2014,18 +2014,18 @@ UNDRM:
 UNDO:
 	XRA	A
 	STA	UNDWHY		; refused for want of a change, until told else
-	LDA	UNDN
-	ORA	A
-	STC
-	RZ			; nothing captured
-	LDA	UNDBAD
-	ORA	A
-	JZ	UND_OK
+	LDA	UNDBAD		; asked BEFORE the count of records: a change
+	ORA	A		;   too big from its very first step leaves
+	JZ	UND_OK		;   none, and is still not 'nothing to undo'
 	MVI	A,2
 	STA	UNDWHY		; too big to have been captured: CMD.MAC says
 	STC			;   so, rather than ringing the bell at a user
 	RET			;   who has no way to know why
 UND_OK:
+	LDA	UNDN
+	ORA	A
+	STC
+	RZ			; nothing captured
 	LHLD	PGTOPM
 	XCHG
 	LHLD	UNDPG

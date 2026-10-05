@@ -2135,18 +2135,18 @@
   08BD'                         UNDO:
   08BD'   AF                    	XRA	A
   08BE'   32 0A63'              	STA	UNDWHY		; refused for want of a change, until told else
-  08C1'   3A 0A5D'              	LDA	UNDN
-  08C4'   B7                    	ORA	A
-  08C5'   37                    	STC
-  08C6'   C8                    	RZ			; nothing captured
-  08C7'   3A 0A5F'              	LDA	UNDBAD
-  08CA'   B7                    	ORA	A
-  08CB'   CA 08D5'              	JZ	UND_OK
-  08CE'   3E 02                 	MVI	A,2
-  08D0'   32 0A63'              	STA	UNDWHY		; too big to have been captured: CMD.MAC says
-  08D3'   37                    	STC			;   so, rather than ringing the bell at a user
-  08D4'   C9                    	RET			;   who has no way to know why
-  08D5'                         UND_OK:
+  08C1'   3A 0A5F'              	LDA	UNDBAD		; asked BEFORE the count of records: a change
+  08C4'   B7                    	ORA	A		;   too big from its very first step leaves
+  08C5'   CA 08CF'              	JZ	UND_OK		;   none, and is still not 'nothing to undo'
+  08C8'   3E 02                 	MVI	A,2
+  08CA'   32 0A63'              	STA	UNDWHY		; too big to have been captured: CMD.MAC says
+  08CD'   37                    	STC			;   so, rather than ringing the bell at a user
+  08CE'   C9                    	RET			;   who has no way to know why
+  08CF'                         UND_OK:
+  08CF'   3A 0A5D'              	LDA	UNDN
+  08D2'   B7                    	ORA	A
+  08D3'   37                    	STC
+  08D4'   C8                    	RZ			; nothing captured
   08D5'   2A 0000*              	LHLD	PGTOPM
   08D8'   EB                    	XCHG
   08D9'   2A 0A6F'              	LHLD	UNDPG
@@ -2555,7 +2555,7 @@ Symbols:
 090D'	UNDREV          08A5'	UNDRM           0A61I'	UNDRPL          
 074B'	UNDRST          0200 	UNDRSV          0915'	UNDRVL          
 0A5EI'	UNDST           0A64'	UNDTY           0A0B'	UNDUDF          
-0A63I'	UNDWHY          0855'	UNDXNO          08D5'	UND_OK          
+0A63I'	UNDWHY          0855'	UNDXNO          08CF'	UND_OK          
 0317'	UPCASE          01D7*	UPDMARK         07F3'	URADDR          
 0018 	URMAX           09A1'	URSILN          098A'	URSILP          
 0007 	URSIZE          092E'	URSTEP          0968'	URS_AP          
