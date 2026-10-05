@@ -129,7 +129,15 @@ WordMaster. The engine changes only for a stated reason.
   stay private to BUF.MAC. See `BUFFER.md` §7.
 - **`LNDLT`**, the signed number of lines the cursor crossed since the last
   frame. `GOTO` and `DELPRV` keep it, and placement (§6) depends on it.
-- **The write path.** `WRTO`, `DISCRD` and `CNTLF` handle `:w {file}` and `:e`;
+- **The line number.** `TOPLF` is the count of line feeds in the records behind
+  the window. `PAGEOUT` adds a sector's line feeds as it leaves the window's
+  top and `REWIND` takes them off as it comes back (`TLFADD` / `TLFSUB`), so
+  `CNTLF` — the cursor's line — is that plus a scan of the resident text and
+  never reads the disk. `^G` uses it, and so does `GOLN`, which moves `{n}G`,
+  `{n}gg`, `d{n}G` and `:N,Ms` from the line the cursor is on instead of from
+  line 1. The price is a 128-byte scan per sector paged, about 5 % on a move
+  across the whole file.
+- **The write path.** `WRTO` and `DISCRD` handle `:w {file}` and `:e`;
   `REOPEN` and `SEEKTO` let `:w` keep editing at the same line, row and column.
   They are built only from WordMaster primitives (`SAVCLO`, `RENAME`, `RENF`,
   `DELF`, `MAKEF`, `RDNEXT`). `SAVEFIL` (WordMaster's `ENDEDIT`) can only write
@@ -161,8 +169,8 @@ move would break:
               pointer row, text + gap, Q-buffer (the yank register), undo region
     BUFEND  = BDOS base - 700H - 1
 
-In this build: the image is 17652 bytes, the `.COM` file 17664 bytes (138
-records), the reserve block 803 bytes (`45F4H`–`4916H`), and the stack 128
+In this build: the image is 17687 bytes, the `.COM` file 17792 bytes (139
+records), the reserve block 803 bytes (`4617H`–`4939H`), and the stack 128
 bytes. **The size that matters is a 4 K BLOCK BOUNDARY**, because that is what
 the 8 MB disk allocates in: 16384 bytes occupy four blocks and one byte more
 occupies five. This build is past that line by design (`f F t T ; ,` would not

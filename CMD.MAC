@@ -2590,14 +2590,25 @@ VG_LN:
 
 ;GOLN -- to the start of line HL (1-based), without G's window placement: the
 ;substitute walks a range from here and places the screen once, at the end.
+;The move is counted from the line the cursor is on (CNTLF keeps that without
+;reading the disk), so it costs the distance and not the line number: it used
+;to go back to line 1 and count forward from there, whatever the distance.
 GOLN:
-	DCX	H		; lines to move from line 1
 	PUSH	H
-	MVI	A,0FFH
-	CALL	MVLMAX		; to BOF
-	POP	H
+	CALL	CNTLF
+	INX	H		; HL = the cursor's line
+	POP	D		; DE = the line wanted
+	CALL	CMP16		; CY iff DE < HL: it is above
+	JC	GLN_BK
+	XCHG
+	CALL	SUBHD		; HL = the lines down to it (0: this line's start)
 	XRA	A
-	CALL	MVLIND		; forward count-1 lines
+	JMP	GLN_MV
+GLN_BK:
+	CALL	SUBHD		; HL = the lines up to it
+	MVI	A,0FFH
+GLN_MV:
+	CALL	MVLIND
 	CALL	ATEOF
 	CC	LASTLN		; past the last line: onto it
 	RET

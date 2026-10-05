@@ -45,7 +45,8 @@
 ;
 ; APPENDED (not WM), tagged where each starts: REOPEN/SEEKTO/OPENZ (':w' keeps
 ; editing), TFCB/WRTO/TEXIST/DISCRD/CNTLF (':w name', ':e', a buffer with no
-; name) and PGTOPM (the count of times the pager moved TXTBEG).
+; name), PGTOPM (the count of times the pager moved TXTBEG) and TOPLF with
+; TLFADD/TLFSUB (the line feeds behind the window, kept in PAGEOUT and REWIND).
 ;============================================================
 
 WBOOT	EQU	0
@@ -147,6 +148,7 @@ OPRD:				; cold-start the pager state.  WM does this by
 	SHLD	BAKREC
 	SHLD	BAKPOS
 	SHLD	OUTPOS
+	SHLD	TOPLF		; (appended) no line is behind the window yet
 	CALL	FILLBUF		; WM 518 -- read the file into the buffer
 	RET
 
@@ -342,29 +344,11 @@ DISCRD:
 	CALL	DELF
 	JMP	KILLBAK
 
-;CNTLF -- HL = the line feeds before the cursor: in output records 0 to
-; OUTPOS-1, read back into SECBUF with RDNEXT (as REWIND reads them), then in
-; the window up to the gap.  OUTPOS ends where it was.
+;CNTLF -- HL = the line feeds before the cursor: TOPLF for the records behind
+;the window, plus a scan of the text from TXTBEG to the gap.  It reads no disk.
 CNTLF:
-	LHLD	OUTPOS
-	SHLD	CLREC
-	LXI	H,0
-	SHLD	OUTPOS
+	LHLD	TOPLF
 	SHLD	CLCNT
-CLREC0:
-	LHLD	CLREC
-	XCHG
-	LHLD	OUTPOS
-	CALL	CMP16
-	JZ	CLWIN		; all read
-	LXI	D,OUTFCB
-	LXI	H,SECBUF
-	CALL	RDNEXT
-	JC	CLWIN		; (not expected: the records are written)
-	LXI	D,80H
-	CALL	CLBYTS
-	JMP	CLREC0
-CLWIN:
 	LHLD	TXTBEG
 	PUSH	H
 	XCHG
@@ -374,6 +358,50 @@ CLWIN:
 	POP	H
 	CALL	CLBYTS
 	LHLD	CLCNT
+	RET
+
+;TLFADD / TLFSUB -- the sector at HL leaves the window's top (PAGEOUT) or comes
+;back to it (REWIND): TOPLF gains or loses its line feeds.  TOPLF is then the
+;line feeds in output records 0 to OUTPOS-1 at all times, which is what CNTLF
+;used to read those records back to find.  Keeps every register and the flags.
+TLFADD:
+	PUSH	PSW
+	PUSH	B
+	PUSH	D
+	PUSH	H
+	CALL	TLFSEC
+	LHLD	TOPLF
+	DAD	D
+	JMP	TLFSTO
+TLFSUB:
+	PUSH	PSW
+	PUSH	B
+	PUSH	D
+	PUSH	H
+	CALL	TLFSEC
+	LHLD	TOPLF
+	CALL	SUBHD
+TLFSTO:
+	SHLD	TOPLF
+	POP	H
+	POP	D
+	POP	B
+	POP	PSW
+	RET
+
+;TLFSEC -- DE = the line feeds in the 128 bytes at HL.
+TLFSEC:
+	LXI	D,0
+	MVI	B,80H
+TLFLP:
+	MOV	A,M
+	INX	H
+	CPI	0AH
+	JNZ	TLFNX
+	INX	D
+TLFNX:
+	DCR	B
+	JNZ	TLFLP
 	RET
 
 ;CLBYTS -- HL = text, DE = its length: CLCNT += its line feeds.
@@ -493,6 +521,8 @@ POFRSH:				 ; WM 4454 -- write a fresh output record
 	XCHG
 	INR	B
 POADV:				; WM 4463 -- advance TXTBEG past the sector
+	CALL	TLFADD		; (appended) its line feeds are behind the
+				;   window now
 	LXI	D,80H
 	DAD	D
 	SHLD	TXTBEG
@@ -950,6 +980,8 @@ RWNLP:				; WM 4768 -- re-read one output record backward
 	CALL	RDPREV
 	JC	RWNDON
 	SHLD	TXTBEG
+	CALL	TLFSUB		; (appended) its line feeds are back in the
+				;   window
 	PUSH	H
 	LHLD	PGTOPM		; (appended) the window's top moved: 'u' reads
 	INX	H		;   this to know its offsets have shifted
@@ -1432,7 +1464,8 @@ WRKMAD: DB	0		; a work record has been written, so name.$$$ /
 				;   VIBACKUP$$$ may exist (DISCRD tests it)
 SKREC:	DW	0		; SEEKTO: target record (APPENDED, not WM)
 SKBYT:	DB	0		; SEEKTO: target byte in that record
-CLREC:	DW	0		; CNTLF: OUTPOS on entry
+TOPLF:	DW	0		; the line feeds behind the window: in output
+				;   records 0 to OUTPOS-1 (TLFADD / TLFSUB)
 CLCNT:	DW	0		; CNTLF: line feeds counted
 	DB	0		; TFCB-2 : WRREC/CLOSEC open flag (DELF clears)
 	DB	0		; TFCB-1

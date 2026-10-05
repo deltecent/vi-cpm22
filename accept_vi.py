@@ -5662,6 +5662,170 @@ def pgop_cmds():
             e.close()
 
 
+def tstates(e):
+    """The emulated 8080's T-state clock (2 MHz), from the simulator's monitor.
+    It counts the CPU, the 9600-baud console and the BIOS's disk polling; the
+    drive model has no seek or rotation, so a real floppy is slower still."""
+    raw = e.s._rpc("tools/call", {"name": "monitor",
+                                  "arguments": {"command": "SHOW CLOCK"}})
+    out = "".join(b.get("text", "") for b in raw.get("content", []))
+    return int(re.search(r'\((\d+) T-states\)', out).group(1))
+
+
+def lnum_cmds():
+    """The line feeds behind the window are COUNTED as the pager moves them
+    (PAGE.MAC TOPLF), so the cursor's line number never costs a disk read:
+    '^G' answers at once anywhere in a 100 K file, and '{n}G' -- with every
+    command built on it, ':N,Ms' and 'd{n}G' included -- moves from where the
+    cursor is instead of going back to line 1 first.  Each bound is emulated
+    seconds; before the count was kept they were 30 s, 14 s, 80 s and 31 s."""
+    def at(e):
+        v = e.screen()
+        return ''.join(v.screen[v.row]).rstrip()
+
+    def timed(e, keys, settle=None):
+        e.s.run_until_quiet(quiet=1.5, timeout=120)
+        t0 = tstates(e)
+        e.key(keys)
+        e.s.run_until_quiet(quiet=1.5, timeout=600)
+        if settle:
+            settle(e)
+        return (tstates(e) - t0) / 2e6
+
+    big = make(12800)
+    L = [line(i) for i in range(1, 12801)]
+
+    def want(n):
+        return L[n - 1].decode()[:6]
+
+    def go(e, keys):
+        e.key(keys)
+        e.s.run_until_quiet(quiet=1.5, timeout=300)
+    e = Editor(big)
+    try:
+        e.key('6000G')
+        e.s.run_until_quiet(quiet=1.5, timeout=300)
+        check(f'lnum 6000G: on its line ({at(e)!r})', at(e) == txt(6000))
+        for keys, ln, limit in (('6100G', 6100, 6), ('5900G', 5900, 6),
+                                ('6000G', 6000, 6)):
+            s = timed(e, keys)
+            check(f'lnum {keys}: on its line ({at(e)!r})', at(e) == txt(ln))
+            check(f'lnum {keys}: moves from the cursor, not from line 1 '
+                  f'({s:.1f} s, {limit} allowed)', s < limit)
+        # (a line delete that pages takes its lines without yanking them)
+        s = timed(e, 'd6500G')
+        del L[5999:6500]
+        g = ctrlg(e)
+        check(f'lnum d6500G: took its 501 lines ({at(e)!r}, {g!r})',
+              at(e) == want(6000) and 'line 6000 ' in g)
+        check(f'lnum d6500G: costs what the delete costs ({s:.1f} s, 10 allowed)',
+              s < 10)
+
+        go(e, '3000G')
+        g = ctrlg(e)
+        check(f'lnum 3000G: paged back to its line ({at(e)!r}, {g!r})',
+              at(e) == want(3000) and 'line 3000 ' in g)
+        go(e, 'G')
+        s = timed(e, '\x07')
+        g = bottom(e)
+        check(f'lnum G ^G: the last line ({g!r})', f'line {len(L)} ' in g)
+        check(f'lnum G ^G: without reading the file back ({s:.1f} s, 3 allowed)',
+              s < 3)
+        s = timed(e, '12200G')
+        check(f'lnum 12200G from the end: on its line ({at(e)!r})',
+              at(e) == want(12200))
+        check(f'lnum 12200G from the end: moves from the cursor '
+              f'({s:.1f} s, 6 allowed)', s < 6)
+
+        # ---- the count follows the text as edits move line ends about ----
+        go(e, '6000G'); go(e, '300dd')
+        reg = L[5999:6299]
+        del L[5999:6299]
+        go(e, '9000G')
+        g = ctrlg(e)
+        check(f'lnum 300dd 9000G: 300 lines fewer above it ({at(e)!r}, {g!r})',
+              at(e) == want(9000) and 'line 9000 ' in g)
+        go(e, '6000G'); go(e, 'P')
+        L[5999:5999] = reg
+        go(e, '9000G')
+        check(f'lnum P 9000G: and back again ({at(e)!r})', at(e) == want(9000))
+        go(e, '6000G')
+        e.key('oabc\rdef'); escaped(e)
+        L[6000:6000] = [b'abc\r\n', b'def\r\n']
+        go(e, '1G'); go(e, '6003G')
+        check(f'lnum o 1G 6003G: two lines more above it ({at(e)!r})',
+              at(e) == want(6003))
+        go(e, '7000G')
+        check(f'lnum 7000G: ({at(e)!r})', at(e) == want(7000))
+        e.key('dd')
+        del L[6999]
+        go(e, '12000G')
+        g = ctrlg(e)
+        check(f'lnum dd 12000G: ({at(e)!r}, {g!r})',
+              at(e) == want(12000) and 'line 12000 ' in g)
+
+        # ---- ':N,Ms' starts from the cursor too ----
+        go(e, '6000G')
+        s = timed(e, ':6003,6102s/0/9/\r', settle=ex_settled)
+        for i in range(6002, 6102):
+            L[i] = L[i].replace(b'0', b'9', 1)
+        g = ctrlg(e)
+        check(f'lnum :6003,6102s: ends on its last line ({at(e)!r}, {g!r})',
+              at(e) == want(6102) and 'line 6102 ' in g)
+        check(f'lnum :6003,6102s: costs its hundred lines ({s:.1f} s, 12 allowed)',
+              s < 12)
+
+        # ---- ':w' reloads the file and seeks back: the count is rebuilt ----
+        n = len(e.cap.getvalue())
+        e.key(':w\r'); ex_settled(e)
+        e.s.run_until_quiet(quiet=1.5, timeout=300)
+        check('lnum :w: the editor is still running',
+              not PROMPT.search(e.cap.getvalue()[n:]))
+        g = ctrlg(e)
+        check(f'lnum :w ^G: the line it was on ({g!r})', 'line 6102 ' in g)
+        s = timed(e, '6200G')
+        check(f'lnum :w 6200G: on its line ({at(e)!r})', at(e) == want(6200))
+        check(f'lnum :w 6200G: moves from the cursor ({s:.1f} s, 6 allowed)',
+              s < 6)
+        go(e, 'gg')
+        g = ctrlg(e)
+        check(f'lnum gg: line 1 ({at(e)!r}, {g!r})',
+              at(e) == txt(1) and 'line 1 ' in g)
+        go(e, '99999G')
+        last = f'line {len(L)} '
+        g = ctrlg(e)
+        check(f'lnum 99999G: past the end is the last line ({at(e)!r}, {g!r})',
+              at(e) == txt(12800) and last in g)
+        e.key(':e!\r'); ex_settled(e)
+        e.s.run_until_quiet(quiet=1.5, timeout=300)
+        g = ctrlg(e)
+        check(f'lnum :e!: reloaded onto the same line ({g!r})', last in g)
+        got = saved_bytes(e)            # (leaves the editor: it comes last)
+        check(f'lnum :w: byte-exact ({len(got)} bytes)', got == b''.join(L))
+    finally:
+        e.close()
+
+    # ---- lines past the right edge: 109 K in 1500 lines ----
+    e = Editor(make_wide())
+    try:
+        e.key('G'); e.s.run_until_quiet(quiet=1.5, timeout=300)
+        s = timed(e, '\x07')
+        g = bottom(e)
+        check(f'lnum wide G ^G: ({g!r}, {s:.1f} s, 3 allowed)',
+              'line 1500 ' in g and s < 3)
+        for keys, ln in (('1400G', 1400), ('1450G', 1450), ('700G', 700),
+                         ('760G', 760), ('2gg', 2)):
+            s = timed(e, keys)
+            g = ctrlg(e)
+            check(f'lnum wide {keys}: ({at(e)[:6]!r}, {g!r})',
+                  at(e)[:6] == txt(ln) and f'line {ln} ' in g)
+            if keys in ('1450G', '760G'):
+                check(f'lnum wide {keys}: moves from the cursor '
+                      f'({s:.1f} s, 6 allowed)', s < 6)
+    finally:
+        e.close()
+
+
 def qfull_cmds():
     """A 'dd' or 'yy' whose lines the yank register cannot hold is REFUSED:
     'Too large to yank' on the bottom row, the editor still running, the file,
@@ -5889,6 +6053,9 @@ def main():
     if not args or 'vim' in args or 'qfull' in args:
         print('\n=== dd / yy past the yank register ===', flush=True)
         qfull_cmds()
+    if not args or 'vim' in args or 'lnum' in args:
+        print('\n=== the line number, kept as the window pages ===', flush=True)
+        lnum_cmds()
     if not args or 'vim' in args or 'find' in args:
         print('\n=== f F t T ; , vs vim ===', flush=True)
         find_like_vim()
