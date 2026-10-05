@@ -98,7 +98,11 @@ WordMaster. The engine changes only for a stated reason.
 
 - `ERRMSG`'s tail, and `FATAL` entering it: WordMaster jumps back to its own
   command loop, which does not exist here. They print the message, set `ERRFLG`
-  and warm-boot.
+  and warm-boot — leaving the machine as a quit leaves it: the terminal is torn
+  down first (`ERRHK`, which VI.MAC points at `SCDONE`; a harness with no
+  screen leaves it on a `RET`), so the message is on the bottom row and not
+  over the text at the cursor, and `DISCRD` drops `name.$$$` and `VIBACKUP.$$$`
+  before the warm boot. The edit itself is lost; the file on disk is untouched.
 - WordMaster's `GETKEY` is replaced by `KBPOLL` (KEY.MAC) in `RDSEC` and
   `POLLBRK`, so the long engine loops drain type-ahead into VI's ring.
 - `OPENFIL`/`SAVEFIL` wrap WordMaster's inline open and `ENDEDIT` sequences as

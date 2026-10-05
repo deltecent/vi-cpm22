@@ -5297,6 +5297,59 @@ def marks_cmds():
 
 
 
+def disk_full():
+    """A fatal disk error leaves the editor the way a quit does: the terminal
+    restored, the message on the bottom row rather than over the text at the
+    cursor, and no name.$$$ on the disk.  The drive is filled through the guest
+    (the CCP's SAVE, 64 K a file, until it says 'No space'), so a 100 K file
+    cannot spill a single record: 'G' has to page and fails, and so does ':w'
+    after a change.  The file itself must come through both untouched."""
+    content = make(12800)
+    e = Editor(content)
+    try:
+        e._ensure_ccp()
+        n = 0
+        while 'NO SPACE' not in e.s.cmd('SAVE 255 F%d.BIN' % n).upper():
+            n += 1
+            if n > 200:
+                break
+        check(f'full: the drive filled up ({n} files of 64 K)', 0 < n <= 200)
+        e.s.cmd('ERA F%d.BIN' % n)               # the one that did not fit
+
+        def fatal(tag, keys):
+            e.cap.seek(0); e.cap.truncate(0)
+            e.s.send('VI TEST.TXT\r')
+            e.s.run_until_quiet(quiet=1, timeout=40)
+            for k in keys[:-1]:
+                e.key(k)
+            top = [r.rstrip() for r in rows(e)]
+            e.key(keys[-1], idle=6000)
+            v = e.screen(); scr = [''.join(r).rstrip() for r in v.screen]
+            check(f'full {tag}: DISK FULL on the row above the prompt '
+                  f'({scr[22]!r} / {scr[23]!r})',
+                  scr[22] == 'DISK FULL' and PROMPT.fullmatch(scr[23]) is not None)
+            check(f'full {tag}: the cursor is after the prompt, bottom row '
+                  f'{(v.row, v.col)}', (v.row, v.col) == (23, len(scr[23])))
+            check(f'full {tag}: the text rows are as they were, one row up '
+                  f'(the prompt\'s line feed), with nothing written over them',
+                  scr[:22] == top[1:23])
+            check(f'full {tag}: the scroll region is reset (ESC[r) before the '
+                  f'message', '\x1b[r' in e.cap.getvalue()
+                  and e.cap.getvalue().rindex('\x1b[r')
+                  < e.cap.getvalue().rindex('DISK FULL'))
+            d = cpm_dir(e)
+            check(f'full {tag}: no work files left {work_files(d)}',
+                  not work_files(d))
+            check(f'full {tag}: TEST.TXT still listed', listed(d, 'TEST.TXT'))
+
+        fatal('paging (G)', ['G'])
+        fatal(':w', ['x', ':w\r'])
+        check('full: TEST.TXT is byte for byte what it was',
+              disk(e, 'TEST.TXT') == content)
+    finally:
+        e.close()
+
+
 def main():
     args = set(a.lower() for a in sys.argv[1:])
     sizes = [s for s in SIZES if not args or s[0] in args]
@@ -5388,6 +5441,9 @@ def main():
         print('\n=== :w name  :wq  :x  :e name  no name  ZZ ===', flush=True)
         file_cmds()
         zz_cmds()
+    if not args or 'vim' in args or 'full' in args:
+        print('\n=== DISK FULL ===', flush=True)
+        disk_full()
 
     print(f'\n{PASS[0]} passed, {FAIL[0]} failed', flush=True)
     if FAILED:

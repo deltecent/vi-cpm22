@@ -27,7 +27,9 @@
 ; DEVIATION FROM WM: ERRMSG's TAIL.  WM's ERRMSG (WM 664) prints its inline
 ; message then longjmps to its own command loop.  Here only the tail differs:
 ; print the WM message, set ERRFLG, and warm-boot to CP/M, so an error that
-; fires surfaces loudly.
+; fires surfaces loudly.  The editor is left the way a quit leaves it: the
+; message goes on the bottom row (ERRHK, the editor's screen teardown) and no
+; work file stays on the disk (PAGE.MAC's DISCRD).
 ;
 ; APPENDED (non-WM), each section tagged where it starts:
 ;   * the LOGICAL-OFFSET API (CUROFF/LOGLEN/CHARAT/GOTO/LFCNT, DELFWD, UNDELF,
@@ -106,6 +108,8 @@ RESVMEM EQU	0D80H		; WM 25: the arena QROOM keeps free past
 	EXTRN	AUXCNT, NEWFIL, DIRFLG	; PAGE.MAC -- WM L271E / NEWFIL / DIRFLG
 	EXTRN	MOREIN, POLLBRK		; PAGE.MAC -- WM 4743 / WM 6199
 	EXTRN	PGTOPM			; PAGE.MAC -- the paged-window signature
+	EXTRN	DISCRD			; PAGE.MAC -- drop the work files (ERRMSG)
+	PUBLIC	ERRHK			; VI.MAC   -- ERRMSG's screen hook
 	EXTRN	KBPOLL			; KEY.MAC  -- WM GETKEY (type-ahead drain)
 	EXTRN	UNDREC, RSVTOP		; RSV.MAC  -- the captured change, and the
 					;   top of the reserve block = arena base
@@ -1394,11 +1398,19 @@ PAGESTP:			; WM 4311
 ;============================================================
 ; ERRMSG -- WM 664, message-print transcribed; TAIL adapted (see header):
 ; print the inline 0-terminated message, set ERRFLG, warm-boot to CP/M.
+; The message is printed where ERRHK leaves the cursor: VI.MAC points it at the
+; screen teardown, so it lands on the bottom row with the terminal restored, as
+; a quit leaves it; a harness with no screen leaves it on a RET.  The work files
+; are dropped before the warm boot, as a quit drops them.  A second error from
+; inside either step ends here too: DISCRD clears its own flag before it
+; deletes, so it cannot run twice.
 ;============================================================
 ERRMSG:				; WM 664 (tail adapted)
-	POP	H		; HL -> inline message (after the CALL)
 	MVI	A,0FFH
 	STA	ERRFLG		; record that an error fired
+	LHLD	ERRHK
+	CALL	ERMGO		; the cursor to where the message belongs
+	POP	H		; HL -> inline message (after the CALL)
 ERMLP:
 	MOV	A,M
 	ORA	A
@@ -1411,7 +1423,11 @@ ERMLP:
 	INX	H
 	JMP	ERMLP
 ERMEND:
+	CALL	DISCRD		; no name.$$$ / VIBACKUP.$$$ left behind
 	JMP	WBOOT		; adapted tail: back to CP/M
+ERMGO:	PCHL
+ERMNUL: RET
+ERRHK:	DW	ERMNUL		; the screen's teardown, once there is a screen
 
 ;============================================================
 ; LOGICAL-OFFSET API  (APPENDED -- NOT WordMaster).

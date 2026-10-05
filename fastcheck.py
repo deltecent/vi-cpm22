@@ -42,7 +42,7 @@ GROUPS = ['ops', 'srch', 'subst', 'marks', 'ins', 'put', 'file', 'ndd', 'dot', '
           'find',
           'ctrlg',
           'bs', 'goto', 'arg', 'mot', '40k', 'scrolls', '2k', 'hml', 'one',
-          'jk', 'empty', 'ex']
+          'full', 'jk', 'empty', 'ex']
 
 # what a worker's sandbox needs: the machine file, and the binary `R` sends
 NEEDS = ['vi.toml', 'VI.COM']
