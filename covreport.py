@@ -216,6 +216,55 @@ def report(out_dir):
     table(o, ['file', 'editors', 'emulated s', 'of the suite', 'blocks run',
               'only at this size'], rows)
 
+    # ---- the size sweeps
+    sweeps = ('empty', 'one', '2k', '40k', '100k')
+    sw = collections.OrderedDict()
+    for c in cases:
+        if c['group'] in sweeps:
+            d = sw.setdefault(c['section'].split()[0], {})
+            d.setdefault(c['group'], [set(), 0])
+            d[c['group']][0] |= c['hit']
+            d[c['group']][1] += c['t']
+    if sw:
+        o.append('## The size sweeps')
+        o.append('')
+        o.append('Five groups run the same eight functions on files of five '
+                 'sizes. For each function: the blocks each size runs that '
+                 '**no other size of the same function** runs, and what the '
+                 'two paging sizes run that the other does not.')
+        o.append('')
+        rows = []
+        for f, d in sw.items():
+            row = [f'`{f}`']
+            for g in sweeps:
+                if g in d:
+                    others = set().union(*[x[0] for h, x in d.items() if h != g])
+                    row.append(f'{len(d[g][0] - others)} ({secs(d[g][1]):.0f} s)')
+                else:
+                    row.append('-')
+            a, b = d.get('40k', [set()])[0], d.get('100k', [set()])[0]
+            row += [len(a - b), len(b - a)]
+            rows.append(row)
+        table(o, ['function'] + [f'only at `{g}`' for g in sweeps]
+              + ['40k not 100k', '100k not 40k'], rows)
+
+    # ---- the heaviest editors outside the minimal set
+    spare = sorted((c for c in cases if id(c) not in keptid),
+                   key=lambda c: -c['t'])[:20]
+    o.append('## The heaviest editors that run no code of their own')
+    o.append('')
+    o.append('The twenty longest editors outside the minimal set above. Each '
+             'is a candidate for a smaller file or a shorter range, never for '
+             'deletion on this evidence alone: what it checks may be the '
+             'text, the size or the order, which this table cannot see.')
+    o.append('')
+    table(o, ['emulated s', 'group', 'function', 'file bytes',
+              'keys (the first 50)'],
+          [(f"{secs(c['t']):.0f}", f"`{c['group']}`", f"`{c['section']}`",
+            c.get('size') or 0,
+            '`' + ascii(c['keys'][:50])[1:-1].replace('|', '\\|').replace('`', "'") + '`')
+           for c in spare])
+
     # ---- operators
     o.append('## Operator x motion x paging')
     o.append('')
@@ -226,7 +275,10 @@ def report(out_dir):
              '**0** is a cell no test enters, `-` a pair the editor does not '
              'accept (`c` takes no linewise motion, `y` takes only linewise '
              'ones), and `.` a motion that cannot leave the window, so cannot '
-             'page.')
+             'page. A "paged" cell can stay at 0 with a test on it: a charwise '
+             'span the window does not hold is refused before the window '
+             'moves (`pgop` checks the refusals), and `e` does not page at '
+             'all (#23).')
     o.append('')
     tab = opctab()
     cells = collections.Counter()
