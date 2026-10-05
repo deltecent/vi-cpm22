@@ -6788,9 +6788,16 @@ def pgop_cmds():
 
     # ---- what the window cannot hold whole and is not a line delete: the
     #      bell, nothing taken, the cursor back where it started ----
+    #      (every charwise motion a count can take past the window, issue #3:
+    #      TESTMAP.md had none of them over a paged span)
     for setup, op in ((['6000G', '3l'], 'yG'), (['6000G', '3l'], 'ygg'),
                       (['40G', 'ma', '6000G', '3l'], 'd`a'),
-                      (['40G', 'ma', '6000G', '3l'], "y'a")):
+                      (['40G', 'ma', '6000G', '3l'], "y'a"),
+                      (['4000G', 'ma', '6000G', '3l'], "y'a"),
+                      (['6000G', '3l'], 'y2000j'),
+                      (['6000G', '3l'], 'd3000w'), (['6000G', '3l'], 'd3000W'),
+                      (['6000G', '3l'], 'd3000b'), (['6000G', '3l'], 'd3000B'),
+                      (['6000G', '3l'], 'd2000$'), (['6000G', '3l'], 'c2000$')):
         e = Editor(big)
         try:
             for k in setup:
@@ -6824,6 +6831,59 @@ def pgop_cmds():
         got = saved_bytes(e)
         check(f'y6002G then p puts the three lines ({len(got)} bytes)',
               got == L(1, 6000) + L(6000, 6002) + L(6001, 12800))
+    finally:
+        e.close()
+
+    # ---- a yank that pages BACKWARD is taken, and a put that pages puts the
+    #      lines where they belong; where it leaves the cursor is issue #24 ----
+    for keys, want, at in (
+            (['6000G', '3l', 'y2000k', 'P'],
+             L(1, 3999) + L(4000, 6000) + L(4000, 12800), 4000),
+            (['6000G', '2000yy', 'P'],
+             L(1, 5999) + L(6000, 7999) + L(6000, 12800), 6000),
+            (['6000G', '2000yy', 'p'],
+             L(1, 6000) + L(6000, 7999) + L(6001, 12800), 6001)):
+        e = Editor(big)
+        try:
+            for k in keys:
+                tap(e, k)
+            g = ctrlg(e)
+            still_open(24, f'{" ".join(keys)}: the cursor is on the first '
+                           f'line put, {at} ({g!r})', f' line {at} ' in g + ' ')
+            tap(e, ':w\r')
+            got = saved_bytes(e)
+            check(f'{" ".join(keys)}: byte-exact ({len(got)} bytes)', got == want)
+        finally:
+            e.close()
+
+    # ---- 'e' has to page as 'w' does (issue #23), and under an operator a
+    #      span it cannot reach has to be refused, not cut short ----
+    e = Editor(big)
+    try:
+        tap(e, '6000G'); tap(e, '300e')
+        g = ctrlg(e)
+        still_open(23, f'6000G 300e ends on line 6299 ({g!r})',
+                   ' line 6299 ' in g)
+    finally:
+        e.close()
+    e = Editor(big)
+    try:
+        tap(e, '6000G3l'); tap(e, 'd3000e'); tap(e, ':w\r')
+        got = saved_bytes(e)
+        still_open(23, f'6000G3l d3000e is refused, or takes the 3000 words '
+                       f'({len(got)} bytes)',
+                   got in (big, L(1, 5999) + b'006' + L(9000, 12800)))
+    finally:
+        e.close()
+
+    # ---- a counted 'dw' goes on into the next line (issue #22) ----
+    e = Editor(make(40))
+    try:
+        tap(e, '5G3l'); tap(e, 'd2w'); tap(e, ':w\r')
+        got = saved_bytes(e)
+        still_open(22, f'5G3l d2w takes the rest of the line and the next '
+                       f'({len(got)} bytes)',
+                   got == L(1, 4) + b'000\r\n' + L(7, 40))
     finally:
         e.close()
 
@@ -6911,20 +6971,29 @@ AFTER_FRESH = ['u', '.', '3.', 'p', 'P', 'n', 'N', ';', ',', "'a", '`a', '\x0c',
                '\x07', '\x1b']
 
 
+def tap(e, keys):
+    """Type *keys* and wait for the editor to be back at the keyboard."""
+    for part in re.split('(\x1b)', keys):
+        if part == '\x1b':
+            escaped(e)
+        elif part:
+            e.s.send(part)
+            idle(e)
+            ex_settled(e)
+
+
+def still_open(issue, label, cond):
+    """A check that is known to fail, under the issue it is waiting on.  It
+    passes while *cond* is false and FAILS when it turns true: the fix has to
+    make it an ordinary check()."""
+    check(f'{label}: still as issue #{issue} says -- if this fails the issue '
+          f'is fixed: make it a check()', not cond)
+
+
 def after_cmds():
     """After any command the next one is its own: 'x' takes one character,
     'j' moves one line, '.' repeats the 'x', '2x' takes two, and the screen is
     the one '^L' draws."""
-    def tap(e, keys):
-        """Type *keys* and wait for the editor to be back at the keyboard."""
-        for part in re.split('(\x1b)', keys):
-            if part == '\x1b':
-                escaped(e)
-            elif part:
-                e.s.send(part)
-                idle(e)
-                ex_settled(e)
-
     def where(e):
         """(^G's line, the screen row, the column, that row's text)."""
         m = re.search(r'line (\d+) col (\d+)', ctrlg(e))
@@ -6993,6 +7062,206 @@ def after_cmds():
             probe(e, f'as the first command, {c!r}', 40)
         finally:
             e.close()
+
+
+# ---------------------------------------------------------------------------
+# Limits (issue #3): every bounded thing just under, at and over its bound.
+# Five of the seven bugs in that issue were a command run past a limit no test
+# went near.  Over the limit the editor must still be running and must have
+# said or shown what it did -- or the check is a still_open() under an issue.
+def limits_cmds():
+    """The ex line (40), the search pattern (30), the '.' recording (128
+    keys), the undo region (1024 bytes), a count (65535), type-ahead (31 keys
+    in the ring), '+{n}', the terminal's size, and the length of a line."""
+    def alive(e, tag):
+        """The editor takes a command and answers ^G."""
+        tap(e, '\x1b')
+        check(f'{tag}: the editor is still running ({ctrlg(e)!r})',
+              ' line ' in ctrlg(e))
+
+    # ---- the ex line: EXMAX characters, the rest not taken ----
+    e = Editor(make(40))
+    try:
+        for n in (39, 40, 45):
+            tap(e, ':' + 'x' * n)
+            b = bottom(e)
+            check(f'ex line, {n} typed: the row holds {min(n, 40)} ({len(b) - 1})',
+                  b == ':' + 'x' * min(n, 40))
+            tap(e, '\x1b')
+        alive(e, 'ex line')
+    finally:
+        e.close()
+
+    # ---- the search pattern: 30 characters, the rest not taken.  The line
+    #      has 30 x's then a y, so a pattern cut to 30 still finds it ----
+    e = Editor(b'abc\r\n' + b'x' * 30 + b'y\r\nend\r\n')
+    try:
+        for n in (29, 30, 35):
+            tap(e, 'gg/' + 'x' * n)
+            b = bottom(e)
+            check(f'search, {n} typed: the row holds {min(n, 30)} ({len(b) - 1})',
+                  b == '/' + 'x' * min(n, 30))
+            tap(e, '\r')
+            v = e.screen()
+            check(f'search, {n} typed: found on line 2 ({v.row}, {v.col})',
+                  (v.row, v.col) == (1, 0))
+        tap(e, 'gg/' + 'x' * 30 + 'z\r')
+        check(f'search, 31 typed that are not there: the 30 are looked for '
+              f'({bottom(e)!r})', e.screen().row == 1)
+        alive(e, 'search')
+    finally:
+        e.close()
+
+    # ---- '.': a change of up to 128 keys is repeated, a longer one is not
+    #      (and nothing else happens).  'i' + n + ESC is n + 2 keys ----
+    for n in (125, 126, 127, 140):
+        e = Editor(b'one\r\ntwo\r\n')
+        try:
+            tap(e, 'i' + 'a' * n + '\x1b')
+            tap(e, 'j0.')
+            alive(e, f'. after {n + 2} keys')
+            tap(e, ':w\r')
+            want = b'a' * n + b'one\r\n' + (b'a' * n if n + 2 <= 128 else b'') + b'two\r\n'
+            got = saved_bytes(e)
+            check(f'. after a change of {n + 2} keys: '
+                  f'{"repeats it" if n + 2 <= 128 else "does nothing"} '
+                  f'({len(got)} bytes)', got == want)
+        finally:
+            e.close()
+
+    # ---- undo: 1024 bytes are kept, one line more is not, and 'u' says so ----
+    for n in (127, 128, 129):
+        e = Editor(make(400))
+        try:
+            tap(e, f'5G{n}dd')
+            tap(e, 'u')
+            said = bottom(e)
+            tap(e, ':w\r')
+            got = saved_bytes(e)
+            if n * 8 <= 1024:
+                check(f'u after {n}dd ({n * 8} bytes): the lines are back '
+                      f'({len(got)} bytes, {said!r})', got == make(400))
+            else:
+                check(f'u after {n}dd ({n * 8} bytes): says why not ({said!r})',
+                      said == 'Too large to undo')
+                check(f'u after {n}dd: and changes nothing ({len(got)} bytes)',
+                      got == b''.join(line(i) for i in range(1, 401)
+                                      if not 5 <= i < 5 + n))
+        finally:
+            e.close()
+
+    # ---- a count: held at 65535, and one too big for the text runs out ----
+    e = Editor(make(40))
+    try:
+        for keys, ln, col in (('65535G', 40, 1), ('gg65536G', 40, 1),
+                              ('gg99999G', 40, 1), ('gg99999j', 40, 1),
+                              ('99999k', 1, 1), ('5G99999l', 5, 6),
+                              ('99999h', 5, 1), ('3G99999x', 3, 1),
+                              ('10G99999dd', 9, 1)):
+            tap(e, keys)
+            g = ctrlg(e)
+            check(f'count {keys}: line {ln} col {col} ({g!r})',
+                  g.endswith(f' line {ln} col {col}'))
+        tap(e, ':w\r')
+        got = saved_bytes(e)
+        check(f'count: 99999x took one line\'s text and 99999dd the rest of '
+              f'the file ({len(got)} bytes)',
+              got == line(1) + line(2) + b'\r\n'
+              + b''.join(line(i) for i in range(4, 10)))
+    finally:
+        e.close()
+
+    # ---- type-ahead: the ring holds 31 keys, and more than that typed
+    #      behind a jump that pages are not lost ----
+    for n in (31, 32, 100):
+        e = Editor(make(12800))
+        try:
+            e.s.send('6000G' + 'j' * n)
+            idle(e)
+            g = ctrlg(e)
+            check(f'{n} keys typed behind a paged jump all arrive ({g!r})',
+                  g.endswith(f' line {6000 + n} col 1'))
+        finally:
+            e.close()
+
+    # ---- '+{n}': past the last line, and past 16 bits, is the last line ----
+    for a in ('+65535', '+65536', '+99999', '+100000'):
+        e = Editor(make(40), args=' ' + a)
+        try:
+            g = ctrlg(e)
+            check(f'{a} on 40 lines is the last line ({g!r})',
+                  g.endswith(' line 40 col 1'))
+        finally:
+            e.close()
+
+    # ---- the terminal: what it answers is taken up to 200 x 132, and an
+    #      answer too small to edit in is not taken at all ----
+    for term, want in (((60, 132), (60, 132)), ((100, 255), (100, 132)),
+                       ((255, 255), (200, 132)), ((5, 20), (24, 80)),
+                       ((1, 1), (24, 80)), ((0, 0), (24, 80))):
+        e = Editor(make(400), term=term)
+        try:
+            check(f'a terminal of {term} is used as {want} ({e.geom()})',
+                  e.geom() == want)
+            tap(e, 'jx')
+            check(f'a terminal of {term}: :q! exits', at_ccp(e, ':q!\r'))
+        finally:
+            e.close()
+
+    # ---- the length of a line: any length the window can hold ----
+    for n in (255, 256, 257, 2048, 5000, 20000):
+        e = Editor(b'ab\r\n' + b'x' * n + b'\r\ncd\r\n')
+        try:
+            tap(e, 'j$')
+            g = ctrlg(e)
+            check(f'a line of {n}: $ is col {n} ({g!r})',
+                  g.endswith(f' line 2 col {n}'))
+            tap(e, 'x'); tap(e, 'k'); tap(e, 'j0x')
+            tap(e, ':w\r')
+            got = saved_bytes(e)
+            check(f'a line of {n}: an x at each end, byte-exact ({len(got)} bytes)',
+                  got == b'ab\r\n' + b'x' * (n - 2) + b'\r\ncd\r\n')
+        finally:
+            e.close()
+
+    # a line can be yanked and put while the copies fit ...
+    e = Editor(b'ab\r\n' + b'x' * 5000 + b'\r\ncd\r\n')
+    try:
+        tap(e, 'jyypp')
+        alive(e, 'a line of 5000, yy p p')
+        tap(e, ':w\r')
+        got = saved_bytes(e)
+        check(f'a line of 5000, yy p p: three of it ({len(got)} bytes)',
+              got == b'ab\r\n' + (b'x' * 5000 + b'\r\n') * 3 + b'cd\r\n')
+    finally:
+        e.close()
+
+    # ... and when they do not, the editor has to refuse and keep running.
+    # It does not: it exits to CP/M and the work is lost (issue #21).
+    for n, keys in ((13000, 'jyypp'), (20000, 'jyy'),
+                    (26000, 'j$a' + 'y' * 400)):
+        e = Editor(b'ab\r\n' + b'x' * n + b'\r\ncd\r\n')
+        try:
+            before = len(e.cap.getvalue())
+            e.s.send(keys)
+            idle(e)
+            still_open(21, f'a line of {n}, {keys[:6]}: the editor keeps running',
+                       not PROMPT.search(e.cap.getvalue()[before:]))
+        finally:
+            e.close()
+
+    # a line the arena cannot hold at all is refused at the door, with the
+    # file untouched
+    e = Editor(b'ab\r\n' + b'x' * 30000 + b'\r\ncd\r\n')
+    try:
+        out = e.cap.getvalue()
+        check('a line of 30000: not loaded, and the editor says so and exits',
+              'MEM SHORTAGE' in out and PROMPT.search(out) is not None)
+        got = saved_bytes(e)
+        check(f'a line of 30000: the file is untouched ({len(got)} bytes)',
+              got == b'ab\r\n' + b'x' * 30000 + b'\r\ncd\r\n')
+    finally:
+        e.close()
 
 
 def tstates(e):
@@ -7890,6 +8159,9 @@ def main():
     if not args or 'vim' in args or 'after' in args:
         print('\n=== what a command leaves behind ===', flush=True)
         after_cmds()
+    if not args or 'vim' in args or 'limits' in args:
+        print('\n=== every limit: under, at and over ===', flush=True)
+        limits_cmds()
     if not args or 'vim' in args or 'qfull' in args:
         print('\n=== dd / yy past the yank register ===', flush=True)
         qfull_cmds()
