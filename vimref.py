@@ -83,6 +83,7 @@ GROUPS = {
     'hml': ('VIM_HML', None),
     'ins': ('VIM_INS', None),
     'ops': ('VIM_OPS', None),
+    'opmx': ('VIM_OPMX', None),
     'dot': ('VIM_DOT', None),
     'undo': ('VIM_UNDO', None),
     'subst': ('VIM_SUBST', None),
@@ -94,7 +95,7 @@ GROUPS = {
     'find': ('VIM_FIND', None),
     'rdwr': ('VIM_RDWR', None),
 }
-TEXT = {'ins', 'ops', 'put', 'srch', 'dot', 'undo', 'subst', 'marks', 'find',
+TEXT = {'ins', 'ops', 'opmx', 'put', 'srch', 'dot', 'undo', 'subst', 'marks', 'find',
         'rdwr'}  # rows carrying text + a file hash
 
 # Rows the final-line-end fold must NOT be applied to.  The fold exists because
@@ -149,6 +150,7 @@ def content(name):
         _HML.update(A['marks_files']())             # + mk
         _HML.update(A['find_files']())              # + fd
         _HML.update(A['rdwr_files']())              # + rw
+        _HML.update(A['opmx_files']())              # + ox
     if name in _HML:
         return lf(_HML[name])
     if name == 'indent':
@@ -242,7 +244,8 @@ def replay(group, work):
             continue
         wrote = os.path.join(work, 'wrote.txt')
         got = run(path, [':set nowrap\r'] + list(keys), rec=RECT, wrote=wrote,
-                  sync=USYNC if group in ('undo', 'subst', 'rdwr') else '')[1:]
+                  sync=USYNC if group in ('undo', 'subst', 'rdwr', 'opmx')
+                  else '')[1:]
         with open(wrote, 'rb') as fh:
             out = fh.read()         # already CRLF: the write set 'ff=dos'
         if (not content(str(f)).endswith(b'\n') and out.endswith(b'\r\n')
