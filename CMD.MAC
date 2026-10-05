@@ -716,13 +716,14 @@ MKGO:
 				;   span still takes a whole line
 				; ... otherwise fall into MKOP
 
-;MKOP -- C names the mark.  Only 'a' to 'c' exist; any other key drops the
-;whole thing, as vim's 'Z{other}' does.
+;MKOP -- C names the mark.  Only 'a' to 'c' exist: 'm' with any other key
+;drops the whole thing, as vim's 'Z{other}' does, and a jump to one is a jump
+;to a mark that is not set.
 MKOP:
 	MOV	A,C
 	SUI	'a'
 	CPI	MKMAX
-	JNC	MKBAD		; not a mark letter: nothing happens
+	JNC	MKNOLT		; not a mark letter
 	MOV	C,A		; C = the mark's index
 	ADD	A
 	ADD	A		; ... and MKSIZ bytes to each slot
@@ -735,15 +736,15 @@ MKOP:
 	JZ	MKSET
 				; ... otherwise fall into MKJMP
 
-;MKJMP -- go back to the mark.  It refuses, with the bell, when the mark was
-;never set or when the window has paged away from under it.
+;MKJMP -- go back to the mark.  It refuses, with vim's 'Mark not set', when
+;the mark was never set or when the window has paged away from under it.
 MKJMP:
 	PUSH	H
 	CALL	MKVAD
 	MOV	A,M
 	POP	H
 	ORA	A
-	JZ	MKBAD		; never set
+	JZ	MKNSET		; never set
 	MOV	E,M
 	INX	H
 	MOV	D,M		; DE = the offset it holds
@@ -778,11 +779,27 @@ MKSTAL:
 	POP	H		; the window paged: the mark is gone for good
 	CALL	MKVAD
 	MVI	M,0
-				; ... and fall into MKBAD
+				; ... and fall into MKNSET
 
-;MKBAD -- this mark will not answer.  An operator running the motion is
-;cancelled whole: PSAVE is what OPPEND's tail reads to decide whether to open
-;an insert, so clearing it stops a "c`z" opening one over a span of nothing.
+;MKNSET -- a jump to a mark that will not answer: vim's E20 on the bottom row
+;(without the number, and without a bell, as every message here), the cursor
+;and the screen left alone.  The operator is cancelled as MKBAD cancels it.
+MKNSET:
+	XRA	A
+	STA	PSAVE
+	LXI	H,SMKNS
+	JMP	EXERR
+MKNOLT:
+	LDA	MKWHAT
+	CPI	PM
+	JNZ	MKNSET		; a jump: that mark is not set
+				; 'm{other}': fall into MKBAD
+
+;MKBAD -- no mark was named: 'm' with a key that is not a mark letter, ESC in
+;place of the letter, or a '.' replay that ran out.  The bell, and an operator
+;running the motion is cancelled whole: PSAVE is what OPPEND's tail reads to
+;decide whether to open an insert, so clearing it stops a "c`z" opening one
+;over a span of nothing.
 MKBAD:
 	XRA	A
 	STA	PSAVE
@@ -5040,6 +5057,7 @@ SNOTFD: DB	'Pattern not found: ',0
 SNOPAT: DB	'No previous search pattern',0
 SUNDW:	DB	'Cannot undo: change has paged out',0
 SUNDB:	DB	'Too large to undo',0
+SMKNS:	DB	'Mark not set',0
 SNONM:	DB	'[No Name]',0
 SMODM:	DB	'[Modified]',0
 SROM:	DB	'[readonly]',0

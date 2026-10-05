@@ -159,7 +159,8 @@ MARKS ----------------------------------------------------------------------
     d'a  d`a  y'a   operate from here to the mark
 
 Only three marks.  A mark is DROPPED, not moved, when the text above it
-changes or the window pages away from it; a lost mark rings the bell.
+changes or the window pages away from it; a jump to a lost mark says
+"Mark not set".
 
 
 SEARCH ---------------------------------------------------------------------

@@ -5080,8 +5080,10 @@ def marks_like_vim():
 def marks_cmds():
     """Marks where vim cannot be the reference: this editor DROPS a mark as
     soon as it could no longer point at the same text, where vim shifts it to
-    follow (COMMANDS.md).  A dropped mark rings the bell and moves nothing --
-    the same answer '.' and 'u' give when they will not run."""
+    follow (COMMANDS.md).  A jump to a mark that will not answer -- never set,
+    dropped, or a key that names none -- moves nothing and says 'Mark not set'
+    on the bottom row, vim's E20 without the number; like every message here
+    it does not ring.  'm' with a key that names no mark only rings."""
     files = marks_files()
 
     def refuses(e, keys, tag):
@@ -5096,12 +5098,38 @@ def marks_cmds():
         check(f'{tag}: the cursor did not move ({v.row},{v.col})',
               (v.row, v.col) == before)
 
-    # ---- a mark that was never set ----
+    def notset(e, keys, tag):
+        """*keys* must say 'Mark not set' -- the whole bottom row, nothing run
+        on after it -- without a bell, and move and redraw nothing."""
+        e.key('\x0c')                            # no message on the row yet
+        v = e.screen(); before = (v.row, v.col)
+        scr0 = [''.join(r) for r in v.screen[:23]]
+        n = len(e.cap.getvalue())
+        e.key(keys)
+        out = e.cap.getvalue()[n:]
+        v = e.screen()
+        check(f'{tag}: says {bottom(e)!r}', bottom(e) == 'Mark not set')
+        check(f'{tag}: no bell with the message', '\x07' not in out)
+        check(f'{tag}: the cursor did not move ({v.row},{v.col})',
+              (v.row, v.col) == before)
+        check(f'{tag}: the text rows are untouched',
+              [''.join(r) for r in v.screen[:23]] == scr0)
+
+    # ---- a mark that was never set, and a key that names none ----
     e = Editor(files['mk'])
     try:
-        refuses(e, '`a', 'a mark never set: `a')
-        refuses(e, "'b", "a mark never set: 'b")
-        refuses(e, "'c", "a mark never set: 'c")
+        notset(e, '`a', 'a mark never set: `a')
+        notset(e, "'b", "a mark never set: 'b")
+        notset(e, "'c", "a mark never set: 'c")
+        notset(e, "'z", "a letter past 'c': 'z")
+        notset(e, '`1', 'a digit: `1')
+        e.key('j')
+        check('the message stays until another replaces it',
+              bottom(e) == 'Mark not set')
+        e.key('ma'); e.key('G'); e.key('`a')
+        v = e.screen()
+        check(f'a set mark still answers, and says nothing new ({v.row},{v.col})',
+              (v.row, v.col) == (1, 0))
     finally:
         e.close()
 
@@ -5123,7 +5151,7 @@ def marks_cmds():
         e.key('gg'); e.key('x')                  # edit line 1, above it
         check('an edit above a mark: the edit happened',
               rows(e)[0] == 'lpha beta')
-        refuses(e, "'a", 'an edit above a mark drops it')
+        notset(e, "'a", 'an edit above a mark drops it')
     finally:
         e.close()
 
@@ -5173,6 +5201,7 @@ def marks_cmds():
                 e.key(k)
             e.key(keys)
             check(f'{tag}: deletes NOTHING', rows(e)[0] == 'alpha beta')
+            check(f'{tag}: says {bottom(e)!r}', bottom(e) == 'Mark not set')
         finally:
             e.close()
 
@@ -5196,6 +5225,8 @@ def marks_cmds():
         e.key("d'\x1b")
         e.s.run_until_quiet(quiet=1.5, timeout=40)
         check("d' then ESC cancels the operator", rows(e)[0] == 'alpha beta')
+        check(f"d' then ESC says nothing ({bottom(e)!r})",
+              'Mark' not in bottom(e))
     finally:
         e.close()
 
@@ -5319,10 +5350,10 @@ def marks_cmds():
     try:
         e.key('ma')
         e.key('G')                               # far past the resident window
-        refuses(e, "'a", 'the window paged away: the mark is gone')
+        notset(e, "'a", 'the window paged away: the mark is gone')
         e.key('ma')                              # ... and it can be set again here
         e.key('gg')
-        refuses(e, "'a", 'paged the other way: still gone')
+        notset(e, "'a", 'paged the other way: still gone')
     finally:
         e.close()
 

@@ -161,8 +161,8 @@ move would break:
               pointer row, text + gap, Q-buffer (the yank register), undo region
     BUFEND  = BDOS base - 700H - 1
 
-In this build: the image is 16844 bytes, the `.COM` file 16896 bytes (132
-records), the reserve block 791 bytes (`42CCH`–`45E3H`), and the stack 128
+In this build: the image is 16902 bytes, the `.COM` file 17024 bytes (133
+records), the reserve block 791 bytes (`4306H`–`461CH`), and the stack 128
 bytes. **The size that matters is a 4 K BLOCK BOUNDARY**, because that is what
 the 8 MB disk allocates in: 16384 bytes occupy four blocks and one byte more
 occupies five. This build is past that line by design (`f F t T ; ,` would not
