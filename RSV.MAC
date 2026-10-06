@@ -49,6 +49,8 @@
 	PUBLIC	MKTAB			; CMD.MAC  -- the marks 'm' sets
 	PUBLIC	MKSAV			; CMD.MAC  -- ... as a refused 'dd' found them
 	PUBLIC	MKUND			; CMD.MAC  -- ... as the last change found them
+	PUBLIC	HTAB			; SCRN.MAC -- the rows of the lines about the
+					;             screen, for the scrolls
 	PUBLIC	RSVTOP			; BUF.MAC  -- PBEGMEM, the arena base
 
 ;--- Sizes ------------------------------------------------------------------
@@ -65,6 +67,8 @@ RVZTPN	EQU	3		; ZTOP:    a 3-byte file position
 RVPLSN	EQU	6		; PLUSB:   '+{n}' digits, 0-terminated
 RVWRTN	EQU	3		; WRTYP:   an FCB type field
 RVSECN	EQU	128		; SECBUF:  one CP/M sector
+RVHTN	EQU	255		; HTAB:    a byte a line; SCRN.MAC HTPUT drops
+				;          a 256th
 ;MKSAV is a copy of MKTAB that CMD.MAC makes and restores with COPY12.
 ;CHECK VI.INC MKMAX*MKSIZ = 12
 
@@ -85,7 +89,8 @@ RVUND	EQU	RVSEC+RVSECN+1	; +1: ... and its guard at SECBUF+128
 RVMKT	EQU	RVUND+RVUNDN
 RVMKS	EQU	RVMKT+MKMAX*MKSIZ
 RVMKU	EQU	RVMKS+MKMAX*MKSIZ
-RVSIZE	EQU	RVMKU+MKMAX*MKSIZ
+RVHTB	EQU	RVMKU+MKMAX*MKSIZ
+RVSIZE	EQU	RVHTB+RVHTN
 
 	CSEG
 RSVBAS:				; the top of the linked image -- no bytes here
@@ -104,6 +109,7 @@ UNDREC	EQU	RSVBAS+RVUND
 MKTAB	EQU	RSVBAS+RVMKT
 MKSAV	EQU	RSVBAS+RVMKS
 MKUND	EQU	RSVBAS+RVMKU
+HTAB	EQU	RSVBAS+RVHTB
 RSVTOP	EQU	RSVBAS+RVSIZE		; BUF.MAC's PBEGMEM: the arena base
 
 	END

@@ -62,24 +62,10 @@ def check(label, cond):
         print(f'  FAIL {label}', flush=True)
 
 
-# Rows of the vim tables that wait on the next step of issue #25.  Long lines
-# wrap now, and vim counts SCREEN ROWS wherever lines are of different heights:
-# the scrolls (^F ^B ^D ^U) and how far off the screen a line must be before
-# it is centred rather than scrolled to.  This editor still counts lines for
-# those, so on a file of wrapped lines it lands elsewhere.  Each row here is
-# run and must still DIFFER from vim -- the day it matches, it comes out.
-WRAP_OPEN = {
-    ('wide', ('44G', '$', '\x06', '2\x06', '\x02', '3\x02')),
-    ('wide', ('G', '2\x02', 'j', '$', '\x06')),
-    ('wide', ('G', '400\x02', '100\x06')),
-    ('wide', ('45G', '$', 'j', '\x02', '\x06')),
-    ('wide', ('45G', '$', '\x04', 'j', '\x15', 'k')),
-    ('wide', ('44G', '$', '\x04', '\x15')),
-    ('wide', ('G', '$', '7\x15', '\x04')),
-    ('wide', ('700G', '725G')),
-    ('wd', ('1500G', '23\r', '24\r', '12\r', '13\r')),
-    ('wide', ('G', '$', 'H', 'M', 'L', '\x02', 'M')),
-}
+# Rows of the vim tables held open against an issue: each is run and must
+# still DIFFER from vim -- the day it matches, it comes out.  (Issue #25's
+# rows, which waited on the scrolls counting screen rows, are all out.)
+WRAP_OPEN = set()
 HOLD = [None]
 
 
@@ -137,6 +123,19 @@ def curs(e, v):
     if v.col != dc % 80 or v.row < dc // 80:
         return -1, v.row
     return dc, v.row - dc // 80
+
+
+def word(e, name):
+    """The 16-bit value at the editor's symbol *name*, as it stands now."""
+    return int.from_bytes(bytes(e.s.mem(SYM[name], 2)), 'little')
+
+
+def register_lines(e):
+    """How many 8-byte lines the yank register takes.  It shares the arena
+    with the text and keeps 0D80H of it free, and the arena is whatever the
+    image and its reserves leave -- so a count that must fit is worked out
+    here, not written down."""
+    return (word(e, 'BUFEND') - word(e, 'BUFBEG') - 0xD80 - 64) // 8
 
 
 def saved_bytes(e):
@@ -1782,6 +1781,11 @@ def ins_cmds():
         e = Editor(files[f])
         try:
             e.key(at)
+            # (BS puts the originals back only while the typing has not made
+            # the engine move the text out of its way -- CMD.MAC, REPLACE MODE
+            # -- and how much it takes before that is whatever the arena has
+            # free above the text here, so the run is cut to fit it)
+            n = min(n, word(e, 'BUFEND') - word(e, 'TXTEND') - 64)
             send_keys(e, 'R' + 'Q' * n)
             send_keys(e, '\x08' * n)
             send_keys(e, '\x1b')
@@ -5994,7 +5998,24 @@ def wrap_files():
           '\t' * 11 + 'tab', 'eight', 'a\tb' + ' word' * 30, 'ten']
     w2 = ['L%02d' % i for i in range(1, 22)] + [WIDE, 'end']
     return {'w1': ''.join(l + '\r\n' for l in w1).encode(),
-            'w2': ''.join(l + '\r\n' for l in w2).encode()}
+            'w2': ''.join(l + '\r\n' for l in w2).encode(),
+            'w3': ''.join(l + '\r\n' for l in prose_lines()).encode()}
+
+
+# Paragraphs typed as one line each, as prose is: 1 to 22 rows tall, so a
+# screen holds anything from two lines to twenty and no two screens alike.
+PROSE = [60, 330, 0, 700, 95, 1200, 40, 160, 480, 80, 81, 950, 20, 1700, 240, 5, 1040, 400]
+
+
+def prose_lines(n=200):
+    """*n* lines of PROSE's widths in turn, each starting with its number
+    (75 K at 200 lines, so it pages)."""
+    out = []
+    for i in range(1, n + 1):
+        w = PROSE[(i - 1) % len(PROSE)]
+        t = 'P%04d ' % i + ''.join('w%d ' % (j % 97) for j in range(w // 3 + 1))
+        out.append(t[:w])
+    return out
 
 
 def wrapped(lines, top=1, n=23, w=80):
@@ -6032,11 +6053,58 @@ VIM_WRAP = [
     ('w1', ['/Z\r', 'n', 'n', 'n', 'n', 'N', '/word\r', 'n', '10n', '?tab\r'],
      ['2 1 1 25', '2 1 1 51', '2 1 1 77', '2 1 2 103', '2 1 2 129', '2 1 2 103', '9 1 12 10',
       '9 1 12 15', '9 1 12 65', '7 1 10 88']),
-    ('w1', ['L', 'H', '7G', 'w', '$', '4G', '$', 'j', 'k', '6G', '$', 'h', 'h'],
-     ['10 1 14 0', '1 1 0 0', '7 1 10 88', '8 1 11 0', '8 1 11 4', '4 1 5 0', '4 1 5 79',
-      '5 1 6 3', '4 1 5 79', '6 1 7 0', '6 1 8 80', '6 1 7 79', '6 1 7 78']),
+    ('w1', ['L', 'H', 'M', '7G', 'w', '$', 'M', '4G', '$', 'j', 'k', '6G', '$', 'h', 'h'],
+     ['10 1 14 0', '1 1 0 0', '6 1 7 0', '7 1 10 88', '8 1 11 0', '8 1 11 4', '6 1 7 0', '4 1 5 0',
+      '4 1 5 79', '5 1 6 3', '4 1 5 79', '6 1 7 0', '6 1 8 80', '6 1 7 79', '6 1 7 78']),
     ('w2', ['G', 'gg', '20j', 'j', 'j', 'k', 'k'],
      ['23 3 22 0', '1 1 0 0', '21 1 20 0', '22 2 20 0', '23 3 22 0', '22 3 19 0', '21 3 18 0']),
+    ('w3', ['\x06', '\x06', '\x06', '\x06', '\x06', '\x06', '\x06', '\x06', '\x02', '\x02', '\x02', '\x02', '\x02', '\x02', '\x02', '\x02'],
+     ['6 6 0 0', '9 9 0 0', '14 14 0 0', '15 15 0 0', '18 18 0 0', '23 23 0 0', '27 27 0 0',
+      '32 32 0 0', '31 27 21 0', '26 23 18 0', '23 18 21 0', '19 15 22 0', '14 13 1 0',
+      '12 8 11 0', '8 5 18 0', '5 1 16 0']),
+    ('w3', ['\x04', '\x04', '\x04', '\x04', '\x04', '\x04', '\x04', '\x04', '\x04', '\x04', '\x15', '\x15', '\x15', '\x15', '\x15', '\x15', '\x15', '\x15', '\x15', '\x15'],
+     ['4 4 0 0', '6 6 0 0', '7 7 0 0', '11 11 0 0', '12 12 0 0', '13 13 0 0', '14 14 0 0',
+      '15 15 0 0', '17 17 0 0', '18 18 0 0', '17 17 0 0', '15 15 0 0', '14 14 0 0', '13 13 0 0',
+      '12 12 0 0', '8 8 0 0', '7 7 0 0', '6 6 0 0', '4 4 0 0', '1 1 0 0']),
+    ('w3', ['3\x06', '2\x02', '5\x04', '\x04', '\x15', '9\x15', 'M', 'H', 'L', 'M'],
+     ['14 14 0 0', '8 5 18 0', '9 7 3 0', '9 9 0 0', '7 7 0 0', '6 6 0 0', '6 6 0 0', '6 6 0 0',
+      '8 6 16 0', '6 6 0 0']),
+    ('w3', ['G', '\x02', '\x02', 'M', '\x06', '\x06', '\x15', '\x04', '\x04', '\x04'],
+     ['200 198 6 0', '199 195 22 0', '194 193 1 0', '194 193 1 0', '195 195 0 0', '198 198 0 0',
+      '197 197 0 0', '200 198 6 0', '200 198 6 0', '200 198 6 0']),
+    ('w3', ['150G', 'M', '10j', '10j', '10j', '5k', '5k', '5k', '5k', 'M', '\x04', 'M', '\x15', 'M'],
+     ['150 149 2 0', '150 149 2 0', '160 159 3 0', '170 169 1 0', '180 179 13 0', '175 175 0 0',
+      '170 170 0 0', '165 165 0 0', '160 160 0 0', '161 160 1 0', '161 161 0 0', '161 161 0 0',
+      '159 159 0 0', '161 159 4 0']),
+    ('w3', ['40G', '45G', '50G', '56G', '70G', '64G', '60G', '58G', '90G', '79G'],
+     ['40 38 6 0', '45 43 3 0', '50 49 1 0', '56 54 6 0', '70 69 3 0', '64 64 0 0', '60 60 0 0',
+      '58 58 0 0', '90 89 13 0', '79 78 15 0']),
+    ('w3', ['100G', '\x06', 'k', '\x02', 'j', '\x04', 'L', 'j', 'j', 'j', 'H', 'k', 'k', 'k'],
+     ['100 98 8 0', '102 102 0 0', '101 101 0 0', '101 97 10 0', '102 98 11 0', '102 102 0 0',
+      '103 102 12 0', '104 103 1 0', '105 105 0 0', '106 105 3 0', '105 105 0 0', '104 104 0 0',
+      '103 103 0 0', '102 102 0 0']),
+    ('w3', ['G', '50\x02', '30\x06', '20\x02', '7\x06', '\x04', '\x04', '\x04', '\x04'],
+     ['200 198 6 0', '19 15 22 0', '126 126 0 0', '59 54 21 0', '84 84 0 0', '85 85 0 0',
+      '86 86 0 0', '87 87 0 0', '89 89 0 0']),
+    ('w3', ['G', '\x02', '\x04', '\x04', '\x04', '\x04', '\x15', '\x15', '\x15'],
+     ['200 198 6 0', '199 195 22 0', '200 198 6 0', '200 198 6 0', '200 198 6 0', '200 198 6 0',
+      '197 197 0 0', '195 195 0 0', '194 194 0 0']),
+    ('w3', ['\x04', '\x15', '\x15', '\x06', '\x02', '\x02', '5j', '\x15', '\x15'],
+     ['4 4 0 0', '1 1 0 0', '1 1 0 0', '6 6 0 0', '5 1 16 0', '5 1 16 0', '10 8 8 0', '9 7 3 0',
+      '6 6 0 0']),
+    ('w3', ['30G', '$', '\x04', '$', '\x04', '$', '\x15', '$', '\x15', '$', '\x06', '$', '\x02'],
+     ['30 29 2 0', '30 29 13 949', '32 31 1 0', '32 31 22 1699', '33 33 0 0', '33 33 2 239',
+      '32 32 0 0', '32 32 21 1699', '32 31 1 0', '32 31 22 1699', '33 33 0 0', '33 33 2 239',
+      '32 31 1 0']),
+    ('w3', ['/P0123\r', '/P0131\r', '/P0140\r', '?P0128\r', '?P0120\r', '/P0199\r', 'n'],
+     ['123 123 0 0', '131 130 9 0', '140 139 1 0', '128 126 6 0', '120 120 0 0', '199 198 5 0',
+      '199 198 5 0']),
+    ('w3', ['60G', '12\x04', '\x04', '3\x15', '\x15', '23\x04', '\x04', '99\x15', '\x15'],
+     ['60 59 2 0', '60 60 0 0', '61 61 0 0', '60 60 0 0', '59 59 0 0', '63 63 0 0', '68 68 0 0',
+      '63 63 0 0', '59 59 0 0']),
+    ('w3', ['77G', 'L', '\x06', 'H', '\x02', 'L', '\x02', 'H', '\x06', 'M'],
+     ['77 77 0 0', '80 77 18 0', '81 81 0 0', '81 81 0 0', '80 77 18 0', '80 77 18 0',
+      '77 72 21 0', '72 72 0 0', '77 77 0 0', '78 77 2 0']),
 ]
 
 
@@ -6720,11 +6788,7 @@ def ndd(label, n):
         return
     e = Editor(make(n))
     try:
-        # (as many lines as the yank register takes: it shares the arena with
-        # the text, keeps 0D80H of it free, and the arena is whatever the
-        # image leaves -- so the count is worked out, not written down)
-        word = lambda a: int.from_bytes(bytes(e.s.mem(SYM[a], 2)), 'little')
-        cnt = min(2900, (word('BUFEND') - word('BUFBEG') - 0xD80 - 64) // 8)
+        cnt = min(2900, register_lines(e))      # (as many as will fit)
         e.key('G'); e.key('3000k'); e.key('%ddd' % cnt)
         cur = n - 3000
         want = make(n)[:(cur - 1) * 8] + make(n)[(cur + cnt - 1) * 8:]
@@ -9133,10 +9197,10 @@ def qfull_cmds():
     The register's ceiling is the arena less a reserve, so every byte the image
     grows comes off it: 2976 lines of this file fit at 18,304 bytes of VI.COM,
     where 3000 did 512 bytes earlier.  FIT is the count the "does fit" rows
-    use, kept well under that so a few hundred bytes of code do not turn them
-    into refusals -- and each of those rows says it was not refused, because a
+    use: what the register holds on this build (register_lines), less a
+    hundred lines -- and each of those rows says it was not refused, because a
     refused 'dd' then 'P', or a refused yank, leaves the file right as well."""
-    FIT = 2800
+    FIT = None
     def L(a, b):
         return b''.join(line(i) for i in range(a, b + 1))
 
@@ -9145,6 +9209,9 @@ def qfull_cmds():
     for op in ('5000dd', '5000yy', '6801dd', '9999yy'):
         e = Editor(big)
         try:
+            if FIT is None:
+                FIT = min(2800, register_lines(e) - 100)
+                TAIL = 12800 - FIT          # from here to the end: FIT + 1 lines
             e.key('6100G'); e.key('ma'); e.key('6000G'); e.key('3l')
             n = len(e.cap.getvalue())
             e.key(op)
@@ -9206,8 +9273,8 @@ def qfull_cmds():
             (['6000G', '3l', f'{FIT}yy'], big, 6000),
             (['6000G', '3l', f'{FIT}yy', 'p'],
              L(1, 6000) + L(6000, 5999 + FIT) + L(6001, 12800), None),
-            (['10000G', '3l', '2801yy'], big, 10000),
-            (['10000G', '3l', '9999yy', 'gg', 'P'], L(10000, 12800) + big, None)):
+            ([f'{TAIL}G', '3l', f'{FIT + 1}yy'], big, TAIL),
+            ([f'{TAIL}G', '3l', '9999yy', 'gg', 'P'], L(TAIL, 12800) + big, None)):
         e = Editor(big)
         try:
             said = []

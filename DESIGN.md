@@ -402,6 +402,18 @@ Detail is in `RENDER.md`. The design decisions:
   `WINROW` counts the lines above the cursor's, and the layout measures them
   into rows. (Issue #25 is this change, in steps; `RENDER.md` is rewritten at
   its last.)
+- **Where vim counts screen rows, so does this.** Once lines differ in height
+  vim's `^F ^B ^D ^U`, its `M`, and its choice between scrolling up to a line
+  below the screen and centring it are all sums of rows, and they are
+  transcribed from vim 9.1's `pagescroll`, `get_scroll_overlap`,
+  `scroll_cursor_bot` and `scroll_cursor_halfway`. A line's rows are not known
+  without reading it, so a scroll key first has `HTBLD` measure the lines about
+  the screen into a table, a byte a line, and the command is arithmetic on
+  that; nothing is measured twice and the cursor moves once. The table is 255
+  bytes of reserve (`RSV.MAC`), which is every case on a terminal of up to 84
+  rows. The top row is always the first row of a line: vim without
+  `smoothscroll` never shows part of one, which is why a scroll that ends
+  inside a line is rounded to it and the cursor moved as many rows less.
 
 ---
 

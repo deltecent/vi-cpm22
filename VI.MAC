@@ -33,6 +33,7 @@
 	EXTRN	FOPEN			; CMD.MAC  -- open + load the file (or none)
 	EXTRN	ARGSCN, ARGGO		; CMD.MAC  -- '+{n}' / '-R' on the line
 	EXTRN	SCINIT, SCDRAW, SCDONE	; SCRN.MAC -- geometry / paint / teardown
+	EXTRN	LAYOUT			; SCRN.MAC -- what the screen holds
 	EXTRN	MODEMS			; SCRN.MAC -- '-- INSERT --' on the bottom row
 	EXTRN	MSGPST			; CMD.MAC  -- the message this key left
 	EXTRN	SCPRE			; SCRN.MAC -- snapshot displayed viewport
@@ -54,6 +55,8 @@ START:
 	LXI	H,MKSHFT		; the marks follow every edit
 	SHLD	EDTHK
 	CALL	FOPEN			; open the source FCB staged at 005CH
+	CALL	LAYOUT			; the screen the file opens on: '+{n}'
+					;   is a move from there, as in vim
 	CALL	ARGGO			; '+{n}': the line to start on
 	MVI	A,R_FULL		; nothing is on the screen yet, and
 	STA	RINTENT			;   ARGGO dispatched real keys that

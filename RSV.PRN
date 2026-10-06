@@ -148,6 +148,8 @@
                                 	PUBLIC	MKTAB			; CMD.MAC  -- the marks 'm' sets
                                 	PUBLIC	MKSAV			; CMD.MAC  -- ... as a refused 'dd' found them
                                 	PUBLIC	MKUND			; CMD.MAC  -- ... as the last change found them
+                                	PUBLIC	HTAB			; SCRN.MAC -- the rows of the lines about the
+                                					;             screen, for the scrolls
                                 	PUBLIC	RSVTOP			; BUF.MAC  -- PBEGMEM, the arena base
                                 
                                 ;--- Sizes ------------------------------------------------------------------
@@ -164,6 +166,8 @@
   0006                          RVPLSN	EQU	6		; PLUSB:   '+{n}' digits, 0-terminated
   0003                          RVWRTN	EQU	3		; WRTYP:   an FCB type field
   0080                          RVSECN	EQU	128		; SECBUF:  one CP/M sector
+  00FF                          RVHTN	EQU	255		; HTAB:    a byte a line; SCRN.MAC HTPUT drops
+                                				;          a 256th
                                 ;MKSAV is a copy of MKTAB that CMD.MAC makes and restores with COPY12.
                                 ;CHECK VI.INC MKMAX*MKSIZ = 12
                                 
@@ -171,13 +175,13 @@
                                 ;Plain constants, so no relocatable symbol is ever used to build another.
                                 ;DOTBUF must follow DOTSCR: the '.' overflow test walks one into the other.
   0000                          RVSTK	EQU	0
+	MACRO-80 3.44	09-Dec-81	PAGE	1-3
+
+
   0080                          RVDOTS	EQU	RVSTK+RVSTKN
   0100                          RVDOTB	EQU	RVDOTS+DOTMAX
   0180                          RVFNM	EQU	RVDOTB+DOTMAX
   018C                          RVZTP	EQU	RVFNM+RVFNMN
-	MACRO-80 3.44	09-Dec-81	PAGE	1-3
-
-
   018F                          RVPLS	EQU	RVZTP+RVZTPN
   0195                          RVEXB	EQU	RVPLS+RVPLSN
   01BE                          RVKBR	EQU	RVEXB+EXMAX+1
@@ -187,7 +191,8 @@
   030B                          RVMKT	EQU	RVUND+RVUNDN
   0317                          RVMKS	EQU	RVMKT+MKMAX*MKSIZ
   0323                          RVMKU	EQU	RVMKS+MKMAX*MKSIZ
-  032F                          RVSIZE	EQU	RVMKU+MKMAX*MKSIZ
+  032F                          RVHTB	EQU	RVMKU+MKMAX*MKSIZ
+  042E                          RVSIZE	EQU	RVHTB+RVHTN
                                 
   0000'                         	CSEG
   0000'                         RSVBAS:				; the top of the linked image -- no bytes here
@@ -206,7 +211,8 @@
   030B'                         MKTAB	EQU	RSVBAS+RVMKT
   0317'                         MKSAV	EQU	RSVBAS+RVMKS
   0323'                         MKUND	EQU	RSVBAS+RVMKU
-  032F'                         RSVTOP	EQU	RSVBAS+RVSIZE		; BUF.MAC's PBEGMEM: the arena base
+  032F'                         HTAB	EQU	RSVBAS+RVHTB
+  042E'                         RSVTOP	EQU	RSVBAS+RVSIZE		; BUF.MAC's PBEGMEM: the arena base
                                 
                                 	END
 	MACRO-80 3.44	09-Dec-81	PAGE	S
@@ -223,17 +229,18 @@ Symbols:
 0080I'	DOTSCR          0000 	EM_CMD          0003 	EM_EX           
 0001 	EM_INS          0002 	EM_REP          001B 	ESC             
 0195I'	EXBUF           0028 	EXMAX           0180I'	FNAME           
-01BEI'	KBRING          0020 	KBRSIZ          000A 	LF              
-0003 	MKMAX           0317I'	MKSAV           0004 	MKSIZ           
-030BI'	MKTAB           0323I'	MKUND           0004 	MW_BIG          
-0003 	MW_CTG          0001 	MW_FIL          0000 	MW_NON          
-0002 	MW_WRT          0000 	NUL             018FI'	PLUSB           
-0000'	RSVBAS          032FI'	RSVTOP          0100 	RVDOTB          
-0080 	RVDOTS          0195 	RVEXB           0180 	RVFNM           
-000C 	RVFNMN          01BE 	RVKBR           0317 	RVMKS           
+032FI'	HTAB            01BEI'	KBRING          0020 	KBRSIZ          
+000A 	LF              0003 	MKMAX           0317I'	MKSAV           
+0004 	MKSIZ           030BI'	MKTAB           0323I'	MKUND           
+0004 	MW_BIG          0003 	MW_CTG          0001 	MW_FIL          
+0000 	MW_NON          0002 	MW_WRT          0000 	NUL             
+018FI'	PLUSB           0000'	RSVBAS          042EI'	RSVTOP          
+0100 	RVDOTB          0080 	RVDOTS          0195 	RVEXB           
+0180 	RVFNM           000C 	RVFNMN          032F 	RVHTB           
+00FF 	RVHTN           01BE 	RVKBR           0317 	RVMKS           
 030B 	RVMKT           0323 	RVMKU           018F 	RVPLS           
 0006 	RVPLSN          01E2 	RVSEC           0080 	RVSECN          
-032F 	RVSIZE          0000 	RVSTK           0080 	RVSTKN          
+042E 	RVSIZE          0000 	RVSTK           0080 	RVSTKN          
 0263 	RVUND           00A8 	RVUNDN          01DE 	RVWRT           
 0003 	RVWRTN          018C 	RVZTP           0003 	RVZTPN          
 0003 	R_DLIN          0000 	R_FULL          0004 	R_ICH           

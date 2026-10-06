@@ -48,22 +48,17 @@ EXPECT = [
     ("2w", 13, 1, 0),
     ("^",  13, 1, 0),
     ("B",   8, 0, 8),
-    # screen-relative H/M/L with stubbed NEDIT=3, WINROW=0 over the 3 lines
+    # screen-relative H/L with stubbed NEDIT=3, WINROW=0 over the 3 lines.  (M
+    # and the scrolls ^F ^B ^D ^U count screen rows, which only the renderer
+    # can measure: accept_vi.py proves them on the assembled editor.)
     ("gg",   0, 0, 0),   # reset
     ("H",    0, 0, 0),   # top line
     ("2H",  13, 1, 0),   # 2nd from top
     ("L",   21, 2, 0),   # bottom visible line
     ("2L",  13, 1, 0),   # 2nd from bottom
-    ("M",   13, 1, 0),   # middle of [0..2]
     ("3L",   0, 0, 0),   # floored at top
     ("5H",  21, 2, 0),   # clamps at last line
-    # scrolls (stub NEDIT=3, SCEOF=SCBOF=1): ^F -> the last line (on screen, so
-    # vim makes it the top line); ^B no-op; ^D/^U step one line
-    ("gg",   0, 0, 0),   # reset
-    ("^F",  21, 2, 0),   # last line (row SCBOT=2) becomes the top line
-    ("^D",  21, 2, 0),   # cursor down NEDIT/2 = 1 line
-    ("^B",  21, 2, 0),   # first line at top -> no-op
-    ("^U",  13, 1, 0),   # cursor up 1 line
+    ("2H",  13, 1, 0),
     ("^L",  13, 1, 0),   # redraw only, no move
 ]
 

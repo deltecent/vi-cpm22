@@ -34,6 +34,7 @@
 	PUBLIC	CNTTST				; count-test (BUF.MAC PAGESTP reads)
 	PUBLIC	MKSHFT				; the marks follow an edit (VI.MAC hooks it)
 	PUBLIC	CURRW				; cursor's screen row (SCRN.MAC reads)
+	PUBLIC	HTN, HTCUR, HTEOF, HTBOF	; the row table's facts (SCRN.MAC HTBLD)
 	PUBLIC	FOPEN				; open the command-line file
 	PUBLIC	ARGSCN, ARGGO			; the rest of the command line
 	PUBLIC	CMDTAB, OPCTAB			; the two tables build_vi.py pairs up
@@ -67,6 +68,9 @@
 	EXTRN	NEWFIL				; PAGE.MAC -- the file was not there
 	EXTRN	NEDIT, WINROW			; SCRN.MAC -- edit rows / cursor line's row
 	EXTRN	SCBOT, SCEOF, SCBOF, WFILL	; SCRN.MAC -- last layout (H/M/L, scrolls)
+	EXTRN	TXEND, CSUB, HTBLD		; ... its rows of text, the cursor's row
+						;   in its line, and the row table
+	EXTRN	HTAB				; RSV.MAC -- the row table itself
 	EXTRN	AUXCNT				; PAGE.MAC -- WM L271E (follows NEWFIL)
 	EXTRN	MVLMAX, MVLIND, SETBWD		; BUF.MAC -- WM line move (pages)
 	EXTRN	CLRCNT				; BUF.MAC -- WM count/direction reset
@@ -1840,10 +1844,10 @@ JCORE:
 	ORA	L
 	RZ
 	SHLD	JKCNT
-	CALL	CURRW		; limit = rows under the cursor's + NEDIT
-	MOV	B,A
+	CALL	CURRW		; limit = lines under the cursor's + NEDIT + 2:
+	MOV	B,A		;   enough for LYFAR to know it for far off
 	LDA	NEDIT
-	DCR	A
+	INR	A
 	SUB	B
 	MOV	E,A
 	MVI	D,0
@@ -2458,11 +2462,14 @@ ES_BK:	JMP	DECC		; ... and back onto its last char (NC)
 ;============================================================
 ; MOTIONS -- screen-relative (H M L) and scrolls (^F ^B ^D ^U ^L)
 ;
-; These work on the cursor's screen row (CURRW) and the last layout's facts
-; from SCRN.MAC: SCBOT (last text row), SCEOF / SCBOF (the file's end / start
-; is on the screen).  H/M/L move the cursor to a row.  The scrolls move it and
-; name the row it should appear on (SETRWT), so the text scrolls around it;
-; WFILL keeps ^D (and G) from running past the end of the file.  ^L just leaves
+; These work on the cursor's place among the screen's LINES (CURRW) and the
+; last layout's facts from SCRN.MAC: SCBOT (the last line shown), SCEOF / SCBOF
+; (the file's end / start is on the screen).  H and L count lines.  M and the
+; scrolls count screen ROWS, as vim does once lines wrap, and a line's rows
+; are not known without measuring it: SCRN.MAC's HTBLD measures the lines
+; about the screen into a table (HTAB), and the rest is arithmetic on that.
+; A scroll then moves the cursor and names the line the screen is to start
+; with (HTLAND -> SETRWT), so the text scrolls around it.  ^L just leaves
 ; RINTENT at its R_FULL default so the next SCDRAW repaints in full.
 ;============================================================
 
@@ -2491,14 +2498,17 @@ CRW_0:
 	XRA	A
 	RET
 
-;SETRWT -- A = row: the next layout puts the cursor's line on that row.
+;SETRWT -- A = lines: the next layout puts that many above the cursor's, and
+; does not ask whether the line has gone far (WFILL).
 SETRWT:
 	LHLD	LNDLT
 	XCHG
 	MOV	L,A
 	MVI	H,0
-	CALL	SUBHD		; HL = row - LNDLT
+	CALL	SUBHD		; HL = lines - LNDLT
 	SHLD	WINROW
+	MVI	A,1
+	STA	WFILL
 	RET
 
 ;MVROW -- A = row: cursor to the start of the line on that row (the cursor's
@@ -2507,6 +2517,7 @@ MVROW:
 	MOV	B,A
 	CALL	CURRW
 	SUB	B		; A = row now - target
+MR_GO:
 	RZ
 	JC	MR_DN
 	MOV	L,A
@@ -2535,13 +2546,28 @@ VH_GO:
 	CALL	MVROW
 	JMP	FNBLNK
 
-;VC_MIDL -- 'M': middle of the text rows; count ignored.
+;VC_MIDL -- 'M': the line the middle ROW of the text is on (vim: the first
+; whose rows, with those above it, come to half of them); count ignored.
 VC_MIDL:
 	CALL	MOVCNT		; a cursor motion; the count is discarded
-	LDA	SCBOT
-	ORA	A		; clear CY for the shift
-	RAR			; A = SCBOT / 2
-	CALL	MVROW
+	LDA	NEDIT
+	ORA	A
+	RAR
+	INR	A
+	MOV	C,A		; (the middle is no farther down than that)
+	XRA	A
+	CALL	HTSET
+	LDA	TXEND
+	INR	A
+	ORA	A
+	RAR
+	DCR	A
+	MOV	C,A		; C = (rows of text + 1) / 2 - 1
+	CALL	HTFQ
+	JNC	VM_GO
+	DCX	H
+VM_GO:
+	CALL	HTGO
 	JMP	FNBLNK
 
 ;VC_LOWL -- 'L': count'th row up from the last text row (1 = that row), not
@@ -2562,74 +2588,206 @@ VL_GO:
 	CALL	MVROW
 	JMP	FNBLNK
 
-;VC_PGDN -- '^F': the window forward count pages, the cursor on the new top
-; line's first non-blank.  vim's pagescroll (NOT WordMaster): a page is NEDIT-2
-; lines (2-line overlap), NEDIT once the last line is on the screen; the top
-; line stops at the last line ('~' rows below); no-op when it is already there.
+;VC_PGDN -- '^F': the text forward count pages, the cursor on the new top
+; line's first non-blank.  vim's pagescroll (NOT WordMaster): a page is the
+; screen's ROWS less the overlap (OVLAP), and the line that many rows down
+; becomes the top line -- from its first row, vim never showing part of one.
+; The top line stops at the last line ('~' rows below); no-op when it is
+; already there.
 VC_PGDN:
 	CALL	MOVCNT		; a cursor motion, and its count
+	SHLD	RWR
 	LDA	SCEOF
 	ORA	A
 	JZ	VPD_N
-	LDA	SCBOT		; the last line is on the screen: count*NEDIT
-	ORA	A		;   lines pass it, so it becomes the top line
+	LDA	SCBOT		; the last line is on the screen: it becomes the
+	ORA	A		;   top line
 	RZ			; it already is
-	CALL	MVROW
-	JMP	VPD_TP
 VPD_N:
 	LDA	NEDIT
-	SUI	2
-	CALL	MULSAT		; HL = count * (NEDIT-2)
+	INR	A
+	MOV	C,A
+	MVI	A,2
+	CALL	HTSET		; HL -> the top line's rows
 	PUSH	H
+	PUSH	B
+	LDA	NEDIT
+	MOV	C,A
+	CALL	HTFQ		; HL -> the first line the screen has not room for
+	LDA	NEDIT
+	JC	VPD_R		; there is none: no overlap
+	LDA	HTN
+	SUB	B
+	INR	A
+	MOV	B,A		; the lines from it up to the table's first
 	XRA	A
-	CALL	MVROW		; the top line
+	CALL	OVLAP
+VPD_R:
+	CALL	PGROWS		; RWR = the rows to go
+	POP	B
 	POP	H
-	CALL	JCORE		; the new top line (the last, if the file ends)
+	CALL	RWFWD		; HL -> the line that row is in, C = which of its
+	JC	VPD_TP		; the text ended: its last line
+	MOV	A,C
+	ORA	A
+	JZ	VPD_TP
+	LDA	RWMV		; part of the way down a line: its start -- unless
+	ORA	A		;   that is the top line still, then the next
+	JNZ	VPD_TP
+	PUSH	H
+	CALL	HTIX
+	LXI	H,HTTP
+	CMP	M
+	POP	H
+	JNZ	VPD_TP
+	INX	H
 VPD_TP:
-	XRA	A
-	CALL	SETRWT		; to the top row
-	JMP	FNBLNK
+	MOV	D,H
+	MOV	E,L
+	JMP	HTLAND
 
-;VC_PGUP -- '^B': the window back count pages, not above the first line, the
-; cursor on the bottom row's line (or the last line), first non-blank.  vim's
-; pagescroll (NOT WordMaster): a page is NEDIT-2 lines, NEDIT when the top line
-; is the last line, NEDIT-1 when it is the one before (vim's overlap stops at
-; the end of the file).  No-op when the first line is already at the top.
+;VC_PGUP -- '^B': the text back count pages, not above the first line, the
+; cursor on the last line that then shows whole, first non-blank.  vim's
+; pagescroll (NOT WordMaster): a page is the screen's ROWS less the overlap
+; (OVLAP).  Where that ends part of the way up a line, the top line is the one
+; under it -- but the line itself, when it is the first one back.  No-op when
+; the first line is already at the top.
 VC_PGUP:
 	CALL	MOVCNT		; a cursor motion, and its count
+	SHLD	RWR
 	LDA	SCBOF
 	ORA	A
 	RNZ
+	CALL	CURRW		; OVLAP reads the top line and the two under it:
+	CPI	2		;   lines the cursor's is not below are read for
+	MVI	C,1
+	JNC	VPU_1
 	LDA	NEDIT
-	MOV	B,A
-	LDA	SCEOF
-	ORA	A
-	JZ	VPU_2
-	LDA	SCBOT		; the last line's row: 0 -> NEDIT, 1 -> NEDIT-1
-	CPI	2
-	JNC	VPU_2
-	CMA
-	INR	A
-	ADD	B
-	JMP	VPU_P
-VPU_2:
-	MOV	A,B
-	SUI	2
-VPU_P:
-	CALL	MULSAT		; HL = count * page
+	MOV	C,A
+VPU_1:
+	LDA	NEDIT
+	CALL	HTSET		; HL -> the top line's rows, E = lines above it
 	PUSH	H
-	XRA	A
-	CALL	MVROW		; the top line
+	PUSH	D
+	DCX	H		; the line above the top one, and on down
+	INR	B
+	MVI	A,1
+	CALL	OVLAP
+	CALL	PGROWS		; RWR = the rows to go
+	POP	D
 	POP	H
-	CALL	KCORE		; the new top line
-	XRA	A
-	CALL	SETRWT		; on the top row
+	MOV	B,E
+	CALL	RWBAK		; HL -> the line that row is in, C = its rows
+	JC	VPU_3		;   above it; or the file's first line
+	MOV	A,C
+	ORA	A
+	JZ	VPU_3
+	LDA	RWMV
+	ORA	A
+	JNZ	VPU_2
+	PUSH	H
+	CALL	HTIX
+	INR	A
+	LXI	H,HTTP
+	CMP	M
+	POP	H
+	JZ	VPU_3		; the first line back: all of it
+VPU_2:
+	INX	H
+VPU_3:
+	CALL	HTGO		; the cursor on the new top line ...
 	LDA	NEDIT
-	DCR	A
-	MOV	L,A
-	MVI	H,0
-	CALL	JCORE		; the bottom row's line
-	JMP	FNBLNK
+	MOV	C,A
+	MVI	B,0
+	CALL	HTRB		; ... and the lines under it measured
+	PUSH	H
+	LDA	NEDIT
+	MOV	C,A
+	CALL	HTFQ		; HL -> the first the screen has not room for
+	DCX	H
+	POP	D		; DE -> the top line's rows
+	XCHG
+	CALL	CMP16		; CY iff that is above the top line (it alone
+	JNC	VPU_4		;   fills the screen)
+	MOV	D,H
+	MOV	E,L
+VPU_4:
+	XCHG
+	JMP	HTLAND
+
+;OVLAP -- A = the rows one page scrolls, as vim's get_scroll_overlap: the
+; screen less two lines of overlap -- or less one, or none, where the lines at
+; that edge are too tall to be shown twice or the file ends among them.
+;   in : HL -> the rows of the line just off the screen at that edge (h1),
+;        A = 0 when the next (h2, h3, h4) are above it in the table, 1 when
+;        below, B = the entries the table has that way, h1's among them
+OVLAP:
+	STA	OVDIR
+	LDA	NEDIT
+	SUI	2
+	MOV	C,A		; C = the rows two lines of overlap leave
+	MOV	D,M		; D = h1
+	CALL	OV_NX
+	JC	OV_0
+	MOV	E,M		; E = h2
+	MOV	A,D
+	ADD	E
+	MOV	D,A		; D = h1 + h2
+	MOV	A,C
+	CMP	D
+	JC	OV_0
+	CALL	OV_NX
+	JC	OV_0
+	MOV	A,E
+	ADD	M
+	MOV	E,A		; E = h2 + h3
+	MOV	A,C
+	CMP	E
+	JC	OV_0
+	MOV	A,D
+	ADD	M
+	MOV	D,A		; D = h1 + h2 + h3
+	CALL	OV_NX
+	JC	OV_1
+	MOV	A,E
+	ADD	M		; h2 + h3 + h4
+	MOV	E,A
+	MOV	A,C
+	CMP	E
+	JC	OV_1
+	CMP	D
+	RNC			; two lines of overlap
+OV_1:
+	MOV	A,C
+	INR	A
+	RET
+OV_0:
+	MOV	A,C
+	ADI	2
+	RET
+;OV_NX -- HL -> the next line's rows, that way.  CY if the table has no more.
+OV_NX:
+	DCR	B
+	STC
+	RZ
+	LDA	OVDIR
+	ORA	A		; (CY off)
+	JZ	OV_UP
+	INX	H
+	INX	H
+OV_UP:
+	DCX	H
+	RET
+
+;PGROWS -- A = the rows of a page: RWR = the count (in RWR) of them, and no
+; line gone past yet (RWMV).
+PGROWS:
+	LHLD	RWR
+	CALL	MULSAT
+	SHLD	RWR
+	XRA	A
+	STA	RWMV
+	RET
 
 ;MULSAT -- HL = HL * A, saturated at 0FFFFH (more lines than any file has).
 MULSAT:
@@ -2647,52 +2805,373 @@ MS_SAT:
 	LXI	H,0FFFFH
 	RET
 
-;VC_HFDN -- '^D': cursor and text down HFAMT lines (HFCNT), the cursor
-; keeping its row, then its first non-blank; the text stops once the last line
-; is on the bottom row, the cursor goes on.  vim's pagescroll (NOT WordMaster).
+;VC_HFDN -- '^D': the text and the cursor down HFAMT ROWS (HFCNT), then the
+; cursor's first non-blank.  vim's pagescroll (NOT WordMaster).  The text goes
+; no farther than brings the last row of the file to the bottom row; the line
+; that many rows down becomes the top line -- from its first row, vim never
+; showing part of one, and the cursor moves as many rows less (more, where
+; the top line alone was taller than that and the text had to go past it).
 ; On the last line nothing moves, the column included.
 VC_HFDN:
 	CALL	SETMOV
+	CALL	HFCNT		; HFN = the rows
 	CALL	CURRW
-	STA	HFROW
-	CALL	HFCNT		; HL = lines
-	LDA	HFROW
 	MOV	B,A
 	LDA	SCEOF
 	ORA	A
 	JZ	VHD_GO
-	LDA	SCBOT		; the last line's row
+	LDA	SCBOT		; the last line's place
 	CMP	B
 	RZ			; the cursor is on it
 VHD_GO:
-	CALL	JCORE
-	LDA	SCEOF
+	LDA	NEDIT
+	LXI	H,HFN
+	ADD	M
+	INR	A
+	MOV	C,A
+	XRA	A
+	CALL	HTSET		; HL -> the top line's rows
+	LDA	HFN
+	MOV	D,A		; D = the rows the text moves
+	MOV	E,A		; E = the rows the cursor moves
+	LDA	HTEOF
 	ORA	A
-	JNZ	FNBLNK		; the end is on the screen: only the cursor moves
-	LDA	HFROW
+	JZ	VHD_1
+	PUSH	H
+	PUSH	B
+	MVI	C,255
+	CALL	HTFQ		; (runs off: C = 255 - the rows to the file's end)
+	LDA	NEDIT
+	ADD	C
+	CMA			; A = those rows - NEDIT: the rows off the screen
+	POP	B
+	POP	H
+	ORA	A
+	JM	VHD_0		; none
+	CMP	D
+	JNC	VHD_1
+	MOV	D,A
+	JMP	VHD_1
+VHD_0:
+	MVI	D,0
+VHD_1:
+	MOV	A,D
+	ORA	A
+	JZ	VHD_C		; the text stays
+	MOV	C,D
+	CALL	HTFQ		; HL -> the line that row is in, C = which of its
+	MOV	A,C
+	ORA	A
+	JZ	VHD_C
+	CMP	D
+	JNZ	VHD_R
+	MOV	A,M		; the top line still: past all of it
+	SUB	C
+	ADD	E
+	MOV	E,A
+	INX	H
+	JMP	VHD_C
+VHD_R:
+	MOV	A,E		; part of the way down a line: its start
+	SUB	C
+	MOV	E,A
+VHD_C:
+	SHLD	HFTP
+	LDA	CSUB		; the cursor: E rows down from the one it is on
+	ADD	E
+	MOV	C,A
+	LDA	HTCUR
+	CALL	HTPT
+	CALL	HTFQ
+	JNC	HFEND
+	DCX	H		; the file ends first: its last line
+;HFEND -- ^D / ^U: HL -> the rows of the line the cursor goes to.
+HFEND:
+	XCHG
+	LHLD	HFTP
+	XCHG
+;HTLAND -- the cursor to the line whose rows HL points at, DE -> those of the
+; line the screen is to start with (never one under it); first non-blank.
+HTLAND:
+	PUSH	H
+	PUSH	D
+	CALL	HTGO
+	POP	D
+	POP	H
+	CALL	SUBHD		; HL = the lines between them
+	MOV	A,H
+	ORA	A
+	MOV	A,L
+	JZ	HL_SET
+	XRA	A
+HL_SET:
 	CALL	SETRWT
-	MVI	A,1
-	STA	WFILL		; not past the end of the file
 	JMP	FNBLNK
 
-;VC_HFUP -- '^U': cursor and text up HFAMT lines (HFCNT), the cursor keeping
-; its row, then its first non-blank; the text stops at the first line, the
-; cursor goes on.  vim's pagescroll (NOT WordMaster).  On the first line
-; nothing moves, the column included.
+;VC_HFUP -- '^U': the text and the cursor up HFAMT ROWS (HFCNT), then the
+; cursor's first non-blank.  vim's pagescroll (NOT WordMaster).  The text
+; stops at the first line, the cursor goes on.  Where the rows end part of
+; the way up a line, the top line is the one under it and the cursor moves as
+; many rows less -- but the line itself, and as many more, when it is the
+; first one back.  On the first line nothing moves, the column included.
 VC_HFUP:
 	CALL	SETMOV
-	CALL	CURRW
-	STA	HFROW
-	CALL	HFCNT		; HL = lines
+	CALL	HFCNT		; HFN = the rows
 	CALL	ONFST
 	RZ			; the cursor is on the first line
-	CALL	KCORE
-	LDA	SCBOF
+	MVI	C,1
+	LDA	HFN
+	CALL	HTSET		; HL -> the top line's rows, E = lines above it
+	MOV	B,E
+	LDA	HFN
+	MOV	C,A
+	MOV	E,A		; E = the rows the cursor moves
+	CALL	HTBQ		; HL -> the line that row is in, C = its rows
+	JC	VHU_C		;   above it; or the file's first line
+	MOV	A,C
 	ORA	A
-	JNZ	FNBLNK		; the start is on the screen: only the cursor moves
-	LDA	HFROW
-	CALL	SETRWT
-	JMP	FNBLNK
+	JZ	VHU_C
+	LDA	HTTP
+	DCR	A
+	CMP	B
+	JZ	VHU_F
+	MOV	A,E		; part of the way up a line: the one under it
+	SUB	M
+	ADD	C
+	MOV	E,A
+	INX	H
+	JMP	VHU_C
+VHU_F:
+	MOV	A,E		; ... the first line back: all of it
+	ADD	C
+	MOV	E,A
+VHU_C:
+	SHLD	HFTP
+	MOV	C,E
+	LDA	HTCUR
+	CALL	HTPT		; HL -> the cursor line's rows, E = lines above it
+	LDA	CSUB
+	MOV	D,A
+	MOV	A,C
+	SUB	D		; the rows to go, less those of its own line above it
+	JC	HFEND
+	JZ	HFEND
+	MOV	C,A
+	MOV	B,E
+	CALL	HTBQ		; (off the top: the file's first line)
+	JMP	HFEND
+
+;------------------------------------------------------------
+; The row table.  HTAB[0..HTN) holds the rows of consecutive lines, HTCUR is
+; the cursor line's entry, HTTP the top line's (HTSET).  The walks below take
+; HL -> an entry and answer with HL -> another.
+;------------------------------------------------------------
+
+;HTSET -- measure the lines about the screen: A = the lines above the top one
+; to take too, C = the rows to gather from the cursor's line on (HTBLD).
+;   out: HL -> the top line's rows, B = the entries from it on, E = HTTP =
+;        the entries above it
+;HTRB -- the same about the cursor alone: B = the lines above it, C as above.
+;   out: HL -> the cursor line's rows, B = the entries from it on, E = those
+;        above it
+;HTPT -- A = an entry's index: HL -> it, B = the entries from it on, E = A.
+; Keeps C.
+HTSET:
+	MOV	B,A
+	CALL	CURRW		; (keeps BC)
+	PUSH	PSW
+	ADD	B
+	MOV	B,A
+	CALL	HTRB
+	POP	B		; B = the lines from the top one to the cursor's
+	LDA	HTCUR
+	SUB	B
+	STA	HTTP
+	JMP	HTPT
+HTRB:
+	CALL	ZSAVE
+	CALL	HTBLD
+	CALL	ZREST
+	LDA	HTCUR
+HTPT:
+	MOV	E,A
+	MVI	D,0
+	LXI	H,HTAB
+	DAD	D
+	LDA	HTN
+	SUB	E
+	MOV	B,A
+	RET
+
+;HTIX -- HL -> an entry: A = its index.  Keeps HL, BC.
+HTIX:
+	LXI	D,HTAB
+	MOV	A,L
+	SUB	E
+	RET
+
+;HTGO -- the cursor to the start of the line whose entry HL points at (its
+; own: unmoved).
+HTGO:
+	CALL	HTIX
+	MOV	B,A
+	LDA	HTCUR
+	SUB	B		; A = the lines up to it
+	JMP	MR_GO
+
+;HTFQ -- down the table.  HL -> a line's entry, B = the entries from it on,
+; C = rows, counted from that line's first.
+;   out: HL -> the entry of the line that row is in, C = the row within it, B
+;        = the entries from there on; CY if the table ends first (HL past its
+;        last entry, C = the rows short)
+HTFQ:
+	MOV	A,B
+	ORA	A
+	STC
+	RZ
+	MOV	A,C
+	SUB	M
+	JC	HF_IN
+	MOV	C,A
+	INX	H
+	DCR	B
+	JMP	HTFQ
+HF_IN:
+	ORA	A
+	RET
+
+;HTBQ -- up the table.  HL -> a line's entry, B = the entries above it, C =
+; rows (not 0), counted up from that line's first.
+;   out: HL -> the entry of the line that row is in, C = that line's rows
+;        above it (0: it is the line's first), B = the entries above; CY if
+;        the table starts first (HL -> its first entry, C = the rows short)
+HTBQ:
+	MOV	A,B
+	ORA	A
+	STC
+	RZ
+	DCX	H
+	DCR	B
+	MOV	A,M
+	SUB	C
+	JNC	HQ_IN
+	CMA
+	INR	A
+	MOV	C,A
+	JMP	HTBQ
+HQ_IN:
+	MOV	C,A
+	RET
+
+;RWQ -- C = RWR, or 100 if it is more: the rows one table is asked for.
+; Keeps HL, B, DE.
+RWQ:
+	MVI	C,100
+	LDA	RWR+1
+	ORA	A
+	RNZ
+	LDA	RWR
+	CMP	C
+	RNC
+	MOV	C,A
+	RET
+
+;RWSUB -- RWR -= A.  Keeps HL, BC.
+RWSUB:
+	PUSH	H
+	MOV	E,A
+	MVI	D,0
+	LHLD	RWR
+	CALL	SUBHD
+	SHLD	RWR
+	POP	H
+	RET
+
+;RWFWD -- a page scroll down: RWR rows on from the first row of the line
+; whose entry HL points at (B = the entries from it on), however far that is:
+; where the table runs out the cursor is moved up to there and the table made
+; again from it (RWMV: that happened).
+;   out: HL -> the entry of the line that row is in, C = the row within it;
+;        CY if the text ends first (HL -> its last line)
+RWFWD:
+	CALL	RWQ
+	MOV	D,C
+	CALL	HTFQ
+	PUSH	PSW
+	MOV	A,D
+	SUB	C		; the rows that took it to that line's first
+	CALL	RWSUB
+	POP	PSW
+	JC	RF_OFF
+	LDA	RWR+1		; is what is left inside this line?
+	ORA	A
+	JNZ	RF_GO
+	LDA	RWR
+	CMP	M
+	JNC	RF_GO
+	MOV	C,A
+	ORA	A
+	RET
+RF_OFF:
+	LDA	HTEOF
+	ORA	A
+	JZ	RF_GO		; (HL -> where the next line's entry would be)
+	DCX	H
+	STC
+	RET
+RF_GO:
+	CALL	HTGO
+	MVI	A,1
+	STA	RWMV
+	CALL	RWQ
+	INR	C
+	MVI	B,0
+	CALL	HTRB
+	JMP	RWFWD
+
+;RWBAK -- a page scroll up: RWR rows up from the first row of the line whose
+; entry HL points at (B = the entries above it), as RWFWD.
+;   out: HL -> the entry of the line that row is in, C = that line's rows
+;        above it; CY if the file starts first (HL -> its first line)
+RWBAK:
+	CALL	RWQ
+	MOV	D,C
+	CALL	HTBQ
+	JC	RB_OFF
+	MOV	A,D
+	ADD	C
+	MOV	E,A		; E = the rows up to that line's first
+	LDA	RWR+1
+	ORA	A
+	JNZ	RB_ON
+	LDA	RWR
+	MOV	D,A
+	MOV	A,E
+	SUB	D		; no fewer than are wanted: it is in this line
+	JC	RB_ON
+	MOV	C,A
+	ORA	A
+	RET
+RB_ON:
+	MOV	A,E
+	JMP	RB_GO
+RB_OFF:
+	LDA	HTBOF
+	RRC			; CY: that is the file's first line
+	RC
+	MOV	A,D
+	SUB	C
+RB_GO:
+	CALL	RWSUB
+	CALL	HTGO
+	MVI	A,1
+	STA	RWMV
+	CALL	RWQ
+	MOV	B,C
+	MVI	C,1
+	CALL	HTRB
+	MOV	B,E
+	JMP	RWBAK
 
 ;ONFST -- Z iff the cursor is on the file's first line: nothing is paged out
 ; before the text and no LF precedes the cursor (scans back to its line start).
@@ -2718,7 +3197,7 @@ OF_RET:
 	POP	H
 	RET
 
-;HFCNT -- HL = the ^D/^U line count.  As vim's 'scroll': a count (at most
+;HFCNT -- HFN = the ^D/^U row count.  As vim's 'scroll': a count (at most
 ; NEDIT) becomes the amount from now on; until one does, it is NEDIT/2.
 HFCNT:
 	LHLD	CMDCNT
@@ -2744,10 +3223,9 @@ HFC_AM:
 	RAR
 	ORA	A
 	JNZ	HFC_HL
-	INR	A		; at least one line
+	INR	A		; at least one row
 HFC_HL:
-	MOV	L,A
-	MVI	H,0
+	STA	HFN
 	RET
 
 ;VC_REDR -- '^L': force a full repaint.  The main loop defaults RINTENT to R_FULL
@@ -2928,15 +3406,13 @@ GPLACE:
 	JC	GP_UP
 	ORA	A
 	JNZ	GP_MID		; 64K bytes or more below
-	;--- below the top: are there at most NEDIT+NEDIT/2 lines between? ---
+	;--- below the top: are there at most 2*NEDIT+1 lines between?  (More
+	;    is far off, whatever the lines are: SCRN.MAC LYFAR) ---
 	LDA	NEDIT
-	MOV	E,A
-	MVI	D,0
-	ORA	A
-	RAR
+	ADD	A
+	INR	A
 	MOV	L,A
 	MVI	H,0
-	DAD	D		; HL = NEDIT + NEDIT/2
 	CALL	LINPSB		; HL = the line that many lines up
 	CALL	GBSUB		; HL = bytes from there to the target
 	XCHG
@@ -2957,15 +3433,7 @@ GP_CNT:
 	INX	B
 	JMP	GP_CNT
 GP_DN:
-	LDA	NEDIT
-	DCR	A
-	MOV	E,A
-	MVI	D,0		; DE = the bottom row
-	MOV	H,B
-	MOV	L,C
-	CALL	CMP16		; CY iff below the screen
-	JC	GP_SET		; A = the bottom row
-	MOV	A,L		; on the screen: its row
+	MOV	A,C		; the lines from the top one to it
 	JMP	GP_ONS
 	;--- above the top: at most NEDIT/2-2 lines? (read down to the top) ---
 GP_UP:
@@ -3028,16 +3496,18 @@ GP_FIN:
 	JMP	SETGL		; ... except a search, which keeps the column
 				;   it matched at
 
-;GP_ONS -- the target is on the screen the reader is already looking at, so
-; the top line does not move and NOTHING on it changes: this is a cursor
-; motion, not a jump.  LAYOUT works out how far the text scrolled as
-; LNDLT - (the row change), so telling it the truth -- the cursor moved
-; exactly as many lines as its row did -- makes that come out zero, and
-; R_MOVE then repositions the cursor and draws nothing.  WINROW is left
-; alone: CURRW adds LNDLT to it and arrives at the same row.
+;GP_ONS -- the target is A lines below the top line of the screen the reader
+; is looking at: this is a cursor motion, not a jump, and LAYOUT is told the
+; truth -- the cursor moved as many lines as that differs from where it was.
+; If the line is on the screen, the top line does not move and NOTHING on it
+; changes: the text scrolled LNDLT - (the row change) lines, which comes out
+; zero, and R_MOVE then repositions the cursor and draws nothing.  If it is
+; not, LAYOUT's own rule (LYFAR: rows, once lines wrap) scrolls up to it or
+; puts it mid-screen, as for any other motion.  WINROW is left alone: CURRW
+; adds LNDLT to it and arrives at the same line.
 GP_ONS:
 	MOV	L,A
-	MVI	H,0		; HL = the row it lands on
+	MVI	H,0		; HL = the lines from the top line to it
 	XCHG
 	LHLD	WINROW		; (still the row it started on: SCPRE's OLDWR)
 	XCHG
@@ -7103,8 +7573,17 @@ ILABOV:	DB	0		; 1 = the row above an R_ILIN's opened rows lost
 GOALCOL:DW	0FFFEH		; sticky goal screen column for j/k (0FFFFH = EOL, 0FFFEH = stale)
 WBIG:	DB	0		; word motion: 0 = w/b/e, 1 = W/B/E
 WPULL:	DB	0		; w/W ended off a line's end and was pulled back
-HFROW:	DB	0		; ^D/^U: the cursor's row before the move
-HFAMT:	DB	0		; ^D/^U: lines (vim's 'scroll'); 0 = NEDIT/2
+HFAMT:	DB	0		; ^D/^U: rows (vim's 'scroll'); 0 = NEDIT/2
+HFN:	DB	0		; ^D/^U: the rows this one goes
+HFTP:	DW	0		; ^D/^U: -> the new top line's entry
+HTN:	DB	0		; row table: its entries
+HTCUR:	DB	0		; ... the cursor line's
+HTTP:	DB	0		; ... the top line's
+HTEOF:	DB	0		; ... 1 = its last is the file's last line
+HTBOF:	DB	0		; ... 1 = its first is the file's first
+RWR:	DW	0		; ^F/^B: rows still to go
+RWMV:	DB	0		; ^F/^B: 1 = the table was made again on the way
+OVDIR:	DB	0		; OVLAP: 0 = h2.. are above h1 in the table
 JKCNT:	DW	0		; j/k: count
 JKN:	DW	0		; j/k: lines scanned for (min(count, limit))
 JKMOV:	DW	0		; j: lines moved

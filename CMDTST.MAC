@@ -33,6 +33,7 @@
 	PUBLIC	BCONST, BCONIN, BCONOU	; KEY.MAC's + CMD.MAC's console EXTRNs
 	PUBLIC	NEDIT, WINROW		; CMD.MAC's screen EXTRNs (no renderer here)
 	PUBLIC	SCBOT, SCEOF, SCBOF, WFILL
+	PUBLIC	TXEND, CSUB, HTBLD	; ... and its row table (never built here)
 	PUBLIC	EXPRM, EXRUB, OUTCH	; CMD.MAC's ':' line echo (no renderer here)
 	PUBLIC	EXMSG, OUTSTR		; CMD.MAC's ex message (no renderer here)
 	PUBLIC	SCURS			; CMD.MAC's '^G' cursor restore
@@ -58,6 +59,7 @@ BCONST:
 	XRA	A
 	RET
 
+HTBLD:				; no lines are measured here
 SCURS:				; nothing is on a screen here
 EXPRM:				; CMD.MAC's ':' line echo -- swallowed here
 EXMSG:
@@ -108,6 +110,8 @@ SCBOT:	DB	22		; last text row
 SCEOF:	DB	1		; the whole file is on the screen
 SCBOF:	DB	1
 WFILL:	DB	0
+TXEND:	DB	1
+CSUB:	DB	0
 DONE:	DB	0
 
 	DS	64

@@ -109,7 +109,7 @@ YANK AND PUT ---------------------------------------------------------------
     3p              put three copies
 
 There is one register and it holds whole lines.  A yank fills it and so
-does dd; no other delete does.  It holds about 23 K: a dd or yy of more
+does dd; no other delete does.  It holds about 21 K: a dd or yy of more
 than that is refused with "Too large to yank" and changes nothing.  To
 delete more, use dG, d{n}G or d'a, which keep nothing.  To MOVE more,
 write the lines to a file and read them back in where they belong:
@@ -202,10 +202,10 @@ stops a move or a search before then (see below).
 The limits:
 
     Memory      The text in memory, the yank register and the undo share
-                26498 bytes (about 26 K, with a 56 K CP/M).  About 2 K of
+                25389 bytes (about 25 K, with a 56 K CP/M).  About 2 K of
                 the file is read when it is opened, and up to 24 K is in
                 memory at once.
-    Register    One, of whole lines, about 23 K.  What it holds is taken
+    Register    One, of whole lines, about 21 K.  What it holds is taken
                 from the text's share, so after a big yank less of the
                 file is in memory and every move pages sooner.
     Undo        One change, of up to 1024 bytes.
