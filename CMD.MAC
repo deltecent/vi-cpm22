@@ -2078,14 +2078,20 @@ VCBGB:	MVI	A,1
 BDO:	CALL	SETMOV
 	CALL	GETCNT
 	SHLD	CNTV
-BDO_LP: LHLD	CNTV
-	MOV	A,H
-	ORA	L
-	JZ	SETGL
+	CALL	BCK1		; the first step, apart: with nowhere to go back
+	JNC	BDO_NX		;   to the motion has failed, and an operator
+	XRA	A		;   waiting on it is dropped ('cb' on the file's
+	STA	PSAVE		;   first char opened an insert).  A count that
+	JMP	SETGL		;   runs out at the start has still moved, and
+BDO_LP:				;   its operator stands -- both as vim
+	CALL	BCK1
+	JC	SETGL
+BDO_NX: LHLD	CNTV
 	DCX	H
 	SHLD	CNTV
-	CALL	BCK1
-	JNC	BDO_LP
+	MOV	A,H
+	ORA	L
+	JNZ	BDO_LP
 	JMP	SETGL
 
 ;FWD1 -- vim fwd_word, once.  CY = failed: the cursor was on the file's last

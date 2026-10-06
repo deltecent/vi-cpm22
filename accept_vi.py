@@ -3304,7 +3304,6 @@ MK = '2G6lma7G9lmb'
 OPMX_OPEN = {}
 for _issue, _rows in (
         (12, [('4G7l', 'dw'), ('4G7l', 'd2w'), ('4G7l', 'dW'), ('4G7l', 'd2W')]),
-        (14, [('gg0', 'db'), ('gg0', 'dB')]),
         (19, [('4G7l', 'ygg'), ('gg0', 'ygg'), ('G$', 'ygg'), ('4G7l', 'd2gg')]
          + [(MK + p, o + m) for p in ('4G7l', 'gg0', 'G$')
             for o, m in (('d', '`a'), ('d', '`b'), ('y', "'a"), ('y', "'b"))])):
@@ -3394,6 +3393,14 @@ VIM_SHORT = [
     (['G$', 'd3w'], b'aa bb\r\ncc dd\r\n\r\nee f\r\n', (3, 3)),
     (['G$', 'cwqq\x1b'], b'aa bb\r\ncc dd\r\n\r\nee fqq\r\n', (3, 5)),
     (['G', 'd3w'], b'aa bb\r\ncc dd\r\n\r\n\r\n', (3, 0)),
+    # 'b' with nowhere to go back to fails and its operator is dropped (the
+    # '77' is then a count the ESC cancels); one that runs out of words at
+    # the file's start has still moved, and its operator stands
+    (['gg', 'cb77\x1b'], SHORT_TEXT, (0, 0)),
+    (['gg', 'd5b'], SHORT_TEXT, (0, 0)),
+    (['ggw', 'd5b'], b'bb\r\ncc dd\r\n\r\nee ff\r\n', (0, 0)),
+    (['ggw', 'c5b77\x1b'], b'77bb\r\ncc dd\r\n\r\nee ff\r\n', (0, 1)),
+    (['2G', 'd5b'], b'cc dd\r\n\r\nee ff\r\n', (0, 0)),
 ]
 
 
