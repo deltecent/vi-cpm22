@@ -20,11 +20,11 @@ The seconds are the simulator's emulated clock (2 MHz 8080, 9600-baud console, t
 | `100G` from line 12000 | 38.3 | 343 |  |
 | `G` again, after `G` `gg` | 38.2 | 304 |  |
 | `gg` from the end, after `x` there | 55.3 | 315 |  |
-| `'a` to line 100 from line 6000 | 15.9 | 304 |  |
+| `'a` to line 100 from line 6000 | 15.8 | 304 |  |
 | `^G` at the end | 0.6 | 63 | "TEST.TXT" line 12800 col 1 |
-| `G` from the top, ESC 10 s into it | 20.9 | 33 | Interrupted |
-| `/zzzz` from line 6000, never found | 116.9 | 61 | Pattern not found: zzzz |
-| `/zzzz` from line 6000, ESC 10 s into it | 18.1 | 49 | Interrupted |
+| `G` from the top, ESC 10 s into it | 20.9 | 58 | Interrupted |
+| `/zzzz` from line 6000, never found | 117.0 | 61 | Pattern not found: zzzz |
+| `/zzzz` from line 6000, ESC 10 s into it | 17.0 | 74 | Interrupted |
 | `/012000` from the top | 45.7 | 321 |  |
 | `/000100` from line 6000 (wraps) | 65.0 | 321 |  |
 | `?000100` from line 6000 | 15.2 | 321 |  |
@@ -74,7 +74,7 @@ The seconds are the simulator's emulated clock (2 MHz 8080, 9600-baud console, t
 | `:w`, nothing changed | 50.9 | 354 | "TEST.TXT" written |
 | `:w` after `x` at the top | 50.9 | 353 | "TEST.TXT" written |
 | `:w` after `x` at line 6000 | 50.0 | 356 | "TEST.TXT" written |
-| `:w` after `x` at the end | 52.0 | 356 | "TEST.TXT" written |
+| `:w` after `x` at the end | 52.1 | 356 | "TEST.TXT" written |
 | `:e!` after `x` at the top | 3.1 | 347 | "TEST.TXT" |
 | `:e!` after `x` at line 6000 | 21.0 | 350 | "TEST.TXT" |
 | `:6000,6100w T.TXT` (800 bytes) | 3.8 | 78 | "T.TXT" written |
@@ -87,7 +87,7 @@ The seconds are the simulator's emulated clock (2 MHz 8080, 9600-baud console, t
 | | |
 |---|---|
 | BDOS entry, the word at 0006H | B606H |
-| arena, from the top of the program to the BDOS | 27088 bytes (4C35H-B605H) |
+| arena, from the top of the program to the BDOS | 27066 bytes (4C4BH-B605H) |
 | text in memory when the file is opened | 2048 bytes |
 | undo region, taken out of the arena | 1024 bytes |
 | text in memory after `6000G` `G` `6000G` `gg` `G` | 12288, 16640, 24832, 24576, 22528 bytes |

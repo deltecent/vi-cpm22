@@ -202,7 +202,7 @@ stops a move or a search before then (see below).
 The limits:
 
     Memory      The text in memory, the yank register and the undo share
-                27088 bytes (about 26 K, with a 56 K CP/M).  About 2 K of
+                27066 bytes (about 26 K, with a 56 K CP/M).  About 2 K of
                 the file is read when it is opened, and up to 24 K is in
                 memory at once.
     Register    One, of whole lines, about 23 K.  What it holds is taken
@@ -238,16 +238,17 @@ Slow, because the file has to go through the window:
     :e! at line 6000            21 s   3.1 s at line 1
     :%s/0/1/                   268 s   every line; over 100 lines, 2.6 s
 
-ESC stops a move or a search -- G, gg, {n}G, 'a, `a, / ? n and N -- and
-says "Interrupted".  The cursor and the screen go back to where the
-command began, as they do when a search finds nothing, and anything typed
-ahead is dropped.  That includes an insert typed ahead of the move: the
-ESC that ends it stops the move, so wait for the cursor before typing
-one.  Going back has to page too, so it is not instant:
+ESC stops a move or a search -- G, gg, {n}G, 'a, `a, / ? n and N.  Within
+a second or two the bottom row says "Interrupting...", and when the
+cursor and the screen are back where the command began it says
+"Interrupted".  Anything typed ahead is dropped.  That includes an
+insert typed ahead of the move: the ESC that ends it stops the move, so
+wait for the cursor before typing one.  Going back has to page too, so
+it is not instant:
 
     G from line 1, ESC at 10 s  21 s   in all
     /text, not in the file     117 s
-      ... ESC at 10 s           18 s   in all
+      ... ESC at 10 s           17 s   in all
 
 A command that changes the text is not stopped: dG, :s, a put and :w run
 to the end, and the ESC is taken afterwards as a key that does nothing.
@@ -321,4 +322,4 @@ NOT IN THIS VI -------------------------------------------------------------
 
 A count before an insert (3ix) is ignored: it inserts once.  So is a count
 on r and ~.
-
+

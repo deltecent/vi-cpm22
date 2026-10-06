@@ -1437,7 +1437,10 @@ BRKON:
 	STA	BRKARM
 	RET
 
-;BRKTST -- CNTTST's question while armed.  Keeps BC, DE, HL.
+;BRKTST -- CNTTST's question while armed.  Keeps BC, DE, HL.  The ESC is
+; answered on the bottom row at once: the way back pages, and that can take
+; as long again as the command had run, with nothing else to show for it.
+; BRKBAK's 'Interrupted' replaces it when the cursor is back.
 BRKTST:
 	PUSH	B
 	PUSH	D
@@ -1445,6 +1448,8 @@ BRKTST:
 	CALL	KBBRK
 	JZ	BT_NO
 	STA	BRKHIT		; (A = FFH)
+	LXI	H,SINTG
+	CALL	EXMSG
 	XRA	A
 	STA	BRKARM		; the way back is not stopped in its turn
 	STA	AUXCNT
@@ -6078,6 +6083,7 @@ STRL:	DB	'Trailing chars: ',0
 SNOT:	DB	'Invalid command: ',0
 SNOTFD: DB	'Pattern not found: ',0
 SINTR:	DB	'Interrupted',0
+SINTG:	DB	'Interrupting...',0
 SNOPAT: DB	'No previous search pattern',0
 SUNDW:	DB	'Cannot undo: change has paged out',0
 SUNDB:	DB	'Too large to undo',0

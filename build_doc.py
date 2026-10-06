@@ -420,12 +420,13 @@ Slow, because the file has to go through the window:
 {two(':e! at line 6000', ':e! after x at line 6000')}   {t(':e! after x at the top')} at line 1
 {two(':%s/0/1/', ':%s/0/1/ (12800 lines)')}   every line; over 100 lines, {t(':6000,6100s/0/1/')}
 
-ESC stops a move or a search -- G, gg, {{n}}G, 'a, `a, / ? n and N -- and
-says "Interrupted".  The cursor and the screen go back to where the
-command began, as they do when a search finds nothing, and anything typed
-ahead is dropped.  That includes an insert typed ahead of the move: the
-ESC that ends it stops the move, so wait for the cursor before typing
-one.  Going back has to page too, so it is not instant:
+ESC stops a move or a search -- G, gg, {{n}}G, 'a, `a, / ? n and N.  Within
+a second or two the bottom row says "Interrupting...", and when the
+cursor and the screen are back where the command began it says
+"Interrupted".  Anything typed ahead is dropped.  That includes an
+insert typed ahead of the move: the ESC that ends it stops the move, so
+wait for the cursor before typing one.  Going back has to page too, so
+it is not instant:
 
 {two('G from line 1, ESC at 10 s', 'G from the top, ESC 10 s into it')}   in all
 {two('/text, not in the file', '/zzzz from line 6000, never found')}

@@ -8188,7 +8188,9 @@ def brk_cmds():
     """ESC abandons a search or a long move: the cursor and the screen go back
     to where the command started, the bottom row says so, and whatever was
     typed ahead is thrown away with it.  Only commands that change no text are
-    stopped; a delete that pages runs to its end, ESC or not.  '^C' is not the
+    stopped; a delete that pages runs to its end, ESC or not.  The ESC is
+    answered the moment it is seen ('Interrupting...'), and 'Interrupted'
+    replaces that once the cursor is back.  '^C' is not the
     key for it, and a key that SENDS an ESC sequence (an arrow, PgDn) is not
     decoded: its bytes are keystrokes like any others."""
     big = make(12800)
@@ -8205,9 +8207,15 @@ def brk_cmds():
         t0 = tstates(e)
         e.s.send(keys)
         run_for(e, after)
+        sent = len(e.cap.getvalue())
         e.s.send(ahead + '\x1b')
         idle(e)
         took = (tstates(e) - t0) / 2e6
+        out = e.cap.getvalue()[sent:]
+        check(f'{tag}: {keys!r} ESC is answered before the way back '
+              f'({out[-60:]!r})',
+              'Interrupting...' in out
+              and out.index('Interrupting...') < out.rindex('Interrupted'))
         v = e.screen()
         scr = [''.join(r) for r in v.screen]
         check(f'{tag}: {keys!r} ESC says so ({bottom(e)!r})',

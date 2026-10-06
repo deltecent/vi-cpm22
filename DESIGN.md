@@ -29,7 +29,7 @@ back to one of them.
   between the top of the program and the BDOS (`BUFEND = [0006H] - 1`; WM's
   `INIT` stops 7 pages lower only when that vector's low byte is not 06H, which
   is something loaded under the BDOS, a debugger for one). With a 56 K CP/M it
-  is 27,088 bytes in this build. **Every byte of the image comes out of
+  is 27,066 bytes in this build. **Every byte of the image comes out of
   the arena**, so the binary is the scarce resource. Commands are priced in
   bytes before they are built, and a command that earns too little gets cut.
 - **The console is a 9600-baud serial line**, about 960 characters a second. A
@@ -171,8 +171,8 @@ move would break:
               pointer row, text + gap, Q-buffer (the yank register), undo region
     BUFEND  = BDOS base - 1   (B605H with a 56 K CP/M; see section 1)
 
-In this build: the image is 18438 bytes, the `.COM` file 18560 bytes (145
-records), the reserve block 815 bytes (`4906H`–`4C34H`), and the stack 128
+In this build: the image is 18460 bytes, the `.COM` file 18560 bytes (145
+records), the reserve block 815 bytes (`491CH`–`4C4AH`), and the stack 128
 bytes. **The size that matters is a 4 K BLOCK BOUNDARY**, because that is what
 the 8 MB disk allocates in: 16384 bytes occupy four blocks and one byte more
 occupies five. This build is past that line by design (`f F t T ; ,` would not
@@ -417,9 +417,11 @@ Detail is in `RENDER.md`. The design decisions:
     for an ESC (`KBBRK`): finding one zeroes the count, and the loop ends as it
     does when the count runs out. The test is armed (`BRKON`) only by `G`, `gg`,
     the mark jumps and the searches, and only with no operator pending, so
-    nothing that changes text is ever stopped half-way. The command then pages
+    nothing that changes text is ever stopped half-way. `BRKTST` writes "Interrupting..."
+    on the message row there and then, because the way back is as silent as
+    the command was. The command then pages
     back to the file position it started from (`BRKBAK`, the path a failed
-    search takes) and empties the ring. The ring is searched rather than a flag
+    search takes), empties the ring and says "Interrupted". The ring is searched rather than a flag
     set as bytes arrive, so an ESC typed when nothing is running is an ordinary
     key and cannot cancel a later command. An ESC anywhere in the ring counts,
     so an insert typed ahead of a long move stops it.
