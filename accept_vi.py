@@ -7312,8 +7312,11 @@ def limits_cmds():
 
     # ... and when they do not, the editor has to refuse and keep running.
     # It does not: it exits to CP/M and the work is lost (issue #21).
+    # (The typed text is 2000 characters so that the line passes the arena by
+    # a margin whatever the image's size has done to it: 400 sat on the edge,
+    # and stopped overflowing when the arena moved by 74 bytes.)
     for n, keys in ((13000, 'jyypp'), (20000, 'jyy'),
-                    (26000, 'j$a' + 'y' * 400)):
+                    (26000, 'j$a' + 'y' * 2000)):
         e = Editor(b'ab\r\n' + b'x' * n + b'\r\ncd\r\n')
         try:
             before = len(e.cap.getvalue())
