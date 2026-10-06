@@ -198,7 +198,7 @@ stops a move or a search before then (see below).
 The limits:
 
     Memory      The text in memory, the yank register and the undo share
-                26989 bytes (about 26 K, with a 56 K CP/M).  About 2 K of
+                26922 bytes (about 26 K, with a 56 K CP/M).  About 2 K of
                 the file is read when it is opened, and up to 24 K is in
                 memory at once.
     Register    One, of whole lines, about 23 K.  What it holds is taken
@@ -241,7 +241,7 @@ ahead is dropped.  Going back has to page too, so it is not instant:
 
     G from line 1, ^C at 10 s   21 s   in all
     /text, not in the file     117 s
-      ... ^C at 10 s            17 s   in all
+      ... ^C at 10 s            18 s   in all
 
 A command that changes the text is not stopped: dG, :s, a put and :w run
 to the end, and the ^C is taken afterwards as a key that does nothing.

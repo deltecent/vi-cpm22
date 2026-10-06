@@ -1,6 +1,6 @@
 # What a command costs on a 100 K file
 
-Written by `python3 timecost.py --write`; do not edit. Measured on a `VI.COM` of 18560 bytes, one fresh editor per row, on a file of 12800 lines of 8 bytes.
+Written by `python3 timecost.py --write`; do not edit. Measured on a `VI.COM` of 18688 bytes, one fresh editor per row, on a file of 12800 lines of 8 bytes.
 
 The seconds are the simulator's emulated clock (2 MHz 8080, 9600-baud console, the BIOS's disk loops). The simulated drive has no seek time and no rotation, so **these are a floor**: a real drive adds to every row that pages and to none that does not. The message is what the bottom row said afterwards.
 
@@ -24,7 +24,7 @@ The seconds are the simulator's emulated clock (2 MHz 8080, 9600-baud console, t
 | `^G` at the end | 0.6 | 63 | "TEST.TXT" line 12800 col 1 |
 | `G` from the top, `^C` 10 s into it | 20.9 | 33 | Interrupted |
 | `/zzzz` from line 6000, never found | 117.0 | 61 | Pattern not found: zzzz |
-| `/zzzz` from line 6000, `^C` 10 s into it | 17.0 | 49 | Interrupted |
+| `/zzzz` from line 6000, `^C` 10 s into it | 17.9 | 49 | Interrupted |
 | `/012000` from the top | 45.7 | 321 |  |
 | `/000100` from line 6000 (wraps) | 65.0 | 321 |  |
 | `?000100` from line 6000 | 15.2 | 321 |  |
@@ -78,16 +78,16 @@ The seconds are the simulator's emulated clock (2 MHz 8080, 9600-baud console, t
 | `:e!` after `x` at the top | 3.1 | 347 | "TEST.TXT" |
 | `:e!` after `x` at line 6000 | 21.0 | 350 | "TEST.TXT" |
 | `:6000,6100w T.TXT` (800 bytes) | 3.8 | 78 | "T.TXT" written |
-| `:6000,9000w T.TXT` (24 K) | 31.2 | 78 | "T.TXT" written |
+| `:6000,9000w T.TXT` (24 K) | 31.1 | 78 | "T.TXT" written |
 | `:r T.TXT` of 800 bytes, at line 3000 | 1.9 | 322 |  |
-| `:r T.TXT` of 24 K, at line 3000 | 26.9 | 322 |  |
+| `:r T.TXT` of 24 K, at line 3000 | 26.8 | 322 |  |
 
 ## Memory and work files
 
 | | |
 |---|---|
 | BDOS entry, the word at 0006H | B606H |
-| arena, from the top of the program to the BDOS | 26989 bytes (4C98H-B605H) |
+| arena, from the top of the program to the BDOS | 26922 bytes (4CDBH-B605H) |
 | text in memory when the file is opened | 2048 bytes |
 | undo region, taken out of the arena | 1024 bytes |
 | text in memory after `6000G` `G` `6000G` `gg` `G` | 12288, 16640, 24832, 24576, 22528 bytes |

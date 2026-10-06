@@ -29,7 +29,7 @@ back to one of them.
   between the top of the program and the BDOS (`BUFEND = [0006H] - 1`; WM's
   `INIT` stops 7 pages lower only when that vector's low byte is not 06H, which
   is something loaded under the BDOS, a debugger for one). With a 56 K CP/M it
-  is 26,989 bytes in this build. **Every byte of the image comes out of
+  is 26,922 bytes in this build. **Every byte of the image comes out of
   the arena**, so the binary is the scarce resource. Commands are priced in
   bytes before they are built, and a command that earns too little gets cut.
 - **The console is a 9600-baud serial line**, about 960 characters a second. A
@@ -171,8 +171,8 @@ move would break:
               pointer row, text + gap, Q-buffer (the yank register), undo region
     BUFEND  = BDOS base - 1   (B605H with a 56 K CP/M; see section 1)
 
-In this build: the image is 18549 bytes, the `.COM` file 18560 bytes (145
-records), the reserve block 803 bytes (`4975H`–`4C97H`), and the stack 128
+In this build: the image is 18616 bytes, the `.COM` file 18688 bytes (146
+records), the reserve block 803 bytes (`49B8H`–`4CDAH`), and the stack 128
 bytes. **The size that matters is a 4 K BLOCK BOUNDARY**, because that is what
 the 8 MB disk allocates in: 16384 bytes occupy four blocks and one byte more
 occupies five. This build is past that line by design (`f F t T ; ,` would not
