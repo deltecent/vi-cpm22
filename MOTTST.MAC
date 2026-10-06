@@ -28,7 +28,7 @@
 
 	PUBLIC	BCONST, BCONIN, BCONOU
 	PUBLIC	NEDIT, WINROW		; CMD.MAC's screen EXTRNs (no renderer here)
-	PUBLIC	SCBOT, SCEOF, SCBOF, WFILL
+	PUBLIC	SCBOT, SCEOF, SCBOF, PLACE
 	PUBLIC	SKIPR, TALLF
 	PUBLIC	TXEND, CSUB, HTBLD	; ... and its row table (never built here)
 	PUBLIC	EXPRM, EXRUB, OUTCH	; CMD.MAC's ':' line echo (no renderer here)
@@ -172,7 +172,7 @@ WINROW: DW	0		; SCRN.MAC stubs: row 0 at the top of the file
 SCBOT:	DB	2		; last text row
 SCEOF:	DB	1		; the whole file is on the screen
 SCBOF:	DB	1
-WFILL:	DB	0
+PLACE:	DB	0
 TXEND:	DB	1
 CSUB:	DB	0
 SKIPR:	DW	0

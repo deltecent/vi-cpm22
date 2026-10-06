@@ -402,6 +402,19 @@ Detail is in `RENDER.md`. The design decisions:
   `WINROW` counts the lines above the cursor's, and the layout measures them
   into rows. (Issue #25 is this change, in steps; `RENDER.md` is rewritten at
   its last.)
+- **The screen is one table.** The lines about the cursor are measured once a
+  frame (`HTBLD`) into the row table, a byte a line saying how many rows it
+  takes. Everything else is arithmetic on that: which line is the top one (as
+  many of the lines wanted above the cursor's as leave its whole line room),
+  vim's test for a line just off the screen, the centring, how far down the
+  text goes and where it is cut. Nothing reads the text a second time to place
+  it, and nothing starts over. `H M L` read the same table as it stands; the
+  scrolls build a wider one with the same routine. A command says what it
+  wants of the next layout in one byte, `PLACE`: the cursor only moved
+  (`PL_ASK`, and vim's rule decides), the command set the lines above it
+  (`PL_SET`), or mid-screen (`PL_MID`). The table holds the lines above and a
+  screenful of rows below, so placement is exact on a terminal of up to 127
+  rows; on a taller one a far jump is measured with fewer lines above.
 - **A line taller than the screen is shown from the row that keeps the cursor
   on it.** `SKIPR` is the rows of the top line that are off the top (vim's
   `w_skipcol`), and the rule is vim's `curs_columns` with 'scrolloff' 0: it
@@ -409,7 +422,10 @@ Detail is in `RENDER.md`. The design decisions:
   enough to make that row the first or the last. `<<<` over the first cells
   says rows are missing, as vim's does. Any other line is shown whole or not
   at all, so the number is zero unless the cursor is in such a line, and a
-  scroll never leaves it set: `^D` from one goes on to the next line.
+  scroll never leaves it set: `^D` from one goes on to the next line. The
+  rule lives in `HTBLD`, where the cursor's line is read, and the layout gives
+  the number up in one place: when the cursor changed line or the command
+  placed it.
 - **Where vim counts screen rows, so does this.** Once lines differ in height
   vim's `^F ^B ^D ^U`, its `M`, and its choice between scrolling up to a line
   below the screen and centring it are all sums of rows, and they are

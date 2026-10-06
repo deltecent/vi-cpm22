@@ -85,6 +85,12 @@
                          C      ; edit lowers it to R_LINE so only the current row is redrawn.  A mistag can
                          C      ; therefore only cost an unnecessary full repaint, never leave stale text.
                          C      ;------------------------------------------------------------
+                         C      ; PLACE -- what a command asks of the next layout (SCRN.MAC), cleared by it.
+  0000                   C      PL_ASK	EQU	0		; the cursor only moved: is its line on the screen
+                         C      				;   still, near it, or far off? (vim's rule)
+  0001                   C      PL_SET	EQU	1		; the command set the lines above it (WINROW)
+  0002                   C      PL_MID	EQU	2		; mid-screen, as the rows fall
+                         C      
   0000                   C      R_FULL	EQU	0		; edit area may be stale -> full repaint (SCDRAW)
   0001                   C      R_MOVE	EQU	1		; cursor moved only -> reposition (if viewport stable)
   0002                   C      R_LINE	EQU	2		; current line changed only -> redraw that one row
@@ -110,15 +116,15 @@
   0004                   C      MW_BIG	EQU	4		; the yank register cannot hold that
                          C      
   0028                   C      EXMAX	EQU	40		; max chars on the ':' ex command line
+	MACRO-80 3.44	09-Dec-81	PAGE	1-2
+
+
                          C      
                          C      ;------------------------------------------------------------
                          C      ; RESERVE BLOCK -- sizes of storage that RSV.MAC holds above the linked image
                          C      ; on behalf of another module.  They live here, not in the module that uses
                          C      ; the storage, so the module and RSV.MAC cannot disagree about a size.
                          C      ;------------------------------------------------------------
-	MACRO-80 3.44	09-Dec-81	PAGE	1-2
-
-
   0080                   C      DOTMAX	EQU	128		; keys one recorded change may hold (see '.')
   0020                   C      KBRSIZ	EQU	32		; KEY.MAC's type-ahead ring (a power of two)
   0003                   C      MKMAX	EQU	3		; marks 'a'-'c' -- three is enough (COMMANDS.md)
@@ -169,15 +175,15 @@
   0034'   32 0000*              	STA	RINTENT
   0037'   CD 0000*              	CALL	CMDDIS			; dispatch through the vi core (may set R_MOVE)
   003A'   3A 0000*              	LDA	QUITF
+	MACRO-80 3.44	09-Dec-81	PAGE	1-3
+
+
   003D'   B7                    	ORA	A
   003E'   C2 004D'              	JNZ	MQUIT			; quitting: do not repaint what we are leaving
   0041'   CD 0000*              	CALL	SCDRAW			; repaint: full, or cursor-only for a still motion
   0044'   CD 0000*              	CALL	MODEMS			; '-- INSERT --' when the mode changed
   0047'   CD 0000*              	CALL	MSGPST			; ... or whatever this key asked to say
   004A'   C3 002C'              	JMP	MLOOP
-	MACRO-80 3.44	09-Dec-81	PAGE	1-3
-
-
   004D'                         MQUIT:
   004D'   CD 0000*              	CALL	SCDONE			; restore the terminal
   0050'   C3 0000               	JMP	WBOOT			; back to CP/M
@@ -203,7 +209,8 @@ Symbols:
 0004 	MKSIZ           002C'	MLOOP           0045*	MODEMS          
 004D'	MQUIT           0048*	MSGPST          0004 	MW_BIG          
 0003 	MW_CTG          0001 	MW_FIL          0000 	MW_NON          
-0002 	MW_WRT          0000 	NUL             003B*	QUITF           
+0002 	MW_WRT          0000 	NUL             0000 	PL_ASK          
+0002 	PL_MID          0001 	PL_SET          003B*	QUITF           
 0035*	RINTENT         0003 	R_DLIN          0000 	R_FULL          
 0004 	R_ICH           0005 	R_ILIN          0006 	R_JOIN          
 0002 	R_LINE          0001 	R_MOVE          004E*	SCDONE          

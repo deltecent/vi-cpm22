@@ -98,6 +98,12 @@
                          C      ; edit lowers it to R_LINE so only the current row is redrawn.  A mistag can
                          C      ; therefore only cost an unnecessary full repaint, never leave stale text.
                          C      ;------------------------------------------------------------
+                         C      ; PLACE -- what a command asks of the next layout (SCRN.MAC), cleared by it.
+  0000                   C      PL_ASK	EQU	0		; the cursor only moved: is its line on the screen
+                         C      				;   still, near it, or far off? (vim's rule)
+  0001                   C      PL_SET	EQU	1		; the command set the lines above it (WINROW)
+  0002                   C      PL_MID	EQU	2		; mid-screen, as the rows fall
+                         C      
   0000                   C      R_FULL	EQU	0		; edit area may be stale -> full repaint (SCDRAW)
   0001                   C      R_MOVE	EQU	1		; cursor moved only -> reposition (if viewport stable)
   0002                   C      R_LINE	EQU	2		; current line changed only -> redraw that one row
@@ -110,15 +116,15 @@
                          C      ; EDITOR MODES (EDMODE)
                          C      ;------------------------------------------------------------
   0000                   C      EM_CMD	EQU	0		; command mode (default)
+	MACRO-80 3.44	09-Dec-81	PAGE	1-2
+
+
   0001                   C      EM_INS	EQU	1		; insert mode
   0002                   C      EM_REP	EQU	2		; replace mode ('R')
   0003                   C      EM_EX	EQU	3		; ex command line (transient, inside VC_EX)
                          C      
                          C      ; THE MESSAGE THE BOTTOM ROW STILL OWES (MSGWHT).  A message is drawn after the
                          C      ; frame, never during the command, because a full repaint blanks that row.
-	MACRO-80 3.44	09-Dec-81	PAGE	1-2
-
-
   0000                   C      MW_NON	EQU	0		; nothing to say
   0001                   C      MW_FIL	EQU	1		; the file just opened
   0002                   C      MW_WRT	EQU	2		; ':w' wrote it
@@ -169,15 +175,15 @@
   00FF                          RVHTN	EQU	255		; HTAB:    a byte a line; SCRN.MAC HTPUT drops
                                 				;          a 256th
                                 ;MKSAV is a copy of MKTAB that CMD.MAC makes and restores with COPY12.
+	MACRO-80 3.44	09-Dec-81	PAGE	1-3
+
+
                                 ;CHECK VI.INC MKMAX*MKSIZ = 12
                                 
                                 ;--- Layout, as offsets from the image top ----------------------------------
                                 ;Plain constants, so no relocatable symbol is ever used to build another.
                                 ;DOTBUF must follow DOTSCR: the '.' overflow test walks one into the other.
   0000                          RVSTK	EQU	0
-	MACRO-80 3.44	09-Dec-81	PAGE	1-3
-
-
   0080                          RVDOTS	EQU	RVSTK+RVSTKN
   0100                          RVDOTB	EQU	RVDOTS+DOTMAX
   0180                          RVFNM	EQU	RVDOTB+DOTMAX
@@ -234,7 +240,8 @@ Symbols:
 0004 	MKSIZ           030BI'	MKTAB           0323I'	MKUND           
 0004 	MW_BIG          0003 	MW_CTG          0001 	MW_FIL          
 0000 	MW_NON          0002 	MW_WRT          0000 	NUL             
-018FI'	PLUSB           0000'	RSVBAS          042EI'	RSVTOP          
+018FI'	PLUSB           0000 	PL_ASK          0002 	PL_MID          
+0001 	PL_SET          0000'	RSVBAS          042EI'	RSVTOP          
 0100 	RVDOTB          0080 	RVDOTS          0195 	RVEXB           
 0180 	RVFNM           000C 	RVFNMN          032F 	RVHTB           
 00FF 	RVHTN           01BE 	RVKBR           0317 	RVMKS           

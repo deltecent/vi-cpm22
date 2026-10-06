@@ -52,6 +52,12 @@ TABWID	EQU	8		; tab stop interval (display only)
 ; edit lowers it to R_LINE so only the current row is redrawn.  A mistag can
 ; therefore only cost an unnecessary full repaint, never leave stale text.
 ;------------------------------------------------------------
+; PLACE -- what a command asks of the next layout (SCRN.MAC), cleared by it.
+PL_ASK	EQU	0		; the cursor only moved: is its line on the screen
+				;   still, near it, or far off? (vim's rule)
+PL_SET	EQU	1		; the command set the lines above it (WINROW)
+PL_MID	EQU	2		; mid-screen, as the rows fall
+
 R_FULL	EQU	0		; edit area may be stale -> full repaint (SCDRAW)
 R_MOVE	EQU	1		; cursor moved only -> reposition (if viewport stable)
 R_LINE	EQU	2		; current line changed only -> redraw that one row

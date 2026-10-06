@@ -67,7 +67,7 @@
 	EXTRN	CBOL, CURDCL			; SCRN.MAC -- cursor column ('^G')
 	EXTRN	NEWFIL				; PAGE.MAC -- the file was not there
 	EXTRN	NEDIT, WINROW			; SCRN.MAC -- edit rows / cursor line's row
-	EXTRN	SCBOT, SCEOF, SCBOF, WFILL	; SCRN.MAC -- last layout (H/M/L, scrolls)
+	EXTRN	SCBOT, SCEOF, SCBOF, PLACE	; SCRN.MAC -- last layout (H/M/L, scrolls)
 	EXTRN	SKIPR, TALLF		; a top line taller than the screen
 	EXTRN	TXEND, CSUB, HTBLD		; ... its rows of text, the cursor's row
 						;   in its line, and the row table
@@ -2500,7 +2500,7 @@ CRW_0:
 	RET
 
 ;SETRWT -- A = lines: the next layout puts that many above the cursor's, and
-; does not ask whether the line has gone far (WFILL).
+; does not ask whether the line has gone far (PLACE).
 SETRWT:
 	LHLD	LNDLT
 	XCHG
@@ -2508,8 +2508,8 @@ SETRWT:
 	MVI	H,0
 	CALL	SUBHD		; HL = lines - LNDLT
 	SHLD	WINROW
-	MVI	A,1
-	STA	WFILL
+	MVI	A,PL_SET
+	STA	PLACE
 	RET
 
 ;MVROW -- A = row: cursor to the start of the line on that row (the cursor's
@@ -2551,13 +2551,7 @@ VH_GO:
 ; whose rows, with those above it, come to half of them); count ignored.
 VC_MIDL:
 	CALL	MOVCNT		; a cursor motion; the count is discarded
-	LDA	NEDIT
-	ORA	A
-	RAR
-	INR	A
-	MOV	C,A		; (the middle is no farther down than that)
-	XRA	A
-	CALL	HTSET
+	CALL	HTSCR		; HL -> the top line's rows
 	LDA	TXEND
 	INR	A
 	ORA	A
@@ -3005,6 +2999,12 @@ VHU_C:
 ;        above it
 ;HTPT -- A = an entry's index: HL -> it, B = the entries from it on, E = A.
 ; Keeps C.
+;HTSCR -- the table as the last layout left it, which is the screen's own:
+; HL, B and E as HTSET gives them, and nothing measured.
+HTSCR:
+	CALL	CURRW
+	MOV	B,A
+	JMP	HS_TP
 HTSET:
 	MOV	B,A
 	CALL	CURRW		; (keeps BC)
@@ -3013,6 +3013,7 @@ HTSET:
 	MOV	B,A
 	CALL	HTRB
 	POP	B		; B = the lines from the top one to the cursor's
+HS_TP:
 	LDA	HTCUR
 	SUB	B
 	STA	HTTP
@@ -3272,7 +3273,7 @@ VC_REDR:
 ; window: a line already on the screen keeps the window; one up to NEDIT/2+1
 ; lines below it goes on the bottom row, one up to NEDIT/2-2 lines above it on
 ; the top row; anything farther goes on the middle row, the rows filled from
-; above at the end of the file (WFILL) and clamped at its start (LAYOUT).
+; above at the end of the file (PLACE) and clamped at its start (LAYOUT).
 ; GZONE notes the screen's top line before the move, GPLACE measures the
 ; target against it after.  Both count lines with WM's LINPSB / RGET.
 ;============================================================
@@ -3499,12 +3500,14 @@ GP_RN:
 	MOV	A,D
 	ORA	E
 	JNZ	GP_RD
-	XRA	A		; the top row
+	MVI	A,PL_SET	; the top row
+	STA	PLACE
+	XRA	A
 	JMP	GP_SET
 GP_MID:				; NOTE: falls through to GP_SET -- keep it
 				;   adjacent, the A it computes is the row
-	MVI	A,2
-	STA	WFILL		; SCRN.MAC WF_MID: mid-screen, as the rows fall
+	MVI	A,PL_MID
+	STA	PLACE		; mid-screen, as the rows fall
 	LDA	NEDIT
 	ORA	A
 	RAR			; (no more lines above it than this)
@@ -3514,7 +3517,6 @@ GP_SET:
 	SHLD	WINROW
 	LXI	H,0
 	SHLD	LNDLT
-	SHLD	SKIPR		; (another line: from its first row)
 	CALL	SETFUL		; the window may have paged: full repaint
 GP_FIN:
 	CALL	ZREST
