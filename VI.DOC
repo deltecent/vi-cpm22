@@ -198,7 +198,7 @@ stops a move or a search before then (see below).
 The limits:
 
     Memory      The text in memory, the yank register and the undo share
-                27053 bytes (about 26 K, with a 56 K CP/M).  About 2 K of
+                26989 bytes (about 26 K, with a 56 K CP/M).  About 2 K of
                 the file is read when it is opened, and up to 24 K is in
                 memory at once.
     Register    One, of whole lines, about 23 K.  What it holds is taken
@@ -241,7 +241,7 @@ ahead is dropped.  Going back has to page too, so it is not instant:
 
     G from line 1, ^C at 10 s   21 s   in all
     /text, not in the file     117 s
-      ... ^C at 10 s            18 s   in all
+      ... ^C at 10 s            17 s   in all
 
 A command that changes the text is not stopped: dG, :s, a put and :w run
 to the end, and the ^C is taken afterwards as a key that does nothing.
@@ -254,7 +254,7 @@ Big deletes and yanks, at line 6000:
 
     500dd      4 K   4.0 s          500yy      4 K   4.0 s
     2000dd    16 K    11 s
-    2800dd    22 K    13 s          2800yy    22 K    38 s
+    2800dd    22 K    13 s          2800yy    22 K    39 s
     d6500G     4 K   3.1 s
     d9000G    24 K    18 s
     dG        54 K    50 s
@@ -267,7 +267,7 @@ What is refused:
     because the lines are taken and then put back.
   * A yank, or a delete of part of a line, between two places that are
     not both in memory rings the bell and does nothing.  yG at line 6000
-    takes 44 s to find that out.
+    takes 43 s to find that out.
   * u after a change of more than 1024 bytes says "Too large to undo".
     100dd of 8-byte lines can be undone; 500dd and d6500G (4 K each)
     cannot.
@@ -281,9 +281,9 @@ What to do instead:
     no size is refused -- and nothing but :e! brings the lines back.
   * To MOVE or COPY a big block, write it to a file and read it back in
     (see YANK AND PUT).  :6000,9000w T.TXT is 31 s for 24 K and
-    :r T.TXT is 26 s.  That is any size, with the block still on the
+    :r T.TXT is 27 s.  That is any size, with the block still on the
     disk afterwards.  To move a block that fits the register, 2800dd
-    and P are quicker (13 s and 9.3 s); to copy one, 2800yy is not.
+    and P are quicker (13 s and 9.4 s); to copy one, 2800yy is not.
   * Type :w before a change that cannot be undone.  The file on the disk
     is not touched until the next :w, so :e! then throws the change away,
     and each :w leaves the version before it in NAME.BAK.
