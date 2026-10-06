@@ -2,7 +2,7 @@
 
 Written by `python3 covmap.py --write`; do not edit. Measured on a `VI.COM` of 18688 bytes by running `accept_vi.py` unchanged with a recorder in the simulator driver (`covmap.py` says how).
 
-The suite started **1340 editors** and made **6769 checks** in **65428 emulated seconds**. `VI.COM` has **1778 basic blocks** of code (17136 bytes); the suite ran **1697** of them (95.4 %, 16730 bytes).
+The suite started **1340 editors** and made **6843 checks** in **65436 emulated seconds**. `VI.COM` has **1778 basic blocks** of code (17134 bytes); the suite ran **1697** of them (95.4 %, 16728 bytes).
 
 A block that ran is not a block that is tested: every bug in issue #3 was in code the suite ran on every pass, reached in a state no test put it in. So this table can show a test is NOT looking somewhere, and that two tests walk the same code; it cannot show that either of them is enough. The operator table below is the other half -- states, not code.
 
@@ -13,15 +13,15 @@ A block that ran is not a block that is tested: every bug in issue #3 was in cod
 | group | editors | checks | emulated s | of the suite | blocks run | only here | bytes only here |
 |---|---|---|---|---|---|---|---|
 | `file` | 25 | 346 | 5546 | 8.5 % | 985 | 14 | 112 |
-| `opmx` | 245 | 1111 | 4939 | 7.5 % | 1095 | 3 | 23 |
+| `opmx` | 245 | 1185 | 4939 | 7.5 % | 1086 | 3 | 23 |
 | `pgop` | 64 | 176 | 4885 | 7.5 % | 1107 | 6 | 81 |
 | `subst` | 43 | 125 | 4563 | 7.0 % | 830 | 2 | 12 |
 | `ops` | 95 | 285 | 4391 | 6.7 % | 1017 | 0 | 0 |
 | `ins` | 44 | 156 | 3537 | 5.4 % | 810 | 9 | 106 |
 | `100k` | 18 | 101 | 3334 | 5.1 % | 893 | 0 | 0 |
-| `marks` | 148 | 506 | 3040 | 4.6 % | 1203 | 0 | 0 |
+| `marks` | 148 | 506 | 3040 | 4.6 % | 1204 | 0 | 0 |
 | `srch` | 58 | 209 | 2899 | 4.4 % | 838 | 0 | 0 |
-| `limits` | 34 | 72 | 2695 | 4.1 % | 1007 | 8 | 26 |
+| `limits` | 34 | 72 | 2703 | 4.1 % | 1007 | 8 | 26 |
 | `after` | 21 | 792 | 2268 | 3.5 % | 1402 | 1 | 6 |
 | `undo` | 51 | 174 | 2033 | 3.1 % | 1049 | 1 | 7 |
 | `40k` | 18 | 101 | 1956 | 3.0 % | 898 | 0 | 0 |
@@ -57,12 +57,12 @@ The same, per function `main()` calls. "needed" is how many of its editors a min
 | `subst: subst_like_vim` | 37 | 84 | 4249 | 763 | 0 | 0 | 0 |
 | `file: file_cmds` | 16 | 164 | 4225 | 859 | 13 | 6 | 388 |
 | `ops: ops_like_vim` | 69 | 229 | 3188 | 917 | 0 | 2 | 37 |
-| `opmx: opmx_like_vim` | 127 | 875 | 2734 | 1086 | 2 | 7 | 145 |
-| `limits: limits_cmds` | 34 | 72 | 2695 | 1007 | 8 | 8 | 1748 |
+| `opmx: opmx_like_vim` | 127 | 949 | 2733 | 1077 | 2 | 6 | 124 |
+| `limits: limits_cmds` | 34 | 72 | 2703 | 1007 | 8 | 8 | 1756 |
 | `after: after_cmds` | 21 | 792 | 2268 | 1402 | 1 | 4 | 203 |
 | `srch: srch_like_vim` | 49 | 168 | 2213 | 667 | 0 | 2 | 36 |
 | `ins: ins_cmds` | 13 | 19 | 2112 | 785 | 2 | 4 | 37 |
-| `marks: marks_cmds` | 95 | 216 | 2038 | 1167 | 0 | 14 | 97 |
+| `marks: marks_cmds` | 95 | 216 | 2038 | 1169 | 0 | 14 | 97 |
 | `opmx: word_like_vim` | 92 | 184 | 1722 | 899 | 1 | 1 | 19 |
 | `mot: mot_like_vim` | 37 | 514 | 1713 | 737 | 1 | 5 | 39 |
 | `full: disk_full` | 4 | 20 | 1648 | 660 | 6 | 2 | 36 |
@@ -81,7 +81,7 @@ The same, per function `main()` calls. "needed" is how many of its editors a min
 | `marks: marks_like_vim` | 53 | 290 | 1002 | 891 | 0 | 0 | 0 |
 | `40k: write_continue 40k` | 3 | 15 | 913 | 771 | 0 | 0 | 0 |
 | `goto: goto_like_vim` | 29 | 92 | 863 | 620 | 0 | 0 | 0 |
-| `find: find_like_vim` | 45 | 169 | 859 | 763 | 0 | 1 | 19 |
+| `find: find_like_vim` | 45 | 169 | 859 | 763 | 0 | 2 | 38 |
 | `hml: hml_like_vim` | 30 | 329 | 834 | 671 | 0 | 1 | 6 |
 | `2k: write_continue 2k` | 3 | 15 | 764 | 755 | 0 | 0 | 0 |
 | `rdwr: rdwr_cmds` | 6 | 77 | 677 | 900 | 3 | 3 | 66 |
@@ -139,7 +139,7 @@ The same, per function `main()` calls. "needed" is how many of its editors a min
 
 ## How few editors run the same code
 
-**106 of the 1340 editors** between them run every block the whole suite runs, in **4841 of 65428 emulated seconds** (7.4 %). They are picked greedily, most new code per emulated second first.
+**106 of the 1340 editors** between them run every block the whole suite runs, in **4847 of 65436 emulated seconds** (7.4 %). They are picked greedily, most new code per emulated second first.
 
 That is a floor under the suite, not a suite: the other 1234 editors run no code of their own, but they run it on other text, at other sizes and in other orders, and that is where the bugs were.
 
@@ -152,7 +152,7 @@ Blocks run at each size of file, and how many of them run at no other size.
 | empty | 38 | 3100 | 4.7 % | 1031 | 2 |
 | under 2 K | 780 | 13211 | 20.2 % | 1531 | 39 |
 | 2-24 K | 41 | 1705 | 2.6 % | 1139 | 8 |
-| over 24 K | 481 | 47412 | 72.5 % | 1641 | 65 |
+| over 24 K | 481 | 47420 | 72.5 % | 1641 | 65 |
 
 ## The size sweeps
 
@@ -198,7 +198,7 @@ The twenty longest editors outside the minimal set above. Each is a candidate fo
 
 ## Operator x motion x paging
 
-Every time an operator met a motion in the editor (`OPPEND`), read out of the editor itself: the operator, the key after it, and whether the window paged before the next key was read. Each cell is the number of times it happened in the whole suite; **0** is a cell no test enters, `-` a pair the editor does not accept (`c` takes no linewise motion, `y` takes only linewise ones), and `.` a motion that cannot leave the window, so cannot page. A "paged" cell can stay at 0 with a test on it: a charwise span the window does not hold is refused before the window moves (`pgop` checks the refusals), and `e` does not page at all (#23).
+Every time an operator met a motion in the editor (`OPPEND`), read out of the editor itself: the operator, the key after it, and whether the window paged before the next key was read. Each cell is the number of times it happened in the whole suite; **0** is a cell no test enters, `-` a pair the editor does not accept (`c` takes no linewise motion, `y` takes only linewise ones), and `.` a motion that cannot leave the window, so cannot page. A "paged" cell can stay at 0 with a test on it: a charwise span the window does not hold is refused before the window moves (`pgop` checks the refusals).
 
 | motion | `d` | `d` paged | `c` | `c` paged | `y` | `y` paged |
 |---|---|---|---|---|---|---|
@@ -242,7 +242,7 @@ The stack is 128 bytes with the image directly below it. It is filled before eac
 | 66 | `dot` | `dot_like_vim` | `0dwj.:w\r\r\x1b\x1b:q!\r` |
 | 66 | `dot` | `dot_like_vim` | `3000Gdw.:w\r\r\x1b\x1b:q!\r` |
 | 66 | `find` | `find_like_vim` | `2Gdfa.:w\r\r\x1b\x1b:q!\r` |
-| 66 | `opmx` | `opmx_like_vim` | `4G7ld2wu4G7l2dwu4G7l.u4G7lc2w77\x1b:w\r\r\x1b\x1b:q!\r` |
+| 66 | `marks` | `marks_cmds` | `3Gmaggd'a.` |
 
 ## Code no test runs
 

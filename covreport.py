@@ -277,8 +277,7 @@ def report(out_dir):
              'ones), and `.` a motion that cannot leave the window, so cannot '
              'page. A "paged" cell can stay at 0 with a test on it: a charwise '
              'span the window does not hold is refused before the window '
-             'moves (`pgop` checks the refusals), and `e` does not page at '
-             'all (#23).')
+             'moves (`pgop` checks the refusals).')
     o.append('')
     tab = opctab()
     cells = collections.Counter()

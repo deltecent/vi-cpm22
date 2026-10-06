@@ -24,7 +24,7 @@ The seconds are the simulator's emulated clock (2 MHz 8080, 9600-baud console, t
 | `^G` at the end | 0.6 | 63 | "TEST.TXT" line 12800 col 1 |
 | `G` from the top, `^C` 10 s into it | 20.9 | 33 | Interrupted |
 | `/zzzz` from line 6000, never found | 117.0 | 61 | Pattern not found: zzzz |
-| `/zzzz` from line 6000, `^C` 10 s into it | 17.9 | 49 | Interrupted |
+| `/zzzz` from line 6000, `^C` 10 s into it | 18.1 | 49 | Interrupted |
 | `/012000` from the top | 45.7 | 321 |  |
 | `/000100` from line 6000 (wraps) | 65.0 | 321 |  |
 | `?000100` from line 6000 | 15.2 | 321 |  |
@@ -87,7 +87,7 @@ The seconds are the simulator's emulated clock (2 MHz 8080, 9600-baud console, t
 | | |
 |---|---|
 | BDOS entry, the word at 0006H | B606H |
-| arena, from the top of the program to the BDOS | 26922 bytes (4CDBH-B605H) |
+| arena, from the top of the program to the BDOS | 26924 bytes (4CD9H-B605H) |
 | text in memory when the file is opened | 2048 bytes |
 | undo region, taken out of the arena | 1024 bytes |
 | text in memory after `6000G` `G` `6000G` `gg` `G` | 12288, 16640, 24832, 24576, 22528 bytes |
