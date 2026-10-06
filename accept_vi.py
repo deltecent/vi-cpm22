@@ -3306,7 +3306,6 @@ for _issue, _rows in (
         (12, [('4G7l', 'dw'), ('4G7l', 'd2w'), ('4G7l', 'dW'), ('4G7l', 'd2W')]),
         (13, [('G$', 'dw'), ('G$', 'dW'), ('G$', 'dl')]),
         (14, [('gg0', 'db'), ('gg0', 'dB')]),
-        (15, [('3G', 'db'), ('3G', 'dB')]),
         (19, [('4G7l', 'ygg'), ('gg0', 'ygg'), ('G$', 'ygg'), ('4G7l', 'd2gg')]
          + [(MK + p, o + m) for p in ('4G7l', 'gg0', 'G$')
             for o, m in (('d', '`a'), ('d', '`b'), ('y', "'a"), ('y', "'b"))])):
@@ -3354,6 +3353,48 @@ def opmx_like_vim():
                 check(f'vim opmx {keys!r}: still not vim\'s, as issue #{issue} '
                       f'says -- if this fails the issue is fixed: take the row '
                       f'out of OPMX_OPEN', bool(diffs))
+        finally:
+            e.close()
+
+
+
+# A span that ends in a line's first column (vim ':help exclusive'): it stops
+# at the end of the line before, and if it also starts at or before its own
+# line's first non-blank it is whole lines.  (keys, the file vim 9.1 wrote,
+# vim's cursor line and column), on COL1_TEXT; the mark rows are the same rule
+# met by a jump, from either end.
+COL1_TEXT = b'aa bb\r\n  word\r\n  Xy z\r\n'
+VIM_COL1 = [
+    (['G0', 'db'], b'aa bb\r\n  Xy z\r\n', (1, 2)),
+    (['G0', 'cbqq\x1b'], b'aa bb\r\nqq\r\n  Xy z\r\n', (1, 1)),
+    (['G0', 'd2b'], b'aa \r\n  Xy z\r\n', (0, 2)),
+    (['G0', 'd3b'], b'  Xy z\r\n', (0, 2)),
+    (['G0', 'ma', 'gg', 'd`a'], b'  Xy z\r\n', (0, 2)),
+    (['G0', 'ma', 'gg3l', 'd`a'], b'aa \r\n  Xy z\r\n', (0, 2)),
+    (['gg3l', 'ma', 'G0', 'd`a'], b'aa \r\n  Xy z\r\n', (0, 2)),
+    (['gg', 'ma', 'G0', 'd`a'], b'  Xy z\r\n', (0, 2)),
+    (['2G0', 'ma', 'G0', 'd`a'], b'aa bb\r\n  Xy z\r\n', (1, 2)),
+]
+
+
+def col1_like_vim():
+    """A span ending in a line's first column goes as vim takes it."""
+    for keys, want, cur in VIM_COL1:
+        e = Editor(COL1_TEXT)
+        try:
+            for k in keys:
+                if k.endswith('\x1b'):
+                    send_keys(e, k[:-1])
+                    send_keys(e, '\x1b')
+                else:
+                    e.key(k)
+            v = e.screen()
+            check(f'vim col1 {keys!r}: cursor {(v.row, v.col)} == {cur}',
+                  (v.row, v.col) == cur)
+            e.key(':w\r')
+            got = saved_bytes(e)
+            check(f'vim col1 {keys!r}: file {got!r} as vim wrote it',
+                  got == want)
         finally:
             e.close()
 
@@ -8134,6 +8175,7 @@ def main():
     if not args or 'vim' in args or 'opmx' in args:
         print('\n=== every operator over every motion vs vim ===', flush=True)
         opmx_like_vim()
+        col1_like_vim()
     if not args or 'vim' in args or 'dot' in args:
         print('\n=== . (repeat) vs vim ===', flush=True)
         dot_like_vim()

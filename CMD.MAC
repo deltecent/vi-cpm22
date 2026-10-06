@@ -3346,14 +3346,14 @@ OPAPPL:
 	SHLD	OPLO
 	XCHG
 	SHLD	OPHI
-	JMP	OPA_DO
+	JMP	OPA_C1
 OPA_F:
 	XCHG			; HL = start, DE = end
 	SHLD	OPLO
 	XCHG			; HL = end
 	LDA	OPCLSV
 	CPI	3		; a JUMP ('`'): its end is exactly where it landed.
-	JZ	OPA_HI		;   OPA_EX below cuts an exclusive forward span back
+	JZ	OPA_JP		;   OPA_EX below cuts an exclusive forward span back
 				;   to the line's content end because that is what
 				;   vim's 'w' does under an operator -- but a jump
 				;   crosses line breaks, which is the whole point
@@ -3423,6 +3423,60 @@ OPA_DO:
 	CPI	'c'
 	RZ
 	JMP	CLAMPE
+;OPA_C1 -- a span that crosses lines and ends in a line's FIRST column: a
+; backward word ('db' from the start of a line) or a jump to a mark.  vim's
+; rule for an exclusive motion ending there (':help exclusive'):
+;   * the span stops at the end of the line before -- 'db' from a line's
+;     start takes the word and leaves the line break, where taking it joined
+;     the two lines;
+;   * and if it also STARTS at or before its line's first non-blank it is a
+;     span of whole lines, and goes as one: indent and all, the cursor on the
+;     next line's first non-blank.  A change keeps the emptied line to type on.
+; Both recorded from vim 9.1.
+OPA_JP:
+	SHLD	OPHI
+OPA_C1:
+	CALL	OPSPNL
+	MOV	A,H
+	ORA	L
+	JZ	OPA_DO		; nothing spanned
+	LHLD	OPHI
+	CALL	BOL
+	XCHG
+	LHLD	OPHI
+	CALL	CMP16		; DE = that line's start vs HL = hi
+	JNZ	OPA_DO		; it ends inside a line: as it stands
+	LHLD	OPLO
+	CALL	BOL
+C1_LP:
+	PUSH	H
+	XCHG
+	LHLD	OPLO
+	CALL	CMP16		; DE = the scan vs HL = lo
+	POP	H
+	JZ	C1_LW		; only blanks before lo: whole lines
+	PUSH	H
+	CALL	CHARAT
+	POP	H
+	INX	H
+	CPI	' '
+	JZ	C1_LP
+	CPI	TAB
+	JZ	C1_LP
+C1_CH:
+	LHLD	OPHI		; back over the line break to the content end
+	DCX	H		;   of the line before
+	CALL	CEND
+	SHLD	OPHI
+	JMP	OPA_DO
+C1_LW:
+	LHLD	OPLO
+	CALL	BOL
+	SHLD	OPLO
+	LDA	PSAVE
+	CPI	'c'
+	JZ	C1_CH
+	JMP	OPDLIN
 ;SPNBRK -- CY iff the span [OPLO,OPHI) takes a line break with it.  The first
 ; LF at or after OPLO ends the span's own line; the span reaches a break only
 ; if it runs past that one.  A span ending exactly ON it (OPHI = the LF's
