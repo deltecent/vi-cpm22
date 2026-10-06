@@ -402,6 +402,14 @@ Detail is in `RENDER.md`. The design decisions:
   `WINROW` counts the lines above the cursor's, and the layout measures them
   into rows. (Issue #25 is this change, in steps; `RENDER.md` is rewritten at
   its last.)
+- **A line taller than the screen is shown from the row that keeps the cursor
+  on it.** `SKIPR` is the rows of the top line that are off the top (vim's
+  `w_skipcol`), and the rule is vim's `curs_columns` with 'scrolloff' 0: it
+  moves only when the cursor's row would leave the screen, and then only far
+  enough to make that row the first or the last. `<<<` over the first cells
+  says rows are missing, as vim's does. Any other line is shown whole or not
+  at all, so the number is zero unless the cursor is in such a line, and a
+  scroll never leaves it set: `^D` from one goes on to the next line.
 - **Where vim counts screen rows, so does this.** Once lines differ in height
   vim's `^F ^B ^D ^U`, its `M`, and its choice between scrolling up to a line
   below the screen and centring it are all sums of rows, and they are

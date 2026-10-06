@@ -202,7 +202,7 @@ stops a move or a search before then (see below).
 The limits:
 
     Memory      The text in memory, the yank register and the undo share
-                25389 bytes (about 25 K, with a 56 K CP/M).  About 2 K of
+                25054 bytes (about 24 K, with a 56 K CP/M).  About 2 K of
                 the file is read when it is opened, and up to 24 K is in
                 memory at once.
     Register    One, of whole lines, about 21 K.  What it holds is taken

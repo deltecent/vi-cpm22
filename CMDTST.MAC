@@ -33,6 +33,7 @@
 	PUBLIC	BCONST, BCONIN, BCONOU	; KEY.MAC's + CMD.MAC's console EXTRNs
 	PUBLIC	NEDIT, WINROW		; CMD.MAC's screen EXTRNs (no renderer here)
 	PUBLIC	SCBOT, SCEOF, SCBOF, WFILL
+	PUBLIC	SKIPR, TALLF
 	PUBLIC	TXEND, CSUB, HTBLD	; ... and its row table (never built here)
 	PUBLIC	EXPRM, EXRUB, OUTCH	; CMD.MAC's ':' line echo (no renderer here)
 	PUBLIC	EXMSG, OUTSTR		; CMD.MAC's ex message (no renderer here)
@@ -112,6 +113,8 @@ SCBOF:	DB	1
 WFILL:	DB	0
 TXEND:	DB	1
 CSUB:	DB	0
+SKIPR:	DW	0
+TALLF:	DB	0
 DONE:	DB	0
 
 	DS	64

@@ -23,9 +23,10 @@ were all re-recorded from vim with `wrap`, and every one holds. Once lines
 wrap, vim counts screen ROWS for `^F` `^B` `^D` `^U`, for `M`, and for how far
 below the screen a line must be before a jump centres it; so does this editor
 (`accept_vi.py` group `wrap`, on a 84 K file of paragraphs 1 to 22 rows tall as
-well as the 200-column one). Still to come: a line taller than the whole
-screen shows only its first rows, and any edit on a screen with a wrapped line
-on it repaints the screen. Where a row below says a wide line "pans", read
+well as the 200-column one). A line taller than the whole screen is shown from
+the row that keeps the cursor on it, `<<<` over its first cells, exactly as
+vim's is (same group: files of 24- to 60-row lines, one of them 86 K). Still
+to come: any edit on a screen with a wrapped line on it repaints the screen. Where a row below says a wide line "pans", read
 "wraps".
 
 The vim comparisons are reproducible, not folklore: every "vs vim" table in

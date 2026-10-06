@@ -68,6 +68,7 @@
 	EXTRN	NEWFIL				; PAGE.MAC -- the file was not there
 	EXTRN	NEDIT, WINROW			; SCRN.MAC -- edit rows / cursor line's row
 	EXTRN	SCBOT, SCEOF, SCBOF, WFILL	; SCRN.MAC -- last layout (H/M/L, scrolls)
+	EXTRN	SKIPR, TALLF		; a top line taller than the screen
 	EXTRN	TXEND, CSUB, HTBLD		; ... its rows of text, the cursor's row
 						;   in its line, and the row table
 	EXTRN	HTAB				; RSV.MAC -- the row table itself
@@ -2815,6 +2816,9 @@ MS_SAT:
 VC_HFDN:
 	CALL	SETMOV
 	CALL	HFCNT		; HFN = the rows
+	LDA	TALLF
+	ORA	A
+	JNZ	VHD_TL
 	CALL	CURRW
 	MOV	B,A
 	LDA	SCEOF
@@ -2907,6 +2911,31 @@ HTLAND:
 HL_SET:
 	CALL	SETRWT
 	JMP	FNBLNK
+
+;--- the top line is taller than the screen, and the cursor in it: vim goes
+;    on scrolling until the next line is at the top, the cursor keeping its
+;    row of the screen ---
+VHD_TL:
+	LDA	SKIPR
+	MOV	B,A
+	LDA	CSUB
+	SUB	B		; A = that row
+	PUSH	PSW
+	LXI	H,1
+	CALL	JCORE		; (on the last line: nowhere to go)
+	POP	PSW
+	MOV	C,A
+	PUSH	B
+	INR	C
+	MVI	B,0
+	CALL	HTRB		; HL -> the rows of the line now the cursor's
+	SHLD	HFTP
+	POP	D
+	MOV	C,E
+	CALL	HTFQ
+	JNC	HFEND
+	DCX	H
+	JMP	HFEND
 
 ;VC_HFUP -- '^U': the text and the cursor up HFAMT ROWS (HFCNT), then the
 ; cursor's first non-blank.  vim's pagescroll (NOT WordMaster).  The text
@@ -3485,6 +3514,7 @@ GP_SET:
 	SHLD	WINROW
 	LXI	H,0
 	SHLD	LNDLT
+	SHLD	SKIPR		; (another line: from its first row)
 	CALL	SETFUL		; the window may have paged: full repaint
 GP_FIN:
 	CALL	ZREST

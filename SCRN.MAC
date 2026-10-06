@@ -42,7 +42,7 @@
 	INCLUDE VI.INC
 
 	PUBLIC	BCONST, BCONIN, BCONOU
-	PUBLIC	SCINIT, SCDRAW, SCDONE, SCPRE
+	PUBLIC	SCINIT, SCDRAW, SCDONE, SCPRE, SKIPR, TALLF
 	PUBLIC	EXPRM, EXRUB, OUTCH	; ':' / '/' line echo (CMD.MAC RDLINE)
 	PUBLIC	EXMSG, OUTSTR		; ex error message on the bottom row
 	PUBLIC	MODEMS			; the mode message ('-- INSERT --')
@@ -382,6 +382,8 @@ SCPRE:
 	SHLD	OLDWR
 	LDA	WRAPF
 	STA	OLDWF
+	LHLD	SKIPR
+	SHLD	OLDSK
 	RET
 
 SCDRAW:
@@ -389,6 +391,11 @@ SCDRAW:
 	CALL	CURSC		; SROW/SCOL
 	LDA	FORCEF		; a prior repaint aborted -> must repaint in full
 	ORA	A
+	JNZ	SCFULL
+	LHLD	OLDSK		; the top line starts on another of its rows:
+	XCHG			;   every row on the screen is a different one
+	LHLD	SKIPR
+	CALL	CMP16
 	JNZ	SCFULL
 	LDA	WRAPF		; the wrapping on this screen, or on the last
 	LXI	H,OLDWF
@@ -515,6 +522,8 @@ SCFULL:
 	CALL	GOTOP		; home to row 1
 	XRA	A
 	STA	PROWN
+	LHLD	SKIPR		; a line taller than the screen: from the row of
+	SHLD	PSKN		;   it that keeps the cursor on the screen
 ROW_LP:
 	CALL	KBRDY		; RPOLL: a key is waiting -> abort this repaint
 	ORA	A
@@ -529,6 +538,14 @@ ROW_LP:
 ROWS_DN:
 	;--- message row (now at NROWS, col 1): vim leaves it blank ---
 	CALL	CEKL
+	LHLD	SKIPR		; rows of the top line are off the top: '<<<'
+	MOV	A,H		;   over its first cells says so, as vim's does
+	ORA	L
+	JZ	ROWS_M
+	CALL	GOTOP
+	LXI	H,SSKIP
+	CALL	OUTSTR
+ROWS_M:
 	MVI	A,0FFH		; the row is blank now, so whatever message was
 	STA	OEDMOD		;   on it is gone: MODEMS must draw its own again
 	;--- address the real cursor (SROW/SCOL precomputed by CURSC) and show ---
@@ -826,11 +843,14 @@ CURSC:
 	STA	SCOL
 	MOV	A,C
 	STA	CSUB
+	LHLD	SKIPR
+	XCHG
 	LHLD	LYABV
 	DAD	B
 	INX	H
-	MOV	A,H		; (never past the edit rows: a line taller than
-	ORA	A		;   the screen shows its first rows only)
+	CALL	SUBHD		; (less the rows of it that are off the top)
+	MOV	A,H		; (never past the edit rows)
+	ORA	A
 	LDA	NEDIT
 	JNZ	CS_SET
 	CMP	L		; CY iff NEDIT < the row
@@ -912,8 +932,13 @@ LAYOUT:
 	CZ	LYFAR
 	LHLD	LNDLT
 	SHLD	LYDLT
+	MOV	A,H
+	ORA	L
 	LXI	H,0
 	SHLD	LNDLT
+	JZ	LY_SAM
+	SHLD	SKIPR		; another line: it starts with its first row
+LY_SAM:
 	LDA	WFILL
 	CPI	WF_MID
 	JZ	LY_MD
@@ -980,6 +1005,7 @@ LY_CUR:
 	STA	SCEOF
 	STA	LYEND
 	STA	LYXE
+	STA	TALLF
 	MVI	A,'~'
 	STA	FILCH
 	LHLD	CURDCL
@@ -988,6 +1014,46 @@ LY_CUR:
 	LDA	CURDCL
 	SUB	E
 	STA	LYVB		; the column the cursor's row starts at
+	;--- a line taller than the screen (vim's curs_columns, 'scrolloff'
+	;    0): it is the top line, and is shown from the row SKIPR -- which
+	;    moves only as far as keeps the cursor's row on the screen ---
+	PUSH	D		; (E: the cells used in the cursor's row)
+	LXI	H,0
+	LDA	LYROW
+	ORA	A
+	JNZ	LY_SKS		; under another line: whole, or not at all
+	LHLD	SKIPR
+	MOV	D,B
+	MOV	E,C
+	CALL	CMP16		; CY iff the cursor's row is above the first shown
+	XCHG			; HL = the cursor's row of the line, DE = SKIPR
+	JC	LY_SKS		; then that is the first
+	CALL	SUBHD		; HL = the rows from the first shown to it
+	MOV	A,H
+	ORA	A
+	JNZ	LY_SKD
+	LDA	NEDIT
+	DCR	A
+	CMP	L		; CY iff that is under the last edit row
+	XCHG			; HL = SKIPR, as it was
+	JNC	LY_SKS
+LY_SKD:
+	LDA	NEDIT		; then it is the last: SKIPR = its row - NEDIT + 1
+	CMA
+	MOV	L,A
+	MVI	H,0FFH
+	INX	H
+	INX	H
+	DAD	B
+LY_SKS:
+	SHLD	SKIPR
+	XCHG
+	MOV	H,B
+	MOV	L,C
+	CALL	SUBHD
+	MOV	B,H
+	MOV	C,L		; BC = the cursor's row of what is shown of it
+	POP	D
 	LHLD	LYABV
 	MOV	A,L
 	STA	LYLST		; (its line starts on this row)
@@ -1065,9 +1131,12 @@ LY_CUT:
 	LDA	LYLST
 	JMP	LY_END
 LY_TAL:
-	LDA	NEDIT		; a line taller than the screen: its first rows
+	MVI	A,1		; a line taller than the screen: as many rows of
+	STA	TALLF		;   it as there are
+	LDA	NEDIT
 	JMP	LY_END
 LY_FLF:
+	CALL	LYTLQ
 	CALL	LYLEND		; that line's rows are counted
 	LDA	NEDIT
 	CMP	D
@@ -1080,6 +1149,7 @@ LY_FUL:
 	MOV	A,D
 	JMP	LY_END
 LY_EOF:
+	CALL	LYTLQ
 	MVI	A,1
 	STA	SCEOF
 	LDA	LYEND		; text after the last line end -- or no line end
@@ -1136,6 +1206,38 @@ LY_W2:
 	SHLD	AUXCNT
 	LDA	SVDIR
 	STA	DIRFLG
+	RET
+
+;LYTLQ -- a line has ended on row D.  If it is the cursor's, shown from a row
+; of its own (SKIPR), and yet no taller than the screen -- it was, before an
+; edit -- it is shown whole after all: SKIPR = 0, and the layout starts over
+; (the return is dropped).  Keeps HL, BC, DE otherwise.
+LYTLQ:
+	LDA	LYEND
+	ORA	A
+	RNZ			; a line under the cursor's
+	PUSH	H
+	LHLD	SKIPR
+	MOV	A,H
+	ORA	A
+	JNZ	LQ_TL		; (256 rows off the top and more: it is taller)
+	ORA	L
+	JZ	LQ_RET
+	ADD	D		; SKIPR + D = its rows, less one
+	JC	LQ_TL
+	LXI	H,NEDIT
+	CMP	M
+	JNC	LQ_TL		; more than NEDIT of them
+	POP	H
+	POP	H
+	LXI	H,0
+	SHLD	SKIPR
+	JMP	LY_TOP
+LQ_TL:
+	MVI	A,1
+	STA	TALLF
+LQ_RET:
+	POP	H
 	RET
 
 ;FLINE -- read forward to the end of the line the reader (HL/BC, as RDGET
@@ -1244,6 +1346,18 @@ LYMID:
 	MVI	H,0
 	CALL	LINPSB		; as far up as the screen could ever reach
 	CALL	G2P
+	PUSH	H
+	LDA	NCOLS		; ... which is no more bytes than its rows hold,
+	ADI	2		;   a line end to each: lines above that are
+	MOV	L,A		;   bigger are no use here, and held in memory
+	MVI	H,0		;   they would leave no room to read down
+	LDA	NEDIT
+	CALL	MULHA
+	POP	D
+	CALL	CMP16		; CY iff there are fewer than that
+	JNC	LM_LIM
+	XCHG
+LM_LIM:
 	SHLD	LYLIM
 	INR	H
 	SHLD	WRLIM		; (and none of it spilled while reading down)
@@ -1792,6 +1906,57 @@ RSK_LP:
 	JNZ	RSK_LP
 	RET
 
+;PSKIP -- PROW, for the top line of a full repaint when rows of it are off
+; the top (HL = PSKN = SKIPR, not 0): pass over that many rows, and paint the
+; rest of the line.  A TAB across the last of them leaves its other cells on
+; the first row shown.
+PSKIP:
+	LDA	NCOLS
+	CALL	MULHA		; HL = the cells to pass over
+	XCHG
+	LXI	H,0
+	SHLD	PSKN
+PS_LP:
+	MOV	A,D
+	ORA	E
+	JZ	PR_LP
+	CALL	RDCH
+	CPI	CR
+	JZ	PS_LP
+	MVI	C,1
+	CPI	TAB
+	CZ	TABN
+PS_CL:
+	MOV	A,D
+	ORA	E
+	JZ	PRTBLP		; (only a TAB gets here with cells to go)
+	DCX	D
+	LXI	H,DCOL
+	INR	M
+	DCR	C
+	JNZ	PS_CL
+	JMP	PS_LP
+
+;MULHA -- HL = HL * A (A not 0).  Clobbers DE.
+MULHA:
+	XCHG
+	LXI	H,0
+MH_LP:
+	DAD	D
+	DCR	A
+	JNZ	MH_LP
+	RET
+
+;TABN -- C = the cells a TAB at column DCOL takes (1..8).
+TABN:
+	LDA	DCOL		; spaces = 8 - (dcol mod 8)
+	ANI	7
+	MOV	C,A
+	MVI	A,8
+	SUB	C
+	MOV	C,A
+	RET
+
 ;PAINTR -- paint from screen row PROWN: the reader's line, on as many rows as
 ; it takes, or the fill char on a row past the text ('~'; '@' where a line did
 ; not fit).  The reader must be at that row's line.  Row already cleared.
@@ -1810,6 +1975,10 @@ PROW:
 	XRA	A
 	STA	DCOL
 	STA	XC
+	LHLD	PSKN
+	MOV	A,H
+	ORA	L
+	JNZ	PSKIP
 PR_LP:
 	CALL	RDCH
 	RC			; end of text -> line done
@@ -1822,12 +1991,7 @@ PR_LP:
 	CALL	PCELL
 	JMP	PR_LP
 PR_TAB:
-	LDA	DCOL		; spaces = 8 - (dcol mod 8)
-	ANI	7
-	MOV	C,A
-	MVI	A,8
-	SUB	C
-	MOV	C,A		; C = space count (1..8)
+	CALL	TABN		; C = space count (1..8)
 PRTBLP:
 	MVI	A,' '
 	CALL	PCELL		; (keeps C)
@@ -1938,6 +2102,7 @@ SREGRS: DB	ESC,'[','r',0
 SINSM:	DB	'-','-',' ','I','N','S','E','R','T',' ','-','-',0
 SREPM:	DB	'-','-',' ','R','E','P','L','A','C','E',' ','-','-',0
 SNULL:	DB	0
+SSKIP:	DB	'<','<','<',0
 
 ;============================================================
 ; DATA
@@ -1951,6 +2116,10 @@ OLDWR:	DW	0		; WINROW as displayed before this frame
 WRAPF:	DB	0		; this frame: 0, 1 = a line wraps, WR_EOL and up =
 				;   ... and the cursor has a row to itself
 OLDWF:	DB	0		; WRAPF as displayed before this frame
+SKIPR:	DW	0		; rows of the top line that are off the top (a
+				;   line taller than the screen; vim's w_skipcol)
+OLDSK:	DW	0		; SKIPR as displayed before this frame
+TALLF:	DB	0		; 1 = the top line is taller than the screen
 SCRLN:	DW	0		; lines the text moved up this frame (signed)
 FORCEF: DB	0		; 1 = an aborted frame is pending -> force full repaint
 OEDMOD: DB	EM_CMD		; the mode the bottom row last showed (0FFH: unknown)
@@ -2000,6 +2169,7 @@ RDSEG:	DB	0		; reader: 1 once reading after the gap
 SKPN:	DB	0		; RDSKIP line count
 PROWN:	DB	0		; screen row being painted (0-based)
 SCLN:	DB	0		; region-scroll line count (N, 1..NEDIT-1)
+PSKN:	DW	0		; PROW: rows of the line to pass over first
 DCOL:	DB	0		; column in the line while painting (low byte)
 XC:	DB	0		; cells used in the row being painted
 ROWCT:	DB	0		; RI count (SCBWD)

@@ -120,9 +120,16 @@ def curs(e, v):
     virtcol('.')-1 is CURDCL itself.  The cell the terminal was sent to must
     agree with that, or the column comes back as -1 and no row matches."""
     dc = int.from_bytes(bytes(e.s.mem(SYM['CURDCL'], 2)), 'little')
-    if v.col != dc % 80 or v.row < dc // 80:
+    up = dc // 80 - skipped(e)
+    if v.col != dc % 80 or v.row < up:
         return -1, v.row
-    return dc, v.row - dc // 80
+    return dc, v.row - up
+
+
+def skipped(e):
+    """The rows of the top line that are off the top of the screen: a line
+    taller than the screen is shown from the row that keeps the cursor on it."""
+    return word(e, 'SKIPR') if 'SKIPR' in SYM else 0
 
 
 def word(e, name):
@@ -5999,7 +6006,38 @@ def wrap_files():
     w2 = ['L%02d' % i for i in range(1, 22)] + [WIDE, 'end']
     return {'w1': ''.join(l + '\r\n' for l in w1).encode(),
             'w2': ''.join(l + '\r\n' for l in w2).encode(),
-            'w3': ''.join(l + '\r\n' for l in prose_lines()).encode()}
+            'w3': ''.join(l + '\r\n' for l in prose_lines()).encode(),
+            'w4': ''.join(l + '\r\n' for l in tall_lines()).encode(),
+            'w5': ''.join(l + '\r\n' for l in [rows_of('F', 40), 'mid',
+                                               rows_of('G', 30)[:-10]]).encode(),
+            'w6': ''.join(l + '\r\n' for l in tall_paged()).encode()}
+
+
+def rows_of(tag, n):
+    """A line *n* screen rows long, every row saying which one it is."""
+    return ''.join('%s%03d.' % (tag, r) + 'x' * 75 for r in range(n))
+
+
+def tall_lines():
+    """Lines taller than the screen among short ones: 30 rows, 60, 24 with one
+    character on the last, and 30 rows of TABs."""
+    out = ['S%02d short' % i for i in range(1, 6)]
+    out.append(rows_of('A', 30)[:-40])
+    out += ['S07 short', 'S08 short', rows_of('B', 60), 'S10 short',
+            rows_of('C', 24)[:-79]]
+    out += ['S%02d short' % i for i in range(12, 20)]
+    out.append(''.join('\tD%03d' % i for i in range(300)))
+    out += ['S%02d short' % i for i in range(21, 40)]
+    return out
+
+
+def tall_paged():
+    """86 K of them, 24 to 45 rows each with a short line between, so the
+    lines above and below the one on the screen are out on the disk."""
+    out = []
+    for i in range(1, 31):
+        out += [rows_of('%c%02d' % (65 + i % 26, i), 24 + (i * 7) % 22), 'short %02d' % i]
+    return out
 
 
 # Paragraphs typed as one line each, as prose is: 1 to 22 rows tall, so a
@@ -6018,14 +6056,22 @@ def prose_lines(n=200):
     return out
 
 
-def wrapped(lines, top=1, n=23, w=80):
-    """The edit rows a screen starting at line *top* (1-based) shows."""
+def wrapped(lines, top=1, n=23, w=80, skip=0):
+    """The edit rows a screen starting at line *top* (1-based) shows.  With
+    *skip*, that line's first *skip* rows are off the top, and '<<<' over the
+    first cells says so."""
     out = []
     for l in lines[top - 1:]:
         x = expand(l)
         chunks = [x[i:i + w] for i in range(0, len(x), w)] or ['']
+        if skip:
+            chunks = chunks[skip:]
+            chunks[0] = '<<<' + chunks[0][3:]
+            skip = 0
         if len(out) + len(chunks) > n:
-            out += ['@'] * (n - len(out))
+            # the top line is shown as far as the screen goes; any other
+            # that does not fit is not shown at all
+            out += chunks[:n] if not out else ['@'] * (n - len(out))
             break
         out += chunks
     out += ['~'] * (n - len(out))
@@ -6105,6 +6151,82 @@ VIM_WRAP = [
     ('w3', ['77G', 'L', '\x06', 'H', '\x02', 'L', '\x02', 'H', '\x06', 'M'],
      ['77 77 0 0', '80 77 18 0', '81 81 0 0', '81 81 0 0', '80 77 18 0', '80 77 18 0',
       '77 72 21 0', '72 72 0 0', '77 77 0 0', '78 77 2 0']),
+    # --- lines taller than the screen ('w4' 'w5'), and a file of them ('w6') ---
+    # (No row shortens a line from 24 rows to 23 with the cursor on its last:
+    # vim then shows all of it but reports winline() a row too high for one
+    # key.  wrap_cmds checks that case against the screen itself.  And none
+    # moves along a line with a big counted 'l': that is slow, issue #26.)
+    ('w4', ['6G', '$', '0', '/A010\r', '/A020\r', '/A029\r', '80h', '?A021\r', '?A011\r', '?A001\r', '0', 'j', 'j', 'j', '$', 'k', 'k', 'k', 'k'],
+     ['6 6 0 0', '6 6 22 2359', '6 6 0 0', '6 6 10 800', '6 6 20 1600', '6 6 22 2320',
+      '6 6 21 2240', '6 6 14 1680', '6 6 4 880', '6 6 0 80', '6 6 0 0', '7 7 0 0', '8 7 1 0',
+      '9 9 0 0', '9 9 22 4799', '8 8 0 8', '7 7 0 8', '6 6 22 2359', '5 5 0 8']),
+    ('w4', ['6G', '\x04', '\x04', '\x04', '\x15', '\x15', '\x15', '$', '\x04', '\x15', '\x15', '\x04'],
+     ['6 6 0 0', '7 7 0 0', '9 9 0 0', '10 10 0 0', '9 9 0 0', '7 7 0 0', '6 6 0 0', '6 6 22 2359',
+      '9 9 0 0', '7 7 0 0', '6 6 0 0', '7 7 0 0']),
+    ('w4', ['\x06', '\x06', '\x06', '\x06', '\x06', '\x06', '\x02', '\x02', '\x02', '\x02', '\x02', '\x02'],
+     ['6 6 0 0', '7 7 0 0', '9 9 0 0', '10 10 0 0', '11 11 0 0', '12 12 0 0', '11 11 0 0',
+      '10 10 0 0', '9 9 0 0', '8 7 1 0', '6 6 0 0', '5 1 4 0']),
+    ('w4', ['9G', '$', '\x06', '\x02', '\x02', '\x02', 'G', '\x02', '\x02', '\x02', '\x02', '\x02', '\x02'],
+     ['9 9 0 0', '9 9 22 4799', '10 10 0 0', '9 9 0 0', '8 7 1 0', '6 6 0 0', '39 21 18 0',
+      '20 20 0 8', '19 12 7 0', '11 11 0 0', '10 10 0 0', '9 9 0 0', '8 7 1 0']),
+    ('w4', ['6G', '/A012\r', '/A020\r', '/A029\r', '?A003\r', 'n', 'N', '/B050\r', '?A011\r', '/B02\r', 'n', 'n', 'n', 'n', 'N'],
+     ['6 6 0 0', '6 6 12 960', '6 6 20 1600', '6 6 22 2320', '6 6 0 240', '6 6 0 240', '6 6 0 240',
+      '9 9 22 4000', '6 6 11 880', '9 9 20 1600', '9 9 21 1680', '9 9 22 1760', '9 9 22 1840',
+      '9 9 22 1920', '9 9 21 1840']),
+    ('w4', ['4G', '11G', '6G', '9G', '20G', '$', '0', 'w', '$', 'b', 'b', 'j', 'k', '30G', '20G'],
+     ['4 1 3 0', '11 11 0 0', '6 6 0 0', '9 9 0 0', '20 20 0 8', '20 20 22 2403', '20 20 0 7',
+      '20 20 0 8', '20 20 22 2403', '20 20 22 2400', '20 20 21 2392', '21 21 0 8', '20 20 22 2392',
+      '30 21 9 0', '20 20 0 8']),
+    ('w4', ['6G', '$', 'H', '6G', '$', 'M', '6G', '$', 'L', '9G', '$', '0', '$', '^'],
+     ['6 6 0 0', '6 6 22 2359', '6 6 0 0', '6 6 0 0', '6 6 22 2359', '6 6 0 0', '6 6 0 0',
+      '6 6 22 2359', '6 6 0 0', '9 9 0 0', '9 9 22 4799', '9 9 0 0', '9 9 22 4799', '9 9 0 0']),
+    ('w4', ['11G', '$', 'j', 'k', '0', '$', '0', '12G', 'k', '$', 'k', 'j'],
+     ['11 11 0 0', '11 11 22 1840', '12 12 0 8', '11 11 22 1840', '11 11 0 0', '11 11 22 1840',
+      '11 11 0 0', '12 12 0 0', '11 11 0 0', '11 11 22 1840', '10 10 0 8', '11 11 22 1840']),
+    ('w4', ['\x04', '\x04', '\x04', '\x04', '\x04', '\x04', '\x04', '\x15', '\x15', '\x15', '\x15', '\x15', '\x15', '\x15'],
+     ['6 6 0 0', '7 7 0 0', '9 9 0 0', '10 10 0 0', '11 11 0 0', '12 12 0 0', '20 20 0 8',
+      '12 12 0 0', '11 11 0 0', '10 10 0 0', '9 9 0 0', '7 7 0 0', '6 6 0 0', '1 1 0 0']),
+    ('w4', ['9G', '/B010\r', '5\x04', '\x15', '\x15', '/B010\r', '\x15', '\x04', '\x04', '20G', '$', '\x04', '\x15', '$', '3\x15', '\x04'],
+     ['9 9 0 0', '9 9 10 800', '11 11 0 0', '10 10 0 0', '9 9 0 0', '9 9 10 800', '9 9 0 0',
+      '10 10 0 0', '11 11 0 0', '20 20 0 8', '20 20 22 2403', '39 21 18 0', '20 20 0 8',
+      '20 20 22 2403', '20 20 0 8', '21 21 0 0']),
+    ('w4', ['20G', '100w', '100w', '60w', '60w', '100b', '100b', '$', '100b', '0'],
+     ['20 20 0 8', '20 20 10 808', '20 20 20 1608', '20 20 22 2088', '31 21 10 0', '20 20 22 1768',
+      '20 20 12 968', '20 20 22 2403', '20 20 12 1608', '20 20 0 7']),
+    ('w5', ['\x04', '\x04', '\x04', '\x04', '\x15', '\x15', '\x15', '\x15', '$', '\x04', '\x04', '\x15', '\x15'],
+     ['2 2 0 0', '3 3 0 0', '3 3 0 0', '3 3 0 0', '2 2 0 0', '1 1 0 0', '1 1 0 0', '1 1 0 0',
+      '1 1 22 3199', '3 3 0 0', '3 3 0 0', '2 2 0 0', '1 1 0 0']),
+    ('w5', ['G', '/G005\r', '\x04', '\x04', '\x15', '\x15', '\x15', '\x15', 'G', '$', '5\x15', '\x15', '\x15'],
+     ['3 3 0 0', '3 3 5 400', '3 3 0 0', '3 3 0 0', '2 2 0 0', '1 1 0 0', '1 1 0 0', '1 1 0 0',
+      '3 3 0 0', '3 3 22 2389', '3 3 0 0', '2 2 0 0', '1 1 0 0']),
+    ('w5', ['\x06', '\x06', '\x06', '\x02', '\x02', '\x02', 'G', '$', '\x02', '\x02', '\x06', '\x06', '/G015\r', '\x06', '\x02'],
+     ['2 2 0 0', '3 3 0 0', '3 3 0 0', '2 2 0 0', '1 1 0 0', '1 1 0 0', '3 3 0 0', '3 3 22 2389',
+      '2 2 0 0', '1 1 0 0', '2 2 0 0', '3 3 0 0', '3 3 15 1200', '3 3 0 0', '2 2 0 0']),
+    ('w5', ['$', '0', '$', 'j', 'j', '$', 'k', 'k', 'gg', 'G', '$', 'gg', '/G02\r', 'n', 'n', 'n', 'n', 'n', '?F03\r', 'n', 'n', 'N'],
+     ['1 1 22 3199', '1 1 0 0', '1 1 22 3199', '2 2 0 2', '3 3 22 2389', '3 3 22 2389', '2 2 0 2',
+      '1 1 22 3199', '1 1 0 0', '3 3 0 0', '3 3 22 2389', '1 1 0 0', '3 3 20 1600', '3 3 21 1680',
+      '3 3 22 1760', '3 3 22 1840', '3 3 22 1920', '3 3 22 2000', '1 1 22 3120', '1 1 21 3040',
+      '1 1 20 2960', '1 1 21 3040']),
+    ('w6', ['\x06', '\x06', '\x06', '\x06', '\x06', '\x06', '\x06', '\x06', '\x02', '\x02', '\x02', '\x02', '\x02', '\x02', '\x02', '\x02'],
+     ['2 2 0 0', '3 3 0 0', '4 4 0 0', '5 5 0 0', '6 6 0 0', '7 7 0 0', '8 8 0 0', '9 9 0 0',
+      '8 8 0 0', '7 7 0 0', '6 6 0 0', '5 5 0 0', '4 4 0 0', '3 3 0 0', '2 2 0 0', '1 1 0 0']),
+    ('w6', ['\x04', '\x04', '\x04', '\x04', '\x04', '\x04', '\x04', '\x04', '\x15', '\x15', '\x15', '\x15', '\x15', '\x15', '\x15', '\x15'],
+     ['2 2 0 0', '3 3 0 0', '4 4 0 0', '5 5 0 0', '6 6 0 0', '7 7 0 0', '8 8 0 0', '9 9 0 0',
+      '8 8 0 0', '7 7 0 0', '6 6 0 0', '5 5 0 0', '4 4 0 0', '3 3 0 0', '2 2 0 0', '1 1 0 0']),
+    ('w6', ['G', '\x02', '\x02', '\x02', '\x06', '\x06', '\x06', '20G', '$', '40G', '$', 'k', '$', 'j', 'j', '$'],
+     ['60 60 0 0', '59 59 0 0', '58 58 0 0', '57 57 0 0', '58 58 0 0', '59 59 0 0', '60 60 0 0',
+      '20 20 0 0', '20 20 0 7', '40 40 0 0', '40 40 0 7', '39 39 22 2623', '39 39 22 2623',
+      '40 40 0 7', '41 41 22 3197', '41 41 22 3197']),
+    ('w6', ['$', 'j', 'j', '$', 'j', 'j', '$', '0', '10j', '$', '10j', '$', '10k', '$', 'gg'],
+     ['1 1 22 2541', '2 2 0 7', '3 3 22 3115', '3 3 22 3115', '4 4 0 7', '5 5 22 3689',
+      '5 5 22 3689', '5 5 0 0', '15 15 0 0', '15 15 22 2951', '25 25 22 2213', '25 25 22 2213',
+      '15 15 22 2951', '15 15 22 2951', '1 1 0 0']),
+    ('w6', ['/K10020\r', '/O14030\r', '?E04010\r', '/B27035\r', 'n', '?short 05\r', '/Y24\r', 'n', 'n'],
+     ['19 19 20 1640', '27 27 22 2460', '7 7 10 820', '53 53 22 2870', '53 53 22 2870',
+      '10 10 0 0', '47 47 0 0', '47 47 1 82', '47 47 2 164']),
+    ('w6', ['30G', 'M', 'L', 'H', '31G', 'M', 'L', 'H', '$', 'M'],
+     ['30 30 0 0', '30 30 0 0', '30 30 0 0', '30 30 0 0', '31 31 0 0', '31 31 0 0', '31 31 0 0',
+      '31 31 0 0', '31 31 22 2131', '31 31 0 0']),
 ]
 
 
@@ -6125,8 +6247,12 @@ def wrap_like_vim():
                 got = '%d %d' % (v.row, dc)
                 tag = f'wrap {f} {keys!r} {k!r}'
                 check(f'{tag}: {got} == {row} {col}', got == '%d %d' % (row, col))
-                check(f'{tag}: the screen is the file from line {top}, wrapped',
-                      scr[:23] == wrapped(lines, top))
+                # a line taller than the screen: vim shows it from the row
+                # that keeps the cursor on the screen
+                skip = col // 80 - row if ln == top else 0
+                check(f'{tag}: the screen is the file from line {top}, wrapped'
+                      + (f', less {skip} rows' if skip else ''),
+                      scr[:23] == wrapped(lines, top, skip=skip))
             check(f'wrap {f} {keys!r}: motions leave the file unmodified',
                   at_ccp(e, ':q\r'))
         finally:
@@ -6219,6 +6345,53 @@ def wrap_cmds():
         check(f'wrap: $ along a wrapped line is a cursor move ({sent} bytes) '
               f'to ({v.row}, {v.col})', sent < 64 and (v.row, v.col) == (22, 39))
         check('wrap: nothing was modified (:q exits)', at_ccp(e, ':q\r'))
+    finally:
+        e.close()
+
+    # --- a line taller than the screen is shown from the row that keeps the
+    #     cursor on it ('<<<' over its first cells), and stays that way while
+    #     it is edited; one that an edit brings back to the screen's height
+    #     is shown whole again ---
+    lines = files['w4'].decode().split('\r\n')[:-1]
+
+    def tall(e, tag, top, skip, row, col):
+        v = e.screen()
+        scr = [''.join(r).rstrip() for r in v.screen]
+        check(f'wrap: {tag}: cursor at ({v.row}, {v.col}) == ({row}, {col})',
+              (v.row, v.col) == (row, col))
+        check(f'wrap: {tag}: the screen is line {top} on, less {skip} rows',
+              scr[:23] == wrapped(lines, top, skip=skip))
+
+    e = Editor(files['w4'])
+    try:
+        e.key('11G'); e.key('$')
+        tall(e, '$ on a 24-row line', 11, 1, 22, 0)
+        e.key('x'); lines[10] = lines[10][:-1]
+        tall(e, 'x leaves it 23 rows: all of it is shown', 11, 0, 22, 79)
+        e.key('aQ'); lines[10] += 'Q'
+        tall(e, 'a char typed makes it 24 again', 11, 1, 22, 1)
+        send_keys(e, '\x1b'); tall(e, '... and ESC steps back onto it', 11, 1, 22, 0)
+        e.key('0'); tall(e, '0 shows it from its first row', 11, 0, 0, 0)
+        e.key('6G'); e.key('$')
+        tall(e, '$ on a 30-row line', 6, 7, 22, 39)
+        e.key('iZ'); lines[5] = lines[5][:-1] + 'Z' + lines[5][-1]
+        send_keys(e, '\x1b'); tall(e, 'a char typed on its last row', 6, 7, 22, 39)
+        e.key('?A015\r'); e.key('iab'); lines[5] = lines[5][:1200] + 'ab' + lines[5][1200:]
+        send_keys(e, '\x1b')
+        tall(e, 'two typed in the middle of it: the rows under them shift', 6, 7, 8, 1)
+        e.key('u'); lines[5] = lines[5][:1200] + lines[5][1202:]
+        tall(e, 'u takes them back', 6, 7, 8, 0)
+        e.key('$'); e.key('dd'); gone = lines.pop(5)
+        tall(e, 'dd of it: the next line is the top one', 6, 0, 0, 0)
+        e.key('P'); lines.insert(5, gone)
+        tall(e, 'P puts all 30 rows back, from the first', 6, 0, 0, 0)
+        e.key('k'); tall(e, 'k: the line above, and @ where it will not fit', 5, 0, 0, 0)
+        e.key('J'); lines[4:6] = [lines[4] + ' ' + lines[5]]
+        tall(e, 'J makes one line of the two', 5, 0, 0, 9)
+        e.key('$'); tall(e, '... 30 rows, and $ is on the last', 5, 7, 22, 50)
+        e.key(':w\r'); e.key(':q\r')
+        check('wrap: edits to lines taller than the screen are written back '
+              'byte-exact', saved_bytes(e) == ''.join(l + '\r\n' for l in lines).encode())
     finally:
         e.close()
 
