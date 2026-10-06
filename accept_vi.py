@@ -3296,16 +3296,16 @@ VIM_OPMX = [
 
 
 # Rows the editor does not do as vim does, by (the place, the first operator),
-# under the number of the issue each is waiting on (the mark rows under #19
-# also meet #20).  They are still RUN, and the test fails if
+# under the number of the issue each is waiting on: after a 'u' the mark a
+# delete ran up to is not put back, so the next command to that mark takes a
+# different span.  They are still RUN, and the test fails if
 # one of them stops differing: a fix has to take its rows out of here, which
 # is what turns them into checks.
 MK = '2G6lma7G9lmb'
 OPMX_OPEN = {}
 for _issue, _rows in (
-        (19, [('4G7l', 'ygg'), ('gg0', 'ygg'), ('G$', 'ygg'), ('4G7l', 'd2gg')]
-         + [(MK + p, o + m) for p in ('4G7l', 'gg0', 'G$')
-            for o, m in (('d', '`a'), ('d', '`b'), ('y', "'a"), ('y', "'b"))]),):
+        (20, [(MK + 'gg0', 'd`a'), (MK + '4G7l', 'd`b'), (MK + 'gg0', 'd`b'),
+              (MK + 'gg0', "y'a"), (MK + '4G7l', "y'b"), (MK + 'gg0', "y'b")]),):
     for _r in _rows:
         OPMX_OPEN[_r] = _issue
 
@@ -6725,16 +6725,17 @@ def marks_cmds():
     finally:
         e.close()
 
-    # ---- '.' after "d'a" refuses: the mark letter is read inside the
-    #      command, so it is never recorded ----
+    # ---- '.' after "d'a" repeats it, to the mark where it now is.  The
+    #      delete took the marked line, so the mark sits where the delete was
+    #      (vim drops it and says so): the repeat takes that one line ----
     e = Editor(files['mk'])
     try:
         e.key('3G'); e.key('ma'); e.key('gg')
         e.key("d'a")
-        after = rows(e)[:2]
+        after = rows(e)[:3]
         e.key('.')
-        check("'.' after \"d'a\" refuses rather than repeating",
-              rows(e)[:2] == after)
+        check(f"'.' after \"d'a\" repeats it: one more line goes "
+              f"({rows(e)[:2]!r})", rows(e)[:2] == after[1:3])
     finally:
         e.close()
 

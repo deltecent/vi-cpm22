@@ -481,6 +481,9 @@ MKC_LP:
 ;MKGETK -- C = this command's next key.  During a '.' replay it has to come
 ;from the recording: calling GETKEY there would stop dead waiting for a key
 ;nobody is going to press.  CY = there is no key, or it was not a character.
+;A key typed here did not come through the dispatcher, so it is handed to
+;DOTPRE to join the recording: that is what lets '.' repeat "dfa", "dgg" and
+;"d'a".
 MKGETK:
 	LDA	DOTRPL
 	ORA	A
@@ -499,6 +502,7 @@ MKG_KB:
 	CPI	KT_CHAR
 	STC
 	RNZ			; an action key (ESC) cancels the command
+	CALL	DOTPRE		; B, C kept
 	ORA	A		; CY clear
 	RET
 
@@ -513,9 +517,8 @@ MKG_KB:
 ; The target is read by the command ITSELF, the way 'm' and the two mark jumps
 ; read the letter that names their mark: under an operator the whole of "df,"
 ; has to happen inside one VSCAN, because OPPEND measures the span the moment
-; the motion returns.  Unlike the marks, the character is then handed to
-; DOTPRE, so it joins the recording and '.' can repeat "dfa" -- MKGETK's
-; keyboard path does not record for itself.
+; the motion returns.  MKGETK puts the character in the '.' recording, so
+; '.' can repeat "dfa".
 ;
 ; ';' repeats the find and ',' repeats it reversed, and the stored find is NOT
 ; changed by the ',': a ';' after it goes the original way again, as vim's
@@ -541,8 +544,6 @@ FNDNEW:
 	JC	FNDNIL		; ESC, or a '.' replay that ran out of keys
 	MOV	A,C
 	STA	FNDCH
-	MVI	B,KT_CHAR	; ... and into the '.' recording (see the head)
-	CALL	DOTPRE
 	LDA	FNDKND
 	MVI	B,1		; a find starts at the next character along
 	JMP	FNDGO
@@ -717,9 +718,7 @@ MKGO:
 	CALL	MOVCNT		; a count means nothing on any of the three
 	CALL	MKGETK		; the key that names the mark
 	JC	MKBAD		; no key: ESC cancelled it, or a '.' replay
-				;   ran out -- the letter is read here and so
-				;   was never recorded, which is why a '.'
-				;   after "d'a" refuses (COMMANDS.md).  It must
+				;   ran out.  It must
 				;   CANCEL, not just return: an empty linewise
 				;   span still takes a whole line
 				; ... otherwise fall into MKOP
