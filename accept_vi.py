@@ -6930,25 +6930,33 @@ def pgop_cmds():
         finally:
             e.close()
 
-    # ---- 'e' has to page as 'w' does (issue #23), and under an operator a
-    #      span it cannot reach has to be refused, not cut short ----
-    e = Editor(big)
-    try:
-        tap(e, '6000G'); tap(e, '300e')
-        g = ctrlg(e)
-        still_open(23, f'6000G 300e ends on line 6299 ({g!r})',
-                   ' line 6299 ' in g)
-    finally:
-        e.close()
-    e = Editor(big)
-    try:
-        tap(e, '6000G3l'); tap(e, 'd3000e'); tap(e, ':w\r')
-        got = saved_bytes(e)
-        still_open(23, f'6000G3l d3000e is refused, or takes the 3000 words '
-                       f'({len(got)} bytes)',
-                   got in (big, L(1, 5999) + b'006' + L(9000, 12800)))
-    finally:
-        e.close()
+    # ---- 'e' pages as 'w' does (it once stopped for good at the last line
+    #      the window held), and under an operator a span the window cannot
+    #      hold is refused, as it is for 'w', not cut short ----
+    for at, n, ends in (('6000G', '300e', 6299), ('6000G', '3000e', 8999),
+                        ('6000G3l', '300e', 6299), ('6000G', '300E', 6299),
+                        ('12700G', '3000e', 12800)):
+        e = Editor(big)
+        try:
+            tap(e, at); tap(e, n)
+            g = ctrlg(e)
+            check(f'{at} {n} ends on the last char of line {ends} ({g!r})',
+                  f' line {ends} col 6' in g + ' ')
+        finally:
+            e.close()
+    for op in ('d3000e', 'c3000e', 'd3000E'):
+        e = Editor(big)
+        try:
+            tap(e, '6000G3l'); tap(e, op)
+            g = ctrlg(e)
+            check(f'6000G3l {op} is refused: the cursor is back on line 6000 '
+                  f'column 4 ({g!r})', ' line 6000 col 4' in g + ' ')
+            tap(e, ':w\r')
+            got = saved_bytes(e)
+            check(f'6000G3l {op} is refused: the file is untouched '
+                  f'({len(got)} bytes)', got == big)
+        finally:
+            e.close()
 
     # ---- a counted 'dw' goes on into the next line (issue #22) ----
     e = Editor(make(40))

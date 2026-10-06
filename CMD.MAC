@@ -2308,76 +2308,52 @@ EDO:	CALL	SETMOV
 EDO_LP: LHLD	CNTV
 	MOV	A,H
 	ORA	L
-	RZ
+	JZ	WDO_DN		; not left on a line's end, as after 'w'
 	DCX	H
 	SHLD	CNTV
 	CALL	ESTEP
-	JMP	EDO_LP
+	JNC	EDO_LP
+	JMP	WDO_DN
 
-;ESTEP -- forward to the end of the next word.
+;ESTEP -- vim end_word, once: forward to the end of the next word.  CY =
+; failed: the file ran out (the cursor is left on its last line's end).  Like
+; FWD1 it steps with INCC, which reads through the pager, so a count runs on
+; through the whole file; it once scanned window offsets, and stopped for good
+; at the last line the window held.
 ESTEP:
-	CALL	CUROFF
-	SHLD	WKI
-	CALL	LOGLEN
-	SHLD	WKN
-	LHLD	WKI
-	INX	H
-	SHLD	WKI
-ES_WS:
-	LHLD	WKI
-	XCHG
-	LHLD	WKN
-	CALL	CMP16
-	JNC	ES_LND
-	LHLD	WKI
-	CALL	CHARAT
-	CALL	CLASSF
+	CALL	CCLS
+	STA	WKCLS		; the starting class
+	CALL	INCC
 	ORA	A
-	JNZ	ES_WD
-	LHLD	WKI
-	INX	H
-	SHLD	WKI
-	JMP	ES_WS
-ES_WD:
-	LHLD	WKI
-	CALL	CHARAT
-	CALL	CLASSF
+	JM	ES_F
+	CALL	CCLS
+	ORA	A
+	JZ	ES_WS
+	LXI	H,WKCLS
+	CMP	M
+	JZ	ES_SK		; still in the word it started in: on to its end
+ES_WS:
+	CALL	CCLS		; over blanks, line ends and empty lines
+	ORA	A
+	JNZ	ES_SK
+	CALL	INCC
+	ORA	A
+	JP	ES_WS
+ES_F:
+	STC
+	RET
+ES_SK:
+	CALL	CCLS		; past the rest of this word ...
 	STA	WKCLS
-ES_RUN:
-	LHLD	WKI
-	INX	H
-	XCHG			; DE = i+1
-	LHLD	WKN
-	CALL	CMP16		; DE=(i+1) vs HL=n: CY iff (i+1) < n
-	JNC	ES_LND
-	LHLD	WKI
-	INX	H
-	PUSH	H		; i+1
-	CALL	CHARAT
-	CALL	CLASSF
-	POP	H		; HL = i+1
-	MOV	B,A
-	LDA	WKCLS
-	CMP	B
-	JNZ	ES_LND
-	SHLD	WKI
-	JMP	ES_RUN
-ES_LND:
-	LHLD	WKN
-	XCHG
-	LHLD	WKI
-	CALL	CMP16		; DE=n vs HL=i: CY iff n < i
-	JC	ES_CL
-	JZ	ES_CL
-	LHLD	WKI
-	JMP	GOSET
-ES_CL:
-	LHLD	WKN
-	MOV	A,H
-	ORA	L
-	RZ
-	DCX	H
-	JMP	GOSET
+ES_SL:
+	CALL	INCC
+	ORA	A
+	JM	ES_F
+	CALL	CCLS
+	LXI	H,WKCLS
+	CMP	M
+	JZ	ES_SL
+	JMP	DECC		; ... and back onto its last char (NC)
 
 ;--- e / E stay because OPPEND rewrites a pending "cw"/"cW" to "ce"/"cE"
 ; and dispatches it through CMDTAB (vi's one operator+motion special case),
