@@ -3344,23 +3344,36 @@ OPA_F:
 				;   of it, so it must not be cut back
 	CPI	1
 	JNZ	OPA_EX
+	;--- inclusive: the char the motion landed on goes too -- when there is
+	;    one.  '$' on an empty line lands on its CR, and 'e' with no word
+	;    left to find lands on the file's last LF; neither is a char of the
+	;    text, and taking it leaves half a line end in the file.  So the
+	;    span never runs past the content end of the line it landed on
+	;    (vim: 'd$' on an empty line changes nothing, 'de' on the file's
+	;    last char takes it and keeps the line end).
+	;    'cw' stops at the content end of the line it STARTED on, where a
+	;    plain 'ce' (and 'de') runs on into the next line's word and 'd%'
+	;    crosses to its mate -- all four recorded from vim 9.1.  vim's 'cw'
+	;    is not simply 'ce': the rewrite keeps 'w's own end-of-line stop, so
+	;    that clamp hangs off CWEOL (the rewrite) and not off the class. ---
 	INX	H		; inclusive endpoint -> hi = end+1
-	;--- 'cw' stops at the line's content end, where a plain 'ce' (and 'de')
-	;    runs on into the next line's word and 'd%' crosses to its mate --
-	;    all four recorded from vim 9.1.  vim's 'cw' is not simply 'ce': the
-	;    rewrite keeps 'w's own end-of-line stop, so the clamp hangs off
-	;    CWEOL (the rewrite) and not off the inclusive class. ---
+	SHLD	OPHI		; park it: CEND clobbers DE
+	DCX	H		; the line it landed on ...
 	LDA	CWEOL
 	ORA	A
-	JZ	OPA_HI
-	SHLD	OPHI		; park the motion's own end: CEND clobbers DE
-	LHLD	OPLO
-	CALL	CEND		; HL = the start line's content end
-	XCHG			; DE = that content end
+	JZ	OPA_LE
+	LHLD	OPLO		; ... or, for 'cw', the one it started on
+OPA_LE:
+	CALL	CEND		; HL = that line's content end
+	XCHG			; DE = it
 	LHLD	OPHI		; HL = hi
 	CALL	CMP16		; CY iff the content end is below hi
 	JNC	OPA_HI		; hi is inside the line: keep it
-	XCHG			; HL = the content end: 'cw' stops there
+	LHLD	OPLO
+	CALL	CMP16		; DE = the content end vs HL = lo: Z iff equal
+	JZ	GOTO		; nothing is spanned, so nothing changes: back
+				;   to where the command started
+	XCHG			; HL = the content end: the span stops there
 	JMP	OPA_HI
 OPA_EX:
 	;--- exclusive and forward: vim's 'w' under an operator stops at the end
