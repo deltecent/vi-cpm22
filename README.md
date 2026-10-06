@@ -1,7 +1,7 @@
 # VI — a vi-style editor for CP/M 2.2 on the 8080
 
 `VI.COM` is a screen editor for CP/M 2.2 that behaves like vi. It runs on a
-plain 8080 in a 56 K TPA, it is 18,688 bytes, and it edits files far larger
+plain 8080 in a 56 K TPA, it is 18,816 bytes, and it edits files far larger
 than memory — 100 K files are ordinary — by paging text to and from disk.
 
 vim 9.1 is the reference for behaviour. A command is not finished here until it

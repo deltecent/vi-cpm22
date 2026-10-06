@@ -125,9 +125,9 @@ MARKS ----------------------------------------------------------------------
 
 Only three marks.  A mark follows its text when lines above it come and
 go.  If the marked text itself is deleted, the mark moves to where the
-delete was.  A jump to a mark never set says "Mark not set".  d'a works
-however far off the mark is; d`a and y'a over a mark far off in a large
-file are refused.
+delete was, and u puts it back.  A jump to a mark never set says "Mark
+not set".  d'a works however far off the mark is; d`a and y'a over a
+mark far off in a large file are refused.
 
 
 SEARCH ---------------------------------------------------------------------
@@ -198,7 +198,7 @@ stops a move or a search before then (see below).
 The limits:
 
     Memory      The text in memory, the yank register and the undo share
-                26924 bytes (about 26 K, with a 56 K CP/M).  About 2 K of
+                26733 bytes (about 26 K, with a 56 K CP/M).  About 2 K of
                 the file is read when it is opened, and up to 24 K is in
                 memory at once.
     Register    One, of whole lines, about 23 K.  What it holds is taken
@@ -230,9 +230,9 @@ Slow, because the file has to go through the window:
     6000G from line 1           22 s       100G from line 12000    38 s
     /text, 94 K further on      46 s       ?text, 46 K back        15 s
     /text, wrapping round       65 s       'a, 46 K back           16 s
-    :w                          51 s   all of it, however little changed
+    :w                          52 s   all of it, however little changed
     :e! at line 6000            21 s   3.1 s at line 1
-    :%s/0/1/                   267 s   every line; over 100 lines, 2.6 s
+    :%s/0/1/                   268 s   every line; over 100 lines, 2.6 s
 
 ^C stops a move or a search -- G, gg, {n}G, 'a, `a, / ? n and N -- and
 says "Interrupted".  The cursor and the screen go back to where the
@@ -281,13 +281,13 @@ What to do instead:
     no size is refused -- and nothing but :e! brings the lines back.
   * To MOVE or COPY a big block, write it to a file and read it back in
     (see YANK AND PUT).  :6000,9000w T.TXT is 31 s for 24 K and
-    :r T.TXT is 27 s.  That is any size, with the block still on the
+    :r T.TXT is 32 s.  That is any size, with the block still on the
     disk afterwards.  To move a block that fits the register, 2800dd
-    and P are quicker (13 s and 9.4 s); to copy one, 2800yy is not.
+    and P are quicker (13 s and 28 s); to copy one, 2800yy is not.
   * Type :w before a change that cannot be undone.  The file on the disk
     is not touched until the next :w, so :e! then throws the change away,
     and each :w leaves the version before it in NAME.BAK.
-  * A :w is 51 s even with nothing changed.  :x and ZZ write only
+  * A :w is 52 s even with nothing changed.  :x and ZZ write only
     a changed text, so use them to leave.
   * Work from the top of the file down, and go by line number when you
     know it: ^G says where you are, and a line close by costs a second.
@@ -315,4 +315,4 @@ NOT IN THIS VI -------------------------------------------------------------
 
 A count before an insert (3ix) is ignored: it inserts once.  So is a count
 on r and ~.
-
+

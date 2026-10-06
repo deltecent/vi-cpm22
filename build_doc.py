@@ -181,9 +181,9 @@ MARKS ----------------------------------------------------------------------
 
 Only three marks.  A mark follows its text when lines above it come and
 go.  If the marked text itself is deleted, the mark moves to where the
-delete was.  A jump to a mark never set says "Mark not set".  d'a works
-however far off the mark is; d`a and y'a over a mark far off in a large
-file are refused.
+delete was, and u puts it back.  A jump to a mark never set says "Mark
+not set".  d'a works however far off the mark is; d`a and y'a over a
+mark far off in a large file are refused.
 
 
 SEARCH ---------------------------------------------------------------------

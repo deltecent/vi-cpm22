@@ -29,7 +29,7 @@ back to one of them.
   between the top of the program and the BDOS (`BUFEND = [0006H] - 1`; WM's
   `INIT` stops 7 pages lower only when that vector's low byte is not 06H, which
   is something loaded under the BDOS, a debugger for one). With a 56 K CP/M it
-  is 26,924 bytes in this build. **Every byte of the image comes out of
+  is 26,733 bytes in this build. **Every byte of the image comes out of
   the arena**, so the binary is the scarce resource. Commands are priced in
   bytes before they are built, and a command that earns too little gets cut.
 - **The console is a 9600-baud serial line**, about 960 characters a second. A
@@ -171,8 +171,8 @@ move would break:
               pointer row, text + gap, Q-buffer (the yank register), undo region
     BUFEND  = BDOS base - 1   (B605H with a 56 K CP/M; see section 1)
 
-In this build: the image is 18614 bytes, the `.COM` file 18688 bytes (146
-records), the reserve block 803 bytes (`49B6H`–`4CD8H`), and the stack 128
+In this build: the image is 18793 bytes, the `.COM` file 18816 bytes (147
+records), the reserve block 815 bytes (`4A69H`–`4D97H`), and the stack 128
 bytes. **The size that matters is a 4 K BLOCK BOUNDARY**, because that is what
 the 8 MB disk allocates in: 16384 bytes occupy four blocks and one byte more
 occupies five. This build is past that line by design (`f F t T ; ,` would not
@@ -320,6 +320,14 @@ command can forget to record itself.
   `TXTBEG`, the only thing that shifts logical offsets. `OUTREC` and `SRCREC`
   are not a paging signature, because `UPDMARK` raises them on every edit.
 - `:w` clears the undo, because the write rebuilds every offset.
+- The cursor `u` goes back to is where the change began. `UNDBEG` snapshots
+  the cursor as the command starts; a command whose change starts somewhere
+  else says so with `UNDHER` before its first edit: a backward operator span
+  where the motion landed, a one-line delete at the line's first non-blank.
+- The marks go back with the text. `MKSHFT` hears every edit before `UNDCHG`
+  claims the change, so the first edit of a new change (`UNDNEW` still set)
+  copies the marks to `MKUND` in the reserve block, and `u` copies back the
+  ones that were set (`MKREST`). A redo only lets the edits shift them.
 
 **Marks `a`–`c`** are 3-byte positions in the file (`FPOS`: the records paged
 out ahead of the window, times 128, plus the offset into the window), stored
@@ -475,7 +483,7 @@ change.
     importing it: importing `smoke_vi` clears the work disks under a running
     suite.
   - Under `-s` script input vim never syncs undo, so `vimref.py` forces a sync
-    after each key for the `undo` and `subst` groups.
+    after each key for the `undo`, `undoat`, `opmx`, `rdwr` and `subst` groups.
 - **Parallel runs.** `fastcheck.py` runs the acceptance groups in parallel.
   Each worker gets its own simulator directory (`VI_SIMDIR`), because the host
   bridge's root is where `R` reads and `W` writes.
