@@ -49,6 +49,8 @@
 	EXTRN	PGTOPM				; PAGE.MAC -- the window signature
 	EXTRN	MKTAB				; RSV.MAC  -- the marks, above the image
 	EXTRN	MKSAV				; ... and a refused 'dd's copy of them
+	EXTRN	MKUND				; ... and the copy 'u' puts back
+	EXTRN	UNDST, UNDNEW			; BUF.MAC -- undone or not; no change yet
 	EXTRN	DELFWD, DELPRV, UNDELF			; BUF.MAC deletes
 	EXTRN	CMP16, SUBHD, MEMCPY		; BUF.MAC 16-bit helpers
 	EXTRN	UNDBEG, UNDO, UNDRPL, UNDWHY	; BUF.MAC single-level undo
@@ -450,8 +452,8 @@ DOTBEL:
 ; DEVIATIONS from vim, in COMMANDS.md: a mark whose own text is deleted closes
 ; up to where the delete was, where vim deletes the mark with its line; and
 ; within its line a mark stays with its CHARACTER, where vim keeps the column
-; number.  '.' after a 'd''a' still refuses: the mark letter is read inside
-; the command and never recorded.
+; number.  'u' puts the marks back where they were when the change it
+; undoes began (MKSNAP / MKREST).
 ;
 ; The three keys arm a pending code in GPEND exactly as 'r' does, and VICMD
 ; hands the NEXT key to MKOP instead of dispatching it: a mark letter is an
@@ -898,6 +900,71 @@ MKSET:
 	MVI	M,1		; ... and the mark is live
 	JMP	SETMOV		; 'm' draws nothing and moves nothing
 
+;MKSNAP -- keep the marks as they stand, for 'u' (MKREST).  Each copy's spare
+;fourth byte takes that mark's live flag.  HL and BC are kept.
+MKSNAP:
+	PUSH	B
+	PUSH	H
+	LXI	H,MKTAB
+	LXI	D,MKUND
+	CALL	COPY12
+	LXI	H,MKVAL
+	LXI	D,MKUND+MKSIZ-1
+	MVI	B,MKMAX
+MSN_LP:
+	MOV	A,M
+	STAX	D
+	INX	H
+	INX	D
+	INX	D
+	INX	D
+	INX	D
+	DCR	B
+	JNZ	MSN_LP
+	POP	H
+	POP	B
+	RET
+
+;MKREST -- a change has been undone: every mark that was set when it began
+;goes back where it was then, whether the change ran over it or 'm' has moved
+;it since (vim keeps them with the undo too).  One first set AFTER the change
+;is left where the replay's own edits carried it.
+MKREST:
+	MVI	C,MKMAX-1
+MRS_LP:
+	MOV	A,C
+	ADD	A
+	ADD	A
+	MOV	E,A
+	MVI	D,0
+	LXI	H,MKUND+MKSIZ-1
+	DAD	D
+	MOV	A,M
+	ORA	A
+	JZ	MRS_NX		; it was not set then
+	DCX	H
+	DCX	H
+	DCX	H
+	PUSH	H
+	LXI	H,MKTAB
+	DAD	D
+	XCHG			; DE -> the mark
+	POP	H		; HL -> its copy
+	MVI	B,MKSIZ-1
+MRS_CP:
+	MOV	A,M
+	STAX	D
+	INX	H
+	INX	D
+	DCR	B
+	JNZ	MRS_CP
+	CALL	MKVAD
+	MVI	M,1
+MRS_NX:
+	DCR	C
+	JP	MRS_LP
+	RET
+
 ;MKSHFT -- the text is changing: every mark follows its own text.  BUF.MAC's
 ;UNDCHG calls this through EDTHK from all six edit primitives -- 'u's replay
 ;of them included -- with A = 1 for an insert (the text is in) or 2 for a
@@ -914,6 +981,13 @@ MKSHFT:
 	LDA	MKHOLD		; a yank that could not copy takes its lines out
 	ORA	A		;   and puts them back unchanged (YKGO): the text
 	RNZ			;   every mark points into is still there
+	LDA	UNDRPL
+	ORA	A
+	JNZ	MKS_GO		; 'u' replaying: not a new change
+	LDA	UNDNEW		; the first edit of a new change (UNDCHG calls
+	ORA	A		;   here BEFORE it claims the change): the marks
+	CNZ	MKSNAP		;   as they are now are the ones 'u' puts back
+MKS_GO:
 	PUSH	B
 	MOV	D,B
 	MOV	E,C
@@ -1048,6 +1122,9 @@ VC_UNDO:
 	SHLD	CMDCNT
 	CALL	UNDO
 	JC	UNDNO
+	LDA	UNDST
+	CPI	2
+	CZ	MKREST		; undone (not redone): the marks go back too
 	LHLD	UNDCUR
 	CALL	UCLAMP		; vi never sits on a line terminator
 	CALL	GOTO		; ... and this keeps LNDLT, as the replay did
@@ -3370,7 +3447,8 @@ OPAPPL:
 	SHLD	OPLO
 	XCHG
 	SHLD	OPHI
-	JMP	OPA_C1
+	CALL	UNDHER		; 'u' goes to where the CHANGE began, and that
+	JMP	OPA_C1		;   is here, where the motion landed (vim)
 OPA_F:
 	XCHG			; HL = start, DE = end
 	SHLD	OPLO
@@ -3564,6 +3642,21 @@ OPDSPN:
 				;   only that row is stale -- 1.6 s of repaint
 				;   for a word was the whole cost of these
 
+;UNDFNB -- ONE whole line is going: 'u' brings it back with the cursor on its
+; first non-blank, or where it is now if that is further left (vim).  Go
+; there, and say so; the delete starts from the line's start anyway.
+UNDFNB:
+	CALL	CUROFF
+	PUSH	H
+	CALL	FNBLNK
+	CALL	CUROFF
+	POP	D		; DE = where it was, HL = the first non-blank
+	CALL	CMP16
+	JNC	UNDHER
+	XCHG
+	CALL	GOTO
+	JMP	UNDHER
+
 ;OPALSP -- the linewise span [OPSTA,OPEND2] as whole lines: OPLO = the start of
 ; the LOW endpoint's line, OPHI = the start of the line past the HIGH one.
 OPALSP:
@@ -3575,6 +3668,7 @@ OPALSP:
 	SHLD	OPLO		; end <= start: lo-src = end (HL)
 	XCHG
 	SHLD	OPHI		; hi-src = start
+	CALL	UNDHER		; 'u' goes back to where the motion landed
 	JMP	OPAL_R
 OPAL_F:
 	XCHG			; HL = start
@@ -3595,6 +3689,12 @@ OPAL_R:
 ; measured but NOT deleted, so it calls OPALSP on its own (OPYANK).
 OPALIN:
 	CALL	OPALSP
+	LHLD	OPLO		; ONE line?  Then 'u' brings it back as it does
+	CALL	NLSTART		;   after 'dd' (UNDFNB; two lines or more keep
+	XCHG			;   the column)
+	LHLD	OPHI
+	CALL	CMP16
+	CZ	UNDFNB
 ;OPDLIN -- delete the whole-line span [OPLO,OPHI); if the cursor ends past the
 ; text, drop it to the last line's start.  Either way it ends on the line's
 ; first NON-BLANK, as 'dd' does -- a linewise delete is a linewise delete,
@@ -4088,6 +4188,7 @@ VD_DD:
 	JNZ	VDD_LS
 	MVI	A,1
 	STA	DDSNG
+	CALL	UNDFNB		; one line: where 'u' is to put the cursor
 	JMP	VDD_GO
 VDD_LS:
 	CALL	ONLAST		; vim: is this the last line?  (pages in, and it is
@@ -4601,8 +4702,10 @@ VP_GO:
 VP_BRK:
 	CALL	OPNBRK		; (which counts the cursor a line lower itself)
 VP_IN:
-	CALL	CUROFF
-	SHLD	PPT		; the first line put: where the cursor ends
+	LXI	H,PPFP		; the first line put, where the cursor ends -- as
+	CALL	FPSTO		;   a place in the FILE: a put the window cannot
+	CALL	GZONE		;   hold pages its own start out (and the top
+				;   line, which GPLACE then wants, with it)
 	;--- GOTO maintains LNDLT by counting the line feeds the cursor crosses
 	;    (BUF.MAC), but INSBLK does not: the put leaves the cursor past
 	;    every line it inserted without saying so, and the GOTO back to the
@@ -4636,7 +4739,10 @@ VP_LP:
 	ORA	L
 	JNZ	VP_LP
 	CALL	MARKMOD
-	LHLD	PPT
+	LXI	H,PPFP
+	CALL	MKLOAD
+	CALL	MKWIN		; CY and HL = where it is, if still in the window
+	JNC	VP_PGD
 	CALL	GOTO		; back to the first line put -- and GOTO's own
 				;   arithmetic now has the lines to subtract
 	CALL	GLSTAL
@@ -4664,6 +4770,13 @@ VP_LP:
 	POP	PSW
 	STA	ILN		; ... which the lines put now replace
 	JMP	FNBLNK
+VP_PGD:				; the put paged its first line out: page back
+	CALL	MKPAGE		;   to it, and place it as a jump is placed
+	CALL	GOTO
+	CALL	GLSTAL
+	CALL	GPLACE
+	JMP	SETFUL		; ... but every row below it is new, even when
+				;   GPLACE finds the top line where it was
 VP_BEL:
 	CALL	GETCNT		; the count is spent either way
 	MVI	C,BEL
@@ -7131,7 +7244,7 @@ YURPL:	DB	0		; yy: UNDRPL across it too (see 'u')
 YOFF:	DW	0		; yy: the cursor, which a yank leaves alone
 YPT:	DW	0		; yy: where the lines came from
 PCNT:	DW	0		; p/P: copies still to put
-PPT:	DW	0		; p/P: the first line put
+PPFP:	DB	0,0,0		; p/P: the first line put, a file position
 PLFS:	DW	0		; p/P: the lines in the register
 PCPY:	DB	0		; p/P: the copies, kept for the paint
 YLDLT:	DW	0		; yy: LNDLT across the delete + put back

@@ -86,6 +86,7 @@ GROUPS = {
     'opmx': ('VIM_OPMX', None),
     'dot': ('VIM_DOT', None),
     'undo': ('VIM_UNDO', None),
+    'undoat': ('VIM_UNDOAT', None),
     'subst': ('VIM_SUBST', None),
     'plus': ('VIM_PLUS', None),
     'put': ('VIM_PUT', None),
@@ -95,7 +96,7 @@ GROUPS = {
     'find': ('VIM_FIND', None),
     'rdwr': ('VIM_RDWR', None),
 }
-TEXT = {'ins', 'ops', 'opmx', 'put', 'srch', 'dot', 'undo', 'subst', 'marks', 'find',
+TEXT = {'ins', 'ops', 'opmx', 'put', 'srch', 'dot', 'undo', 'undoat', 'subst', 'marks', 'find',
         'rdwr'}  # rows carrying text + a file hash
 
 # Rows the final-line-end fold must NOT be applied to.  The fold exists because
@@ -244,7 +245,7 @@ def replay(group, work):
             continue
         wrote = os.path.join(work, 'wrote.txt')
         got = run(path, [':set nowrap\r'] + list(keys), rec=RECT, wrote=wrote,
-                  sync=USYNC if group in ('undo', 'subst', 'rdwr', 'opmx')
+                  sync=USYNC if group in ('undo', 'undoat', 'subst', 'rdwr', 'opmx')
                   else '')[1:]
         with open(wrote, 'rb') as fh:
             out = fh.read()         # already CRLF: the write set 'ff=dos'

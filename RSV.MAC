@@ -48,6 +48,7 @@
 	PUBLIC	UNDREC			; BUF.MAC  -- the captured change
 	PUBLIC	MKTAB			; CMD.MAC  -- the marks 'm' sets
 	PUBLIC	MKSAV			; CMD.MAC  -- ... as a refused 'dd' found them
+	PUBLIC	MKUND			; CMD.MAC  -- ... as the last change found them
 	PUBLIC	RSVTOP			; BUF.MAC  -- PBEGMEM, the arena base
 
 ;--- Sizes ------------------------------------------------------------------
@@ -83,7 +84,8 @@ RVSEC	EQU	RVWRT+RVWRTN+1	; +1: STAGSEC's guard byte at SECBUF-1
 RVUND	EQU	RVSEC+RVSECN+1	; +1: ... and its guard at SECBUF+128
 RVMKT	EQU	RVUND+RVUNDN
 RVMKS	EQU	RVMKT+MKMAX*MKSIZ
-RVSIZE	EQU	RVMKS+MKMAX*MKSIZ
+RVMKU	EQU	RVMKS+MKMAX*MKSIZ
+RVSIZE	EQU	RVMKU+MKMAX*MKSIZ
 
 	CSEG
 RSVBAS:				; the top of the linked image -- no bytes here
@@ -101,6 +103,7 @@ SECBUF	EQU	RSVBAS+RVSEC
 UNDREC	EQU	RSVBAS+RVUND
 MKTAB	EQU	RSVBAS+RVMKT
 MKSAV	EQU	RSVBAS+RVMKS
+MKUND	EQU	RSVBAS+RVMKU
 RSVTOP	EQU	RSVBAS+RVSIZE		; BUF.MAC's PBEGMEM: the arena base
 
 	END
