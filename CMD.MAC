@@ -1599,10 +1599,16 @@ LSTEP:
 	CALL	EOLC		; HL = eolc
 	POP	D		; DE = cur
 	CALL	CMP16		; DE=cur vs HL=eolc: CY iff cur < eolc
-	RNC			; cur >= eolc, cannot go right
+	JNC	LS_NO		; cur >= eolc, cannot go right
 	XCHG			; HL = cur
 	INX	H
 	JMP	GOSET
+LS_NO:				; on the line's last char.  An operator waiting on
+	CALL	EMPTY		;   this 'l' takes that char too (vim makes the
+	RZ			;   motion inclusive when it falls short), which
+	MVI	A,1		;   is what WPULL tells OPA_EX: 'dl' there is 'x',
+	STA	WPULL		;   and 'd3l' two from the end takes both.  An
+	RET			;   empty line has no char to take
 
 ;VC_0 -- start of line (WM ^B: GOALCOL = 0; the start is found with WM's
 ; LINPOSB, so a line begun before the window is paged back).
@@ -2083,7 +2089,9 @@ BDO_LP: LHLD	CNTV
 	JMP	SETGL
 
 ;FWD1 -- vim fwd_word, once.  CY = failed: the cursor was on the file's last
-; char (it is left there).
+; char, and is left on the line's end past it, as any 'w' that runs off a line
+; is: WDO_DN pulls it back and says so (WPULL), so that 'dw' there takes the
+; char as it does on the last char of any other line.
 FWD1:
 	CALL	CCLS
 	STA	WKCLS		; the starting class
@@ -2097,8 +2105,7 @@ FWD1:
 	CALL	ATEOF		; 2: on the line's end -- the last line?
 	CNC	NXLN
 	JNC	FW_WD
-	CALL	DECC		; yes: back onto its last char, failed
-	STC
+	STC			; yes: failed
 	RET
 FW_WD:
 	LDA	WKCLS		; go past the rest of this word

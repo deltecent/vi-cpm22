@@ -3304,7 +3304,6 @@ MK = '2G6lma7G9lmb'
 OPMX_OPEN = {}
 for _issue, _rows in (
         (12, [('4G7l', 'dw'), ('4G7l', 'd2w'), ('4G7l', 'dW'), ('4G7l', 'd2W')]),
-        (13, [('G$', 'dw'), ('G$', 'dW'), ('G$', 'dl')]),
         (14, [('gg0', 'db'), ('gg0', 'dB')]),
         (19, [('4G7l', 'ygg'), ('gg0', 'ygg'), ('G$', 'ygg'), ('4G7l', 'd2gg')]
          + [(MK + p, o + m) for p in ('4G7l', 'gg0', 'G$')
@@ -3377,10 +3376,40 @@ VIM_COL1 = [
 ]
 
 
+# A motion that falls short at the end of a line or of the file: 'l' with no
+# char left to step onto takes the one it is on, and 'w' on the file's last
+# char takes that char; on an empty line neither has anything to take.  Same
+# shape as VIM_COL1, on SHORT_TEXT.
+SHORT_TEXT = b'aa bb\r\ncc dd\r\n\r\nee ff\r\n'
+VIM_SHORT = [
+    (['gg$', 'dl'], b'aa b\r\ncc dd\r\n\r\nee ff\r\n', (0, 3)),
+    (['gg$', 'd3l'], b'aa b\r\ncc dd\r\n\r\nee ff\r\n', (0, 3)),
+    (['gg$h', 'd3l'], b'aa \r\ncc dd\r\n\r\nee ff\r\n', (0, 2)),
+    (['gg$', 'clqq\x1b'], b'aa bqq\r\ncc dd\r\n\r\nee ff\r\n', (0, 5)),
+    (['gg$h', 'c3lqq\x1b'], b'aa qq\r\ncc dd\r\n\r\nee ff\r\n', (0, 4)),
+    (['3G', 'dl'], b'aa bb\r\ncc dd\r\n\r\nee ff\r\n', (2, 0)),
+    (['3G', 'clqq\x1b'], b'aa bb\r\ncc dd\r\nqq\r\nee ff\r\n', (2, 1)),
+    (['3G', 'dw'], b'aa bb\r\ncc dd\r\nee ff\r\n', (2, 0)),
+    (['G$', 'dw'], b'aa bb\r\ncc dd\r\n\r\nee f\r\n', (3, 3)),
+    (['G$', 'd3w'], b'aa bb\r\ncc dd\r\n\r\nee f\r\n', (3, 3)),
+    (['G$', 'cwqq\x1b'], b'aa bb\r\ncc dd\r\n\r\nee fqq\r\n', (3, 5)),
+    (['G', 'd3w'], b'aa bb\r\ncc dd\r\n\r\n\r\n', (3, 0)),
+]
+
+
 def col1_like_vim():
     """A span ending in a line's first column goes as vim takes it."""
-    for keys, want, cur in VIM_COL1:
-        e = Editor(COL1_TEXT)
+    span_table('col1', COL1_TEXT, VIM_COL1)
+
+
+def short_like_vim():
+    """An operator over a motion that fell short takes what vim takes."""
+    span_table('short', SHORT_TEXT, VIM_SHORT)
+
+
+def span_table(name, text, table):
+    for keys, want, cur in table:
+        e = Editor(text)
         try:
             for k in keys:
                 if k.endswith('\x1b'):
@@ -3389,11 +3418,11 @@ def col1_like_vim():
                 else:
                     e.key(k)
             v = e.screen()
-            check(f'vim col1 {keys!r}: cursor {(v.row, v.col)} == {cur}',
+            check(f'vim {name} {keys!r}: cursor {(v.row, v.col)} == {cur}',
                   (v.row, v.col) == cur)
             e.key(':w\r')
             got = saved_bytes(e)
-            check(f'vim col1 {keys!r}: file {got!r} as vim wrote it',
+            check(f'vim {name} {keys!r}: file {got!r} as vim wrote it',
                   got == want)
         finally:
             e.close()
@@ -8176,6 +8205,7 @@ def main():
         print('\n=== every operator over every motion vs vim ===', flush=True)
         opmx_like_vim()
         col1_like_vim()
+        short_like_vim()
     if not args or 'vim' in args or 'dot' in args:
         print('\n=== . (repeat) vs vim ===', flush=True)
         dot_like_vim()
