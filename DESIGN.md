@@ -397,7 +397,11 @@ Detail is in `RENDER.md`. The design decisions:
   there.
 - **Messages are drawn after the frame** (`MSGPST`), because a full repaint blanks
   the bottom row.
-- **Long lines pan, never wrap.** Tabs are expanded before clipping.
+- **Long lines wrap, as vi's do.** A line wider than the screen goes on down
+  the rows under it; one the bottom of the screen has no room for is `@` rows.
+  `WINROW` counts the lines above the cursor's, and the layout measures them
+  into rows. (Issue #25 is this change, in steps; `RENDER.md` is rewritten at
+  its last.)
 
 ---
 
@@ -482,7 +486,7 @@ change.
   unstubbed external would be bound to `0000H` and warm-boot mid-run, so a
   change to BUF/PAGE or to their `EXTRN`/`PUBLIC` contract requires the gate.
 - **vim is the reference.** Each vim table in `accept_vi.py` is recorded from
-  vim 9.1 on a 24×80 pty with `nowrap` by `vimref.py`, which can regenerate and
+  vim 9.1 on a 24×80 pty with `wrap` by `vimref.py`, which can regenerate and
   re-check every row. Behaviour is recorded before a command is built.
   - `vimref.py` runs `accept_vi.py`'s definitions from its AST rather than
     importing it: importing `smoke_vi` clears the work disks under a running

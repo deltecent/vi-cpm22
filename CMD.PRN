@@ -3264,11 +3264,11 @@
   1075'   C3 1082'              	JMP	GP_SET
   1078'                         GP_MID:				; NOTE: falls through to GP_SET -- keep it
                                 				;   adjacent, the A it computes is the row
-  1078'   3E 01                 	MVI	A,1
-  107A'   32 0000*              	STA	WFILL		; not past the end of the file
+  1078'   3E 02                 	MVI	A,2
+  107A'   32 0000*              	STA	WFILL		; SCRN.MAC WF_MID: mid-screen, as the rows fall
   107D'   3A 0000*              	LDA	NEDIT
   1080'   B7                    	ORA	A
-  1081'   1F                    	RAR			; the middle row
+  1081'   1F                    	RAR			; (no more lines above it than this)
   1082'                         GP_SET:
   1082'   6F                    	MOV	L,A		; the cursor's row, lines counted from here
   1083'   26 00                 	MVI	H,0

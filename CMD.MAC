@@ -3006,11 +3006,11 @@ GP_RN:
 	JMP	GP_SET
 GP_MID:				; NOTE: falls through to GP_SET -- keep it
 				;   adjacent, the A it computes is the row
-	MVI	A,1
-	STA	WFILL		; not past the end of the file
+	MVI	A,2
+	STA	WFILL		; SCRN.MAC WF_MID: mid-screen, as the rows fall
 	LDA	NEDIT
 	ORA	A
-	RAR			; the middle row
+	RAR			; (no more lines above it than this)
 GP_SET:
 	MOV	L,A		; the cursor's row, lines counted from here
 	MVI	H,0

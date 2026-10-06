@@ -37,6 +37,11 @@ scroll (`SCFWD`, `SCBWD`, `SCDL`, `SC_IL`/`SC_ILQ`, `SC_JN`) first sets `ESC[1;<
 full repaint never scrolls: it addresses row 1 and steps with `CR,LF`, the last `LF` landing
 on the message row.
 
+> **Superseded (issue #25):** long lines now wrap. `HSCROL`, `HPAN` and `VISOK` are gone;
+> `WINROW` counts lines, `LAYOUT` measures them into rows, and every cheap paint but the
+> cursor-only one is skipped while a wrapped line is on the screen (`WRAPF`). `SCRN.MAC`'s
+> header is the current description; this file is rewritten at that issue's last step.
+
 **Long lines: horizontal pan, never wrap.** `HSCROL` is the first visible display column.
 `HPAN` keeps the cursor's display column in `[HSCROL, HSCROL+NCOLS)`, panning only as far as
 it must. `PROW` expands tabs (to 8-column stops) and clips every row to that window, so

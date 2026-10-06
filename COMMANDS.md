@@ -15,8 +15,17 @@ parallel) — that stages 0 / 1-line / ~2 K / ~40 K / 100 K files and, for each:
 the whole file and back; edits correct anywhere, including past the arena; the
 cursor, window and screen row where vim puts them. Tests are written **first**
 and start **red**, and they include lines past the right screen edge (the vim
-references are recorded with `nowrap`). A green unit or component test proves
+references are recorded with `wrap`). A green unit or component test proves
 nothing on its own.
+
+**Long lines wrap (issue #25, in progress).** They used to pan. The rows below
+were all re-recorded from vim with `wrap`, and every one still holds, with one
+exception on a file that has wrapped lines on the screen: vim counts screen
+rows for `^F` `^B` `^D` `^U`, for `M`, and for how far off the screen a line
+must be before a jump centres it, and this editor still counts lines there.
+The ten recorded rows that differ are named in `accept_vi.py` (`WRAP_OPEN`)
+and are run on every battery, so the day one matches vim it has to come out.
+Where a row below says a wide line "pans", read "wraps".
 
 The vim comparisons are reproducible, not folklore: every "vs vim" table in
 `accept_vi.py` was recorded from real vim 9.1 on a 24x80 pty, and

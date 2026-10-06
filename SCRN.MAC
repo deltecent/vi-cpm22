@@ -19,16 +19,24 @@
 ; bytes are read straight from the gap buffer: before the gap by pointer (kept
 ; relative to GAPBEG, since a refill can move the text), after it by RGET.
 ;
-; Also here (RENDER.md): runtime geometry (DSR probe),
-; horizontal pan, the RINTENT fast paths (cursor-only, region scroll up/down,
-; one-row redraw, ICH insert, DL line delete), the RPOLL repaint abort, and the
-; message row.  The region scrolls take their line count from SCRLN, the number
-; of lines the text moved up this frame.
+; A line wider than the screen WRAPS, as vi's does: it goes on down the rows
+; under it.  So WINROW counts LINES -- how many are on the screen above the
+; cursor's -- and the layout turns that into rows by measuring each of them.
+; The top row is always the start of a line; a line the bottom has no room
+; for is not shown, its rows hold '@'.
+;
+; Also here (RENDER.md): runtime geometry (DSR probe), the RINTENT fast paths
+; (cursor-only, region scroll up/down, one-row redraw, ICH insert, DL line
+; delete), the RPOLL repaint abort, and the message row.  The region scrolls
+; take their line count from SCRLN, the number of lines the text moved up this
+; frame.  Every fast path but the cursor-only one takes a line to be a row, so
+; none is used while a wrapped line is on the screen (WRAPF).
 ;
 ; EXPORTS: BCONST, BCONIN, BCONOU      (BIOS-direct console leaves)
 ;          SCINIT, SCDRAW, SCDONE, SCPRE
 ;          NROWS, NCOLS, NEDIT         (runtime geometry)
-;          WINROW                      (cursor line's screen row; CMD.MAC sets it)
+;          WINROW                      (lines on the screen above the cursor's;
+;                                       CMD.MAC sets it)
 ;          SCBOT, SCEOF, SCBOF, WFILL  (last layout's facts; fill request)
 ;============================================================
 	INCLUDE VI.INC
@@ -41,10 +49,9 @@
 	PUBLIC	SCURS			; the cursor, back where SCDRAW left it
 	PUBLIC	CBOL, CURDCL		; cursor column: bytes / display (^G)
 	PUBLIC	NROWS, NCOLS, NEDIT
-	PUBLIC	WINROW			; cursor line's screen row (signed word)
-	PUBLIC	SCBOT			; last row holding text
+	PUBLIC	WINROW			; lines above the cursor's (signed word)
+	PUBLIC	SCBOT			; WINROW of the last line shown
 	PUBLIC	SCEOF, SCBOF		; end / start of the file is on the screen
-	PUBLIC	HSCROL			; first visible display column (tests)
 	PUBLIC	WFILL			; request: pull text down rather than show '~'
 
 	EXTRN	CMP16, SUBHD		; BUF.MAC 16-bit helpers
@@ -61,6 +68,9 @@
 	EXTRN	ICHAPP			; CMD.MAC -- 1 = an R_ICH needs no ICH
 	EXTRN	ILABOV			; CMD.MAC -- 1 = an R_ILIN's row above is stale
 	EXTRN	KBRDY			; KEY.MAC -- RPOLL: key waiting in the ring?
+
+WR_EOL	EQU	2		; WRAPF from here up: the cursor has a row to itself
+WF_MID	EQU	2		; WFILL: the cursor's line in the middle of the screen
 
 	CSEG
 
@@ -193,20 +203,32 @@ GOROW1:
 CEKL:
 	LXI	H,SEK
 	JMP	OUTSTR
-;PTROW -- paint the row PROWN names and step to the next: clear it, write it,
-; CR/LF (the last LF of a full repaint lands on the message row, and a backward
-; scroll's N <= NEDIT-1 keeps it inside the region), and count the row off.
-; Both paint loops are this, once each.
+;PTROW -- paint the line at row PROWN and step to the row under it: clear the
+; row, write the line (on as many rows as it takes), CR/LF (the last LF of a
+; full repaint lands on the message row, and a backward scroll's N <= NEDIT-1
+; keeps it inside the region), and count the row off.  Both paint loops are
+; this, once each.  When the cursor has a row to itself (WR_EOL) that row is
+; the one under its line's text, and is cleared and counted here as well.
 PTROW:
 	CALL	CEKL		; ESC[K -- clear the row
 	CALL	PAINTR
+	CALL	PT_NL
+	LDA	WRAPF
+	CPI	WR_EOL
+	RC
+	LDA	SROW
+	DCR	A
+	LXI	H,PROWN
+	CMP	M
+	RNZ
+	CALL	CEKL
+PT_NL:
 	MVI	A,CR
 	CALL	OUTCH
 	MVI	A,LF
 	CALL	OUTCH
-	LDA	PROWN
-	INR	A
-	STA	PROWN
+	LXI	H,PROWN
+	INR	M
 	RET
 
 ;GOTOP -- address row 1, column 1 (the scroll region's top row).
@@ -224,7 +246,6 @@ GOTOP:
 SCINIT:
 	LXI	H,0
 	SHLD	WINROW
-	SHLD	HSCROL
 	LXI	H,SPROBE
 	CALL	OUTSTR
 	CALL	RDNUMS		; sets NROWS/NCOLS on a clean reply; else no-op
@@ -346,26 +367,38 @@ CLP_MAX:
 ; FRAME -- lay out, then pick the cheapest correct paint.
 ;============================================================
 
-;SCPRE -- snapshot what is on the screen (WINROW/HSCROL) into OLDWR/OLDHS.  The
+;SCPRE -- snapshot what is on the screen (WINROW/WRAPF) into OLDWR/OLDWF.  The
 ; main loop calls this after reading a key and before dispatch, so SCDRAW can
-; tell how far the text moved (SCRLN) and whether it panned.
+; tell how far the text moved (SCRLN) and whether a line was wrapped.
 SCPRE:
 	LHLD	WINROW
 	SHLD	OLDWR
-	LHLD	HSCROL
-	SHLD	OLDHS
+	LDA	WRAPF
+	STA	OLDWF
 	RET
 
 SCDRAW:
-	CALL	LAYOUT		; WINROW/SCRLN/SCBOT/CURDCL/HSCROL (no output)
+	CALL	LAYOUT		; WINROW/SCRLN/SCBOT/CURDCL/WRAPF (no output)
 	CALL	CURSC		; SROW/SCOL
 	LDA	FORCEF		; a prior repaint aborted -> must repaint in full
 	ORA	A
 	JNZ	SCFULL
-	LHLD	OLDHS		; panned horizontally -> full repaint
-	XCHG
-	LHLD	HSCROL
-	CALL	CMP16		; Z iff HSCROL == OLDHS
+	LDA	WRAPF		; the wrapping on this screen, or on the last
+	LXI	H,OLDWF
+	ORA	M
+	MOV	B,A
+	CPI	WR_EOL		; a row only the cursor holds came or went: the
+	JNC	SCFULL		;   lines under it moved, whatever the key was
+	LDA	RINTENT
+	CPI	R_MOVE
+	JNZ	SC_WR
+	LHLD	SCRLN
+	MOV	A,H
+	ORA	L
+	JZ	SCURS		; text still -> cursor only, wrapped or not
+SC_WR:
+	MOV	A,B		; every paint from here on takes a line to be a
+	ORA	A		;   row: a wrapped one on the screen -> repaint
 	JNZ	SCFULL
 	LDA	RINTENT
 	CPI	R_MOVE
@@ -403,9 +436,6 @@ SC_MV:
 	;--- R_MOVE: the text moved up SCRLN lines (down if negative) ---
 	LHLD	SCRLN
 	MOV	A,H
-	ORA	L
-	JZ	SC_MOVE		; text still -> cursor only
-	MOV	A,H
 	ORA	A
 	JP	SC_FWD
 	XCHG
@@ -420,9 +450,6 @@ SC_FWD:
 	JC	SCFULL
 	STA	SCLN		; N in 1..NEDIT-1 -> region scroll
 	JMP	SCFWD
-SC_MOVE:
-	;--- R_MOVE fast path: reposition the (shown) cursor, redraw nothing ---
-	JMP	SCURS		; ensure shown (recovers from an aborted frame)
 SC_ICH:
 	;--- the inserted char sits at screen column SCOL-1; it must be a real
 	;    on-screen cell (SCOL >= 2), else fall back to the whole-line redraw ---
@@ -462,8 +489,8 @@ SC_ICC:
 	MOV	A,M
 	JMP	OUTCH
 SC_LNBD:
-	;--- R_LINE: redraw only the cursor's row (tabs re-expanded, panned and
-	;    clipped to the window), then re-address and show the cursor ---
+	;--- R_LINE: redraw only the cursor's row (tabs re-expanded), then
+	;    re-address and show the cursor ---
 	CALL	CHIDE
 	LDA	SROW
 	CALL	GOROW1		; column 1 of the current row, cleared
@@ -472,7 +499,8 @@ SC_LNBD:
 	JMP	SCURS
 
 ;SCFULL -- paint edit rows 1..NEDIT in place (home + CR,LF stepping), each
-; cleared with ESC[K; rows past the text show '~'.  No ESC[2J (no blank flash).
+; cleared with ESC[K; a line takes as many rows as it is wide, and the rows
+; past the text show '~' (or '@').  No ESC[2J (no blank flash).
 ; Message row last; cursor hidden throughout, then addressed and shown.
 SCFULL:
 	CALL	CHIDE
@@ -531,7 +559,7 @@ EXMSG:
 	POP	H
 	JMP	OUTSTR
 
-;SCFWD -- the text moved up N rows (SCLN, 1..NEDIT-1) with HSCROL unchanged.
+;SCFWD -- the text moved up N rows (SCLN, 1..NEDIT-1), no line wrapped.
 ; Clamp the scroll region to the edit rows (message row protected), then N times:
 ; delete the top region row (ESC[M) -- the terminal scrolls the region up one
 ; line -- and draw the newly exposed row into row NEDIT.  Only the N exposed
@@ -568,7 +596,7 @@ SFW_DN:
 	CALL	CRGRS		; restore full-screen region
 	JMP	SCURS		; address and show the cursor at its new cell
 
-;SCBWD -- the text moved down N rows (SCLN, 1..NEDIT-1) with HSCROL unchanged.
+;SCBWD -- the text moved down N rows (SCLN, 1..NEDIT-1), no line wrapped.
 ; Clamp the scroll region to the edit rows, Reverse-Index (ESC M) N times at the
 ; region top -- the terminal scrolls the region down, opening N blank rows at
 ; the top -- then draw rows 0..N-1 from the top line down.
@@ -781,19 +809,50 @@ SRGN:
 	MVI	A,'r'
 	JMP	OUTCH
 
-;CURSC -- the cursor's screen cell (1-based): SROW = WINROW + 1,
-; SCOL = CURDCL - HSCROL + 1.  Emits nothing.
+;CURSC -- the cursor's screen cell (1-based).  CURDCL is its column in the
+; LINE, so it is CURDCL / NCOLS rows into it, under the LYABV rows the lines
+; above take, at column CURDCL mod NCOLS.  Emits nothing.
 CURSC:
-	LDA	WINROW
-	INR	A
-	STA	SROW
-	LHLD	HSCROL
-	XCHG
 	LHLD	CURDCL
-	CALL	SUBHD		; HL = CURDCL - HSCROL
-	INX	H
-	MOV	A,L
+	CALL	DIVN		; BC = rows into the line, A = the column
+	INR	A
 	STA	SCOL
+	LHLD	LYABV
+	DAD	B
+	INX	H
+	MOV	A,H		; (never past the edit rows: a line taller than
+	ORA	A		;   the screen shows its first rows only)
+	LDA	NEDIT
+	JNZ	CS_SET
+	CMP	L		; CY iff NEDIT < the row
+	JC	CS_SET
+	MOV	A,L
+CS_SET:
+	STA	SROW
+	RET
+
+;XTRA -- HL = a line's width in columns: BC = the rows it takes past its first.
+; Falls into DIVN.
+XTRA:
+	LXI	B,0
+	MOV	A,H
+	ORA	L
+	RZ			; an empty line is one row
+	DCX	H
+;DIVN -- HL / NCOLS: BC = the quotient, A = the remainder.  Clobbers DE, HL.
+DIVN:
+	LDA	NCOLS
+	CMA
+	MOV	E,A
+	MVI	D,0FFH
+	INX	D		; DE = -NCOLS
+	LXI	B,0FFFFH
+DV_LP:
+	INX	B
+	DAD	D		; CY while NCOLS still went into it
+	JC	DV_LP
+	LDA	NCOLS
+	ADD	L
 	RET
 
 ;SCABRT -- RPOLL abort: a key arrived mid-repaint.  Leave the cursor hidden (the
@@ -812,11 +871,17 @@ SCABRT:
 ;============================================================
 ; LAYOUT -- WM MEASURE's placement (WM.ASM 3762): where the cursor's line sits
 ; on the screen and what the screen holds.  Emits nothing.
-;   in : WINROW (last frame's row), LNDLT (lines moved since), WFILL
+;   in : WINROW (last frame's), LNDLT (lines moved since), WFILL
 ;   out: WINROW (clamped), SCRLN (lines the text moved up), TOPLEN (bytes from
 ;        the top line's start to the cursor), CBOL (bytes from the cursor
-;        line's start), CURDCL, SCBOT, SCEOF, SCBOF, HSCROL/WINRT; WRLIM
-;        raised past the top (WM 3784); LNDLT and WFILL cleared.
+;        line's start), CURDCL, LYABV (rows above the cursor's line), TXEND and
+;        FILCH (the rows with no text, and what they show), SCBOT, SCEOF,
+;        SCBOF, WRAPF; WRLIM raised past the top (WM 3784); LNDLT and WFILL
+;        cleared.
+; WINROW is a count of LINES.  The rows come from measuring them: [top,
+; cursor) by pointer, the rest read forward until the rows are full -- never
+; to the end of a line the screen cannot hold.  When the lines above leave the
+; cursor's line no room, lines are given up at the top until it fits.
 ; LINPSB runs WM's SETCNT, so the vi count (CMDCNT) and the line-move state
 ; (AUXCNT, DIRFLG) are saved and restored around the layout.
 ;============================================================
@@ -829,11 +894,14 @@ LAYOUT:
 	STA	SVDIR
 	CALL	CURRW		; A = WINROW + LNDLT, clamped to the edit rows
 	STA	LYROW
-	CALL	LYFAR		; far off the screen: the middle row
+	CALL	LYFAR		; far off the screen: the middle of it
 	LHLD	LNDLT
 	SHLD	LYDLT
 	LXI	H,0
 	SHLD	LNDLT
+	LDA	WFILL
+	CPI	WF_MID
+	CZ	LYMID		; LYROW = the lines that puts above it
 LY_TOP:
 	;--- the top line: LYROW lines above the cursor's (WM MEASLO) ---
 	LDA	LYROW
@@ -846,106 +914,145 @@ LY_TOP:
 	SHLD	TOPLEN
 	INR	H		; WM 3784-3788: PAGEOUT never spills the screen
 	SHLD	WRLIM
-	;--- [top, GAPBEG): count the lines above; CBOL = bytes after the last LF ---
-	LHLD	TOPLEN
-	SHLD	CBOL		; no LF: the cursor's line is the top line
-	MOV	B,H
-	MOV	C,L		; BC = bytes
-	XCHG
-	LHLD	GAPBEG
-	CALL	SUBHD		; HL = top
-	MVI	E,0		; E = LFs (at most LYROW)
+	;--- [top, GAPBEG): the lines above, each as many rows as it is wide;
+	;    what is left over is the cursor's line, up to the cursor ---
+	LXI	H,0
+	SHLD	LYABV
+	XRA	A
+	STA	LYROW		; (counted again: the file may start sooner)
+	CALL	LYTOPP		; HL = top, BC = bytes to the cursor
 LY_ABV:
-	MOV	A,B
-	ORA	C
-	JZ	LY_ABD
-	MOV	A,M
+	PUSH	B		; (CBOL, if this turns out to be the cursor's)
+	CALL	LNW		; DE = its width; CY: it ended, LF and all
+	JNC	LY_ABD
+	XTHL			; (that count is not wanted; the pointer is)
+	PUSH	B
+	XCHG
+	CALL	XTRA		; BC = the rows it takes past its first
+	LHLD	LYABV
+	DAD	B
 	INX	H
-	DCX	B
-	CPI	LF
-	JNZ	LY_ABV
-	INR	E
-	PUSH	H
-	MOV	H,B
-	MOV	L,C
-	SHLD	CBOL		; the cursor's line starts after this LF
+	SHLD	LYABV
+	LXI	H,LYROW
+	INR	M
+	POP	B
 	POP	H
 	JMP	LY_ABV
 LY_ABD:
-	LDA	LYROW		; fewer lines above (start of file): row = their count
-	CMP	E
-	JC	LY_BOF
-	MOV	A,E
-	STA	LYROW
-LY_BOF:
+	XCHG
+	SHLD	CURDCL
+	POP	H
+	SHLD	CBOL
 	;--- SCBOF: the top line is the file's first (nothing before it on disk) ---
 	XRA	A
 	STA	SCBOF
-	LHLD	TOPLEN
-	XCHG
-	LHLD	GAPBEG
-	CALL	SUBHD		; HL = top
+	CALL	LYTOPP		; HL = top
 	XCHG
 	LHLD	TXTBEG
 	CALL	CMP16		; Z iff top == TXTBEG
-	JNZ	LYCOL0
+	JNZ	LY_CUR
 	LHLD	OUTPOS		; no records before TXTBEG
 	MOV	A,H
 	ORA	L
-	JNZ	LYCOL0
+	JNZ	LY_CUR
 	INR	A
 	STA	SCBOF
-LYCOL0:
-	;--- CURDCL = display width of the cursor's line up to the cursor ---
-	LXI	H,0
-	SHLD	CURDCL
-	LHLD	CBOL
-	MOV	B,H
-	MOV	C,L
-	XCHG
-	LHLD	GAPBEG
-	CALL	SUBHD		; HL = line start, BC = bytes to the cursor
-LY_COL:
-	MOV	A,B
-	ORA	C
-	JZ	LY_FW0
-	MOV	A,M
-	INX	H
-	DCX	B
-	CPI	CR
-	JZ	LY_COL		; CR contributes no display column
-	PUSH	H
-	LHLD	CURDCL
-	CPI	TAB
-	JNZ	LY_C1
-	MOV	A,L		; TAB: to the next multiple of TABWID
-	ORI	TABWID-1
-	MOV	L,A
-LY_C1:
-	INX	H
-	SHLD	CURDCL
-	POP	H
-	JMP	LY_COL
-LY_FW0:
-	;--- forward: the cursor's line and the lines below, to the bottom row ---
+LY_CUR:
+	;--- the cursor's own row: LYABV + the rows of its line before it ---
 	XRA	A
 	STA	SCEOF
-	LDA	LYROW
-	MOV	B,A
+	STA	LYEND
+	STA	LYXE
+	MVI	A,'~'
+	STA	FILCH
+	LHLD	CURDCL
+	CALL	DIVN		; BC = rows into the line, A = cells used there
+	MOV	E,A
+	LDA	CURDCL
+	SUB	E
+	STA	LYVB		; the column the cursor's row starts at
+	LHLD	LYABV
+	MOV	A,L
+	STA	LYLST		; (its line starts on this row)
+	DAD	B		; HL = the cursor's row
 	LDA	NEDIT
-	SUB	B		; A = NEDIT - row = LFs that fill the rows
-	STA	LYNEED
-	MOV	D,A
-	MVI	E,0		; E = LFs seen
+	MOV	C,A
+	MOV	A,H
+	ORA	A
+	JNZ	LY_OFF
+	MOV	A,L
+	CMP	C		; CY iff it is one of the edit rows
+	JC	LY_FW0
+LY_OFF:
+	;--- it is below them: give up lines at the top, as few as will do ---
+	LDA	LYROW
+	ORA	A
+	JZ	LY_TAL		; there are none: the line is taller than the screen
+	MOV	E,C
+	DCR	E
+	MVI	D,0
+	CALL	SUBHD		; HL = the rows too many
+	SHLD	LYNEED
+	CALL	LYTOPP
+LY_DRP:
+	CALL	LNW		; the top line: DE = its width
+	PUSH	H
+	PUSH	B
+	XCHG
+	CALL	XTRA
+	INX	B		; BC = its rows
+	LHLD	LYNEED
+	MOV	A,L
+	SUB	C
+	MOV	L,A
+	MOV	A,H
+	SBB	B
+	MOV	H,A
+	SHLD	LYNEED
+	POP	B
+	LXI	H,LYROW
+	DCR	M		; one line fewer above the cursor's
+	POP	H		; (keeps the flags)
+	JZ	LY_TOP		; that was the last of them
+	LDA	LYNEED+1
+	ORA	A
+	JM	LY_TOP		; room enough
+	PUSH	H
+	LHLD	LYNEED
+	ORA	L
+	POP	H
+	JNZ	LY_DRP
+	JMP	LY_TOP
+LY_FW0:
+	;--- forward: the rest of the cursor's line and the lines below, until
+	;    the rows are full.  D = the row being filled, E = cells used in it. ---
+	MOV	D,L
 	CALL	RGET0
 LY_FWD:
-	CALL	RDGET		; (pages in on demand; keeps DE)
-	JC	LY_EOF
-	STA	LYLAST
-	CPI	LF
-	JNZ	LY_FWD
-	INR	E
-	MOV	A,E
+	CALL	FLINE
+	ORA	A
+	JM	LY_EOF
+	JZ	LY_FLF
+	LDA	LYEND		; a row the screen has not got:
+	ORA	A
+	JNZ	LY_CUT
+	LXI	H,LYROW		; the cursor's own line needs it: give up a
+	MOV	A,M		;   line at the top and measure again
+	ORA	A
+	JZ	LY_TAL
+	DCR	M
+	JMP	LY_TOP
+LY_CUT:
+	MVI	A,'@'		; a line under it does not: it is not shown, and
+	STA	FILCH		;   the rows it would have started on say so
+	LDA	LYLST
+	JMP	LY_END
+LY_TAL:
+	LDA	NEDIT		; a line taller than the screen: its first rows
+	JMP	LY_END
+LY_FLF:
+	CALL	LYLEND		; that line's rows are counted
+	LDA	NEDIT
 	CMP	D
 	JNZ	LY_FWD
 	CALL	RDGET		; rows full: is the text over right there?
@@ -954,20 +1061,25 @@ LY_FWD:
 	STA	SCEOF
 LY_FUL:
 	MOV	A,D
-	DCR	A		; below = the rows under the cursor's
-	JMP	LY_BLW
+	JMP	LY_END
 LY_EOF:
 	MVI	A,1
 	STA	SCEOF
-	MOV	A,E		; below = LFs, less a final LF (no line after it)
-	ORA	A
-	JZ	LY_BLW
+	LDA	LYEND		; text after the last line end -- or no line end
+	ORA	A		;   at all -- is a line too
+	JZ	LY_EO1
 	LDA	LYLAST
 	CPI	LF
-	MOV	A,E
-	JNZ	LY_BLW
-	DCR	A
-LY_BLW:
+	JZ	LY_EO2
+LY_EO1:
+	CALL	LYLEND
+LY_EO2:
+	MOV	A,D
+LY_END:
+	STA	TXEND		; the first row with no text on it
+	LDA	LYEND		; below = the lines that ended, less the cursor's
+	SUI	1
+	ACI	0
 	STA	LYBLW
 	;--- WFILL: '~' rows showing while text above could fill them -> move the
 	;    cursor's line down by the shortfall and lay out again ---
@@ -979,9 +1091,11 @@ LY_BLW:
 	LDA	SCBOF
 	ORA	A
 	JNZ	LY_SET
-	LDA	LYNEED
-	DCR	A		; rows under the cursor's
-	LXI	H,LYBLW
+	LDA	FILCH
+	CPI	'~'
+	JNZ	LY_SET
+	LDA	NEDIT
+	LXI	H,TXEND
 	SUB	M		; shortfall
 	JZ	LY_SET
 	JC	LY_SET
@@ -990,17 +1104,26 @@ LY_BLW:
 	MOV	M,A
 	JMP	LY_TOP
 LY_SET:
-	LDA	LYROW		; SCBOT = min(row + below, NEDIT-1)
+	LDA	LYROW		; SCBOT = the last line shown, counted as WINROW is
 	LXI	H,LYBLW
 	ADD	M
-	MOV	B,A
-	LDA	NEDIT
-	DCR	A
-	CMP	B		; CY iff NEDIT-1 < row+below
-	JC	LY_BOT
-	MOV	A,B
-LY_BOT:
 	STA	SCBOT
+	;--- WRAPF: more rows of text than lines, or a line cut off ---
+	INR	A
+	LXI	H,TXEND
+	SUB	M
+	LXI	H,FILCH
+	JNZ	LY_W1
+	MOV	A,M
+	CPI	'~'
+	MVI	A,0
+	JZ	LY_W2
+LY_W1:
+	MVI	A,1
+LY_W2:
+	LXI	H,LYXE
+	ORA	M
+	STA	WRAPF
 	LDA	LYROW		; WINROW = row
 	MOV	L,A
 	MVI	H,0
@@ -1013,7 +1136,6 @@ LY_BOT:
 	DAD	D
 	SHLD	SCRLN
 	CALL	TABCUR
-	CALL	HPAN
 	LHLD	SVCNT
 	SHLD	CMDCNT
 	LHLD	SVAUX
@@ -1022,11 +1144,335 @@ LY_BOT:
 	STA	DIRFLG
 	RET
 
+;FLINE -- read forward to the end of the line the reader (HL/BC, as RDGET
+; keeps them) is in.  D = the row being filled, E = the cells used in it, LYVB
+; the column that row starts at; all three are kept up.  A row is left only
+; when there is a cell more to put, so a line just as wide as the screen is
+; one row.
+;   A = 0    the line ended, its LF read
+;   A = 1    it needs a row the screen has not got (D = NEDIT)
+;   A = 0FFH the text ended
+FLINE:
+	CALL	RDGET		; (pages in on demand; keeps DE)
+	JC	FL_EOF
+	STA	LYLAST
+	CPI	LF
+	JZ	FL_LF
+	CPI	CR
+	JZ	FLINE		; CR contributes no display column
+	CPI	TAB
+	JZ	FL_TAB
+	CALL	FL_CEL
+	JNZ	FLINE
+FL_OVR:
+	MVI	A,1
+	RET
+FL_TAB:
+	LDA	LYVB		; TAB: the cells to the next multiple of TABWID
+	ADD	E
+	ANI	TABWID-1
+	CMA
+	ADI	TABWID+1
+	PUSH	H
+	MOV	L,A
+FT_LP:
+	CALL	FL_CEL
+	JZ	FT_OVR
+	DCR	L
+	JNZ	FT_LP
+	POP	H
+	JMP	FLINE
+FT_OVR:
+	POP	H
+	JMP	FL_OVR
+FL_LF:
+	XRA	A
+	RET
+FL_EOF:
+	MVI	A,0FFH
+	RET
+;FL_CEL -- one more cell on the line.  Z if that takes a row the screen has
+; not got.  Keeps HL, BC.
+FL_CEL:
+	LDA	NCOLS
+	CMP	E
+	JNZ	FC_1
+	MVI	E,0		; the row is full: the next one, starting NCOLS on
+	INR	D
+	PUSH	H
+	LXI	H,LYVB
+	ADD	M
+	MOV	M,A
+	POP	H
+	LDA	NEDIT
+	CMP	D
+	RZ
+FC_1:
+	INR	E		; (NZ)
+	RET
+
+;LYMID -- the cursor's line is to go in the middle of the screen (WFILL =
+; WF_MID): LYROW = the lines that leaves above it.  This is vim's
+; scroll_cursor_halfway, which counts ROWS: starting with the cursor's line,
+; take a line below while the rows below are no more than those above, then
+; a line above while there are fewer above than below, until a line will not
+; fit.  Past the end of the file a '~' row counts as a row below that costs
+; nothing, so there the screen fills from above; at the start of the file it
+; stops.  Clears WFILL.
+LYMID:
+	XRA	A
+	STA	WFILL
+	STA	LYROW
+	STA	LYMAB
+	STA	LYMBL
+	STA	LYMEOF
+	LDA	NEDIT
+	DCR	A
+	MOV	L,A
+	MVI	H,0
+	CALL	LINPSB		; as far up as the screen could ever reach
+	CALL	G2P
+	SHLD	LYLIM
+	INR	H
+	SHLD	WRLIM		; (and none of it spilled while reading down)
+	LHLD	GAPBEG
+	CALL	PRVL0		; HL = the cursor line's start, BC = bytes to here
+	CALL	LM_LNW		; DE = the columns before the cursor
+	XCHG
+	PUSH	H
+	CALL	DIVN		; BC = rows into the line, A = cells in that row
+	POP	H
+	MOV	E,A
+	MOV	A,L
+	SUB	E
+	STA	LYVB
+	MOV	A,B
+	ORA	A
+	RNZ			; (taller than the screen)
+	MOV	D,C
+	LDA	NEDIT
+	DCR	A
+	CMP	D
+	RC			; (taller than the screen)
+	CALL	RGET0
+	CALL	LM_FL		; ... and the rest of it
+	JP	LM_1
+	STA	LYMEOF		; the text ends with it
+	XRA	A
+LM_1:
+	RNZ			; (taller than the screen)
+	MOV	A,D
+	INR	A
+	STA	LYUSE		; the rows taken so far: its own
+LM_LP:
+	LDA	LYMAB
+	LXI	H,LYMBL
+	CMP	M
+	JC	LM_UP		; more below than above
+	LDA	LYMEOF
+	ORA	A
+	JNZ	LM_TL
+	CALL	LM_NX		; the next line below
+	JP	LM_B1
+	STA	LYMEOF		; the text ended: was that a line?
+	LDA	LYLAST
+	CPI	LF
+	JZ	LM_TL
+	XRA	A
+LM_B1:
+	RNZ			; one taller than the screen: nothing more fits
+	MOV	A,D
+	INR	A		; its rows
+	CALL	LM_ADD
+	RC
+	LXI	H,LYMBL
+	ADD	M
+	MOV	M,A
+	JMP	LM_AB
+LM_TL:
+	LXI	H,LYMBL		; a '~' row
+	INR	M
+LM_AB:
+	LDA	LYMAB
+	LXI	H,LYMBL
+	CMP	M
+	JNC	LM_LP
+LM_UP:
+	LHLD	LYUP		; the next line above
+	CALL	G2P
+	CALL	PRVLN
+	RC			; the start of the file
+	CALL	LM_LNW
+	XCHG
+	CALL	XTRA		; BC = its rows, less one
+	MOV	A,B
+	ORA	A
+	RNZ
+	MOV	A,C
+	INR	A
+	RZ
+	CALL	LM_ADD
+	RC
+	LXI	H,LYMAB
+	ADD	M
+	MOV	M,A
+	LXI	H,LYROW
+	INR	M
+	JMP	LM_LP
+
+;LM_ADD -- A = a line's rows: CY if the screen has not that many left, else
+; they are taken (LYUSE) and A is kept.
+LM_ADD:
+	MOV	B,A
+	LDA	LYUSE
+	ADD	B
+	RC
+	MOV	C,A
+	LDA	NEDIT
+	CMP	C		; CY iff NEDIT < the rows that would make
+	RC
+	MOV	A,C
+	STA	LYUSE
+	MOV	A,B
+	RET
+
+;LM_NX -- read the next line below: D = its last row, counted from 0.  A and
+; the flags are FLINE's answer.  The reader is kept in RDHL/RDBC between
+; lines, the registers being wanted for the lines above.
+;LM_FL -- the same, from where D, E, LYVB and the reader (HL/BC) stand.
+LM_NX:
+	LXI	D,0
+	XRA	A
+	STA	LYVB
+	LHLD	RDBC
+	MOV	B,H
+	MOV	C,L
+	LHLD	RDHL
+LM_FL:
+	CALL	FLINE
+	SHLD	RDHL
+	MOV	H,B
+	MOV	L,C
+	SHLD	RDBC
+	ORA	A
+	RET
+
+;LM_LNW -- HL = the start of a line above (or the cursor's), BC = its bytes:
+; note it as the highest line taken (LYUP) and measure it (LNW).
+LM_LNW:
+	PUSH	H
+	CALL	G2P
+	SHLD	LYUP
+	POP	H
+	JMP	LNW
+
+;PRVLN -- HL = the start of a line: HL = the start of the line before it, BC
+; = that line's bytes.  CY if there is none (LYLIM: the text ends there).
+;PRVL0 -- the same from inside a line, back to its own start.
+PRVLN:
+	CALL	PVLIM
+	CALL	CMP16
+	STC
+	RZ
+	DCX	H		; its LF
+	LXI	B,1
+	JMP	PV_LP
+PRVL0:
+	CALL	PVLIM
+	LXI	B,0
+PV_LP:
+	CALL	CMP16
+	RZ			; (NC) as far up as the text goes
+	DCX	H
+	MOV	A,M
+	CPI	LF
+	JZ	PV_DN
+	INX	B
+	JMP	PV_LP
+PV_DN:
+	INX	H
+	ORA	A
+	RET
+;PVLIM -- DE = the address LYLIM stands for.  Keeps HL.
+PVLIM:
+	PUSH	H
+	LHLD	LYLIM
+	CALL	G2P
+	XCHG
+	POP	H
+	RET
+
+;LYTOPP -- HL = the top line's start, BC = TOPLEN, the bytes from there to
+; the cursor.
+;G2P -- HL = a count of bytes back from the cursor: HL = that address.  And
+; the other way about: an address in, its count out.  A refill moves the text,
+; so anything kept across a forward read is kept as the count.  Keeps BC.
+LYTOPP:
+	LHLD	TOPLEN
+	MOV	B,H
+	MOV	C,L
+G2P:
+	XCHG
+	LHLD	GAPBEG
+	JMP	SUBHD
+
+;LNW -- measure one line.  HL = its text, BC = the bytes there are: DE = its
+; width in columns (tabs expanded), HL/BC past it.  CY when it ended with its
+; LF, NC when the bytes ran out first.
+LNW:
+	LXI	D,0
+LNW_LP:
+	MOV	A,B
+	ORA	C
+	RZ
+	MOV	A,M
+	INX	H
+	DCX	B
+	CPI	LF
+	JZ	LNW_LF
+	CPI	CR
+	JZ	LNW_LP		; CR contributes no display column
+	CPI	TAB
+	JNZ	LNW_1
+	MOV	A,E		; TAB: to the next multiple of TABWID
+	ORI	TABWID-1
+	MOV	E,A
+LNW_1:
+	INX	D
+	JMP	LNW_LP
+LNW_LF:
+	STC
+	RET
+
+;LYLEND -- LAYOUT's forward read: a line ended on row D.  The next starts on
+; the row under it.  A line that ends with a row it has put nothing on is the
+; cursor's, standing past text that filled the row above (an insert at the
+; end of a line just as wide as the screen): WR_EOL.  Keeps HL, BC.
+LYLEND:
+	MOV	A,E
+	ORA	A
+	JNZ	LE_1
+	LDA	LYLST
+	CMP	D
+	JZ	LE_1		; (its first row: an empty line)
+	MVI	A,WR_EOL+1
+	STA	LYXE
+LE_1:
+	INR	D
+	MOV	A,D
+	STA	LYLST
+	XRA	A
+	MOV	E,A
+	STA	LYVB
+	LDA	LYEND
+	INR	A
+	STA	LYEND
+	RET
+
 ;LYFAR -- vim's rule (NOT WordMaster) for a cursor line that left the screen,
 ; measured on vim 9.1 with a 23-row window: up to NEDIT/2+1 lines below the
 ; bottom row or NEDIT/2-2 above the top row, the screen scrolls to it (CURRW's
-; clamp); farther, it goes on the middle row, the rows filled from above at
-; the end of the file (WFILL) and clamped at its start.
+; clamp); farther, it goes in the middle of the screen (LYMID).
 LYFAR:
 	LHLD	WINROW
 	XCHG
@@ -1058,15 +1504,10 @@ LF_DN:
 	RC
 	RZ
 LF_FAR:
-	LDA	NEDIT
-	ORA	A
-	RAR
-	STA	LYROW
-	MVI	A,1
+	MVI	A,WF_MID
 	STA	WFILL
 	RET
 
-;HPAN -- adjust HSCROL so the cursor's display column is on screen; set WINRT.
 ;TABCUR -- in command mode a cursor on a TAB shows on the tab's last column,
 ; as vi does (insert mode keeps it at the tab's first column, where the next
 ; char goes).  The char is resident at GAPEND after LAYOUT's forward read.
@@ -1087,46 +1528,6 @@ TABCUR:
 	ORI	TABWID-1
 	MOV	L,A
 	SHLD	CURDCL
-	RET
-
-HPAN:
-	LHLD	CURDCL		; if CURDCL < HSCROL -> HSCROL = CURDCL
-	XCHG
-	LHLD	HSCROL
-	CALL	CMP16
-	JNC	HP_HI
-	LHLD	CURDCL
-	SHLD	HSCROL
-	JMP	HP_WR
-HP_HI:				; if CURDCL >= HSCROL+NCOLS -> pan right
-	MVI	H,0
-	LDA	NCOLS
-	MOV	L,A
-	XCHG			; DE = NCOLS
-	LHLD	HSCROL
-	DAD	D
-	XCHG			; DE = HSCROL + NCOLS
-	LHLD	CURDCL
-	CALL	CMP16
-	JC	HP_SCR
-	JZ	HP_SCR
-	JMP	HP_WR
-HP_SCR:
-	LDA	NCOLS		; HSCROL = CURDCL - (NCOLS-1)
-	DCR	A
-	MOV	E,A
-	MVI	D,0
-	LHLD	CURDCL
-	CALL	SUBHD
-	SHLD	HSCROL
-HP_WR:
-	MVI	H,0		; WINRT = HSCROL + NCOLS (right edge, exclusive)
-	LDA	NCOLS
-	MOV	L,A
-	XCHG
-	LHLD	HSCROL
-	DAD	D
-	SHLD	WINRT
 	RET
 
 ;============================================================
@@ -1210,23 +1611,24 @@ RSK_LP:
 	JNZ	RSK_LP
 	RET
 
-;PAINTR -- paint screen row PROWN: its text, or '~' past the last text row.
-; The reader must be at that row's line.  Row already cleared by ESC[K.
+;PAINTR -- paint from screen row PROWN: the reader's line, on as many rows as
+; it takes, or the fill char on a row past the text ('~'; '@' where a line did
+; not fit).  The reader must be at that row's line.  Row already cleared.
 PAINTR:
-	LDA	SCBOT
-	MOV	B,A
 	LDA	PROWN
-	CMP	B		; CY iff row < SCBOT; Z iff equal
+	LXI	H,TXEND
+	CMP	M		; CY iff the row holds text
 	JC	PROW
-	JZ	PROW
-	MVI	A,'~'
+	LDA	FILCH
 	JMP	OUTCH
 
-;PROW -- paint the reader's line: expand tabs, pan by HSCROL, clip to the
-; [HSCROL,WINRT) window; the reader ends past the line's LF (or at the end).
+;PROW -- paint the reader's line: tabs expanded, and on to the next row when
+; this one is full and there is more (PROWN follows it down).  The reader ends
+; past the line's LF (or at the end).
 PROW:
-	LXI	H,0
-	SHLD	DCOL
+	XRA	A
+	STA	DCOL
+	STA	XC
 PR_LP:
 	CALL	RDCH
 	RC			; end of text -> line done
@@ -1236,57 +1638,55 @@ PR_LP:
 	JZ	PR_LP		; drop CR (part of the CR,LF break)
 	CPI	TAB
 	JZ	PR_TAB
-	MOV	B,A
-	CALL	VISOK		; printable
-	ORA	A
-	JZ	PR_NOEM
-	MOV	A,B
-	CALL	OUTCH
-PR_NOEM:
-	LHLD	DCOL
-	INX	H
-	SHLD	DCOL
+	CALL	PCELL
 	JMP	PR_LP
 PR_TAB:
-	LHLD	DCOL		; spaces = 8 - (dcol mod 8)
-	MOV	A,L
+	LDA	DCOL		; spaces = 8 - (dcol mod 8)
 	ANI	7
 	MOV	C,A
 	MVI	A,8
 	SUB	C
 	MOV	C,A		; C = space count (1..8)
 PRTBLP:
-	MOV	A,C
-	ORA	A
-	JZ	PR_LP
-	CALL	VISOK		; preserves BC
-	ORA	A
-	JZ	PR_TNOEM
 	MVI	A,' '
-	CALL	OUTCH
-PR_TNOEM:
-	LHLD	DCOL
-	INX	H
-	SHLD	DCOL
+	CALL	PCELL		; (keeps C)
 	DCR	C
-	JMP	PRTBLP
+	JNZ	PRTBLP
+	JMP	PR_LP
 
-;VISOK -- A = 1 if DCOL is inside [HSCROL, WINRT), else 0.  Preserves BC.
-VISOK:
-	LHLD	DCOL
-	XCHG
-	LHLD	HSCROL
-	CALL	CMP16		; CY iff dcol < hscrol
-	JC	VIS_NO
-	LHLD	DCOL
-	XCHG
-	LHLD	WINRT
-	CALL	CMP16		; CY iff dcol < winrt (visible)
-	JNC	VIS_NO
-	MVI	A,1
+;PCELL -- put the char in A on the next cell of the line.  Keeps C.
+PCELL:
+	MOV	B,A
+	LXI	H,DCOL
+	INR	M
+	LDA	NCOLS
+	LXI	H,XC
+	CMP	M
+	CZ	PWRAP		; the row is full: this one starts the next
+	INR	M
+	MOV	A,B
+	JMP	OUTCH
+;PWRAP -- on to the next row, cleared (CR,LF: the terminal's own wrap is not
+; relied on).  From the last edit row there is nowhere to go: the rest of the
+; line is not shown, and PROW returns to its caller from here.
+PWRAP:
+	MVI	M,0
+	LDA	NEDIT
+	DCR	A
+	LXI	H,PROWN
+	CMP	M
+	JZ	PW_END
+	INR	M
+	MVI	A,CR
+	CALL	OUTCH
+	MVI	A,LF
+	CALL	OUTCH
+	CALL	CEKL		; (keeps BC)
+	LXI	H,XC
 	RET
-VIS_NO:
-	XRA	A
+PW_END:
+	POP	H		; PCELL's return, and PROW's
+	POP	H
 	RET
 
 ;MODEMS -- the mode message on the bottom row, as vim writes it: '-- INSERT --'
@@ -1365,26 +1765,42 @@ NROWS:	DB	24		; runtime rows    (default; DSR may enlarge)
 NCOLS:	DB	80		; runtime columns
 NEDIT:	DB	23		; edit rows = NROWS-1 (messages take the last)
 
-WINROW: DW	0		; cursor line's screen row, 0-based (WM WINROW)
-HSCROL: DW	0		; 0-based first visible display column (h-pan)
+WINROW: DW	0		; lines on the screen above the cursor's (WM WINROW)
 OLDWR:	DW	0		; WINROW as displayed before this frame
-OLDHS:	DW	0		; HSCROL as displayed before this frame
+WRAPF:	DB	0		; this frame: 0, 1 = a line wraps, WR_EOL and up =
+				;   ... and the cursor has a row to itself
+OLDWF:	DB	0		; WRAPF as displayed before this frame
 SCRLN:	DW	0		; lines the text moved up this frame (signed)
 FORCEF: DB	0		; 1 = an aborted frame is pending -> force full repaint
 OEDMOD: DB	EM_CMD		; the mode the bottom row last showed (0FFH: unknown)
 
-SCBOT:	DB	0		; last row holding text
+SCBOT:	DB	0		; WINROW of the last line shown
+TXEND:	DB	1		; the first row with no text on it
+FILCH:	DB	'~'		; what such a row shows: '~', or '@' for a line cut
 SCEOF:	DB	0		; 1 = the end of the file is on the screen
 SCBOF:	DB	0		; 1 = the top row is the file's first line
-WFILL:	DB	0		; 1 = fill '~' rows from above (one layout)
+WFILL:	DB	0		; 1 = fill '~' rows from above (one layout);
+				;   WF_MID = put the cursor's line mid-screen
 
 TOPLEN: DW	0		; bytes from the top line's start to the cursor
 CBOL:	DW	0		; bytes from the cursor line's start to the cursor
 CURDCL: DW	0		; cursor display column (0-based, tabs expanded)
+LYABV:	DW	0		; rows the lines above the cursor's take
 LYDLT:	DW	0		; LAYOUT: LNDLT taken for this frame
 LYROW:	DB	0		; LAYOUT: working row
-LYNEED: DB	0		; LAYOUT: LFs that fill the rows from the cursor's down
-LYBLW:	DB	0		; LAYOUT: text rows below the cursor's
+LYNEED: DW	0		; LAYOUT: rows to free at the top
+LYBLW:	DB	0		; LAYOUT: lines shown below the cursor's
+LYEND:	DB	0		; LAYOUT: lines that ended in the forward read
+LYLST:	DB	0		; LAYOUT: the row the line being read starts on
+LYVB:	DB	0		; LAYOUT: the column its current row starts at (low
+				;   byte: TAB stops)
+LYLIM:	DW	0		; LYMID: bytes back to the highest line there is
+LYUP:	DW	0		; LYMID: bytes back to the highest line taken
+LYUSE:	DB	0		; LYMID: rows taken
+LYMAB:	DB	0		; LYMID: ... of them above the cursor's line
+LYMBL:	DB	0		; LYMID: ... and below it ('~' rows too)
+LYMEOF: DB	0		; LYMID: the text has ended
+LYXE:	DB	0		; LAYOUT: WR_EOL+1 when the cursor has its own row
 LYLAST: DB	0		; LAYOUT: last byte read forward
 SVCNT:	DW	0		; LAYOUT: saved CMDCNT
 SVAUX:	DW	0		; LAYOUT: saved AUXCNT
@@ -1398,8 +1814,8 @@ RDSEG:	DB	0		; reader: 1 once reading after the gap
 SKPN:	DB	0		; RDSKIP line count
 PROWN:	DB	0		; screen row being painted (0-based)
 SCLN:	DB	0		; region-scroll line count (N, 1..NEDIT-1)
-DCOL:	DW	0		; display column while painting a row
-WINRT:	DW	0		; HSCROL + NCOLS (visible window right edge)
+DCOL:	DB	0		; column in the line while painting (low byte)
+XC:	DB	0		; cells used in the row being painted
 ROWCT:	DB	0		; RI count (SCBWD)
 ILLAST: DB	0		; ... and the last screen row it draws
 

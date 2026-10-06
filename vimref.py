@@ -9,8 +9,8 @@ asking it, after each key, for
 
 the cursor's line, the window's top line, and the cursor's screen row and
 column (0-based) -- exactly the four numbers the accept tests read off VI's
-screen.  vim runs on a 24x80 pty with 'nowrap' (this editor pans a long line,
-it never wraps) and no user configuration:
+screen.  vim runs on a 24x80 pty with 'wrap', its default and this editor's
+only way with a long line, and no user configuration:
 
     vim -n -u NONE -N -i NONE -c 'set lines=24 columns=80' -s keys.vim FILE
 
@@ -42,8 +42,7 @@ line end -- what the editor is expected to write.
 
 A table whose rows also carry text (the cursor and top lines, and a hash of the
 file vim wrote, as the editing groups need) is replayed the same way, with
-'getline' and a ':w' added to the recording -- VIM_INS is such a group.  VIM_BS
-and VIM_NDD are not driven from here.
+'getline' and a ':w' added to the recording -- VIM_INS is such a group.
 """
 import ast
 import fcntl
@@ -95,9 +94,12 @@ GROUPS = {
     'marks': ('VIM_MARKS', None),
     'find': ('VIM_FIND', None),
     'rdwr': ('VIM_RDWR', None),
+    'wrap': ('VIM_WRAP', None),
+    'bs': ('VIM_BS', None),
+    'ndd': ('VIM_NDD', None),
 }
 TEXT = {'ins', 'ops', 'opmx', 'put', 'srch', 'dot', 'undo', 'undoat', 'subst', 'marks', 'find',
-        'rdwr'}  # rows carrying text + a file hash
+        'rdwr', 'bs', 'ndd'}  # rows carrying text + a file hash
 
 # Rows the final-line-end fold must NOT be applied to.  The fold exists because
 # this editor writes a file back as it read it, without the line end vim
@@ -152,6 +154,7 @@ def content(name):
         _HML.update(A['find_files']())              # + fd
         _HML.update(A['rdwr_files']())              # + rw
         _HML.update(A['opmx_files']())              # + ox
+        _HML.update(A['wrap_files']())              # + w1 w2
     if name in _HML:
         return lf(_HML[name])
     if name == 'indent':
@@ -192,7 +195,7 @@ def run(path, keys, timeout=30, rec=REC, wrote=None, arg=None, start=False,
         os.chdir(d)                 # a ':w {file}' in the keys lands in the
                                     #   work directory, not in the repo
         os.execvp('vim', ['vim', '-n', '-u', 'NONE', '-N', '-i', 'NONE',
-                          '--cmd', 'set nowrap',
+                          '--cmd', 'set wrap',
                           '-c', 'let g:r=[]', '-c', 'set lines=24 columns=80']
                          + ([arg] if arg else []) + ['-s', script, path])
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', 24, 80, 0, 0))
@@ -208,6 +211,7 @@ def run(path, keys, timeout=30, rec=REC, wrote=None, arg=None, start=False,
     else:
         os.kill(pid, 9)
     os.waitpid(pid, 0)
+    os.close(fd)
     if not os.path.exists(out):
         raise RuntimeError(f'vim did not finish: {path} {keys!r}')
     with open(out) as f:
@@ -233,23 +237,28 @@ def replay(group, work):
             f, keys, csha, want = row
         else:
             f, keys, want = (deflt,) + row if len(row) == 2 else row
+        # the two oldest tables name a plain numbered file by its line count
+        # even where an 'hml' file has that name ('1', '2', '3')
+        data = (lf(A['make'](f)) if group in ('bs', 'ndd') and isinstance(f, int)
+                else content(str(f)))
         path = os.path.join(work, 'ref_%s.txt' % f)
         with open(path, 'wb') as fh:
-            fh.write(content(str(f)))
+            fh.write(data)
         if group == 'ctrlg':
-            yield f, keys, want, run(path, [':set nowrap\r'] + list(keys),
+            yield f, keys, want, run(path, [':set wrap\r'] + list(keys),
                                      rec=RECG)[1:]
             continue
         if not text:
-            yield f, keys, want, run(path, [':set nowrap\r'] + list(keys))[1:]
+            yield f, keys, want, run(path, [':set wrap\r'] + list(keys))[1:]
             continue
         wrote = os.path.join(work, 'wrote.txt')
-        got = run(path, [':set nowrap\r'] + list(keys), rec=RECT, wrote=wrote,
+        pre = ':set wrap backspace=indent,eol,start\r' if group == 'bs' else ':set wrap\r'
+        got = run(path, [pre] + list(keys), rec=RECT, wrote=wrote,
                   sync=USYNC if group in ('undo', 'undoat', 'subst', 'rdwr', 'opmx')
                   else '')[1:]
         with open(wrote, 'rb') as fh:
             out = fh.read()         # already CRLF: the write set 'ff=dos'
-        if (not content(str(f)).endswith(b'\n') and out.endswith(b'\r\n')
+        if (not data.endswith(b'\n') and out.endswith(b'\r\n')
                 and (str(f), tuple(keys)) not in NOFOLD):
             out = out[:-2]      # see the final-line-end note at the top
         sha = hashlib.sha1(out).hexdigest()[:16]

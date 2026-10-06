@@ -39,7 +39,7 @@ SANDBOX = os.path.join(HERE, "_fastcheck")
 # 2026-09-18: ops 361s, srch 269s, ins 263s ... ex 12s.  The wall time is
 # whichever single group is longest, so that is what to split next.
 GROUPS = ['ops', 'opmx', 'after', 'limits', 'srch', 'subst', 'marks', 'ins', 'put', 'file', 'ndd', 'dot', 'undo', '100k',
-          'find', 'pgop', 'qfull', 'lnum', 'rdwr', 'brk',
+          'find', 'wrap', 'pgop', 'qfull', 'lnum', 'rdwr', 'brk',
           'ctrlg',
           'bs', 'goto', 'arg', 'mot', '40k', 'scrolls', '2k', 'hml', 'one',
           'full', 'jk', 'empty', 'ex']
