@@ -4,12 +4,11 @@
 ; MODULE:  Command-layer exerciser (test harness -- NOT editor code).
 ;
 ; Drives KEY.MAC + CMD.MAC headlessly: it supplies scripted BCONST/BCONIN so the
-; whole GETKEY-decode + VICMD-dispatch + edit + ex + search path runs without a
+; whole GETKEY + VICMD-dispatch + edit + ex + search path runs without a
 ; terminal, exactly as SCRN.MAC's BIOS console feeds it live.
 ;
-;   BCONST always reports "not ready" -> every ESC is a lone ESC (GK_POLL times
-;   out).  So arrow ESC-sequences are not exercised here (they need real console
-;   timing), and no harness here exercises the CSI/SS3 decoder.
+;   BCONST always reports "not ready", so the type-ahead ring stays empty and
+;   every key is a blocking read.
 ;   BCONIN replays KSCRIPT byte by byte.  A 01H byte in the script is a SNAPSHOT
 ;   sentinel: BCONIN calls QSNAP (freezing TOFFV/TLINEV/TCOLV at that instant --
 ;   BEFORE a following :w tears the buffer down) and returns the next real byte.

@@ -217,9 +217,8 @@ def edit_deep(label, n):
 
 
 def send_keys(e, k):
-    """Type *k*.  A lone ESC is confirmed only after ESCTMO keyboard polls, which
-    run_until_quiet reads as idle, so after an ESC keep running until the editor
-    is back in command mode.  Long text goes in 400-byte bursts."""
+    """Type *k*.  After an ESC keep running until the editor is back in
+    command mode.  Long text goes in 400-byte bursts."""
     if k == '\x1b':
         e.key(k)
         for _ in range(200):
@@ -5674,7 +5673,7 @@ def paint_cost():
             check(f'insert {k!r}: entering insert does not repaint ({got} '
                   f'bytes, the frame it skipped is {full})', got < 64)
             before = len(e.cap.getvalue())
-            send_keys(e, '\x1b')         # a lone ESC settles on a timeout
+            send_keys(e, '\x1b')
             esc = len(e.cap.getvalue()) - before
             check(f'insert {k!r}: the ESC leaving insert does not repaint '
                   f'({esc} bytes)', esc < 64)
@@ -5941,10 +5940,8 @@ def ctrlg(e):
 
 
 def escaped(e):
-    """ESC, plus the settle GETKEY's lone-ESC timeout needs before the screen
-    can be read.  While that countdown runs the guest draws nothing, and
-    run_until_quiet reads 'drew nothing' as 'settled' -- the same trap
-    ex_settled covers for a compute-bound ':s'."""
+    """ESC, run until the bottom row has changed: the mode message going is
+    what says the insert has ended."""
     was = bottom(e)
     e.key('\x1b')
     for _ in range(25):
@@ -7156,13 +7153,9 @@ def marks_like_vim():
             for k, (wrow, wcol, wcur, wtop) in zip(keys, want):
                 e.key(k)
                 if '\x1b' in k:
-                    # A lone ESC parks GETKEY in GK_POLL waiting for a sequence
-                    # continuation that is not coming, and that wait is SILENT.
-                    # run_until_quiet's 0.33 s of quiet therefore expires while
-                    # the key is still undispatched, so a repaint RPOLL aborted
-                    # (because this very ESC was waiting) has not been made good
-                    # yet.  Wait for the editor, rather than reading the screen
-                    # mid-keystroke and calling the stale text a bug.
+                    # A repaint RPOLL aborted because this ESC was waiting
+                    # may not have been made good yet: wait for the editor
+                    # rather than read the screen mid-keystroke.
                     e.s.run_until_quiet(quiet=1.5, timeout=40)
                 r = rows(e); v = e.screen()
                 hs = int.from_bytes(bytes(e.s.mem(SYM['HSCROL'], 2)), 'little')
@@ -8192,10 +8185,12 @@ def run_for(e, seconds):
 
 
 def brk_cmds():
-    """'^C' abandons a search or a long move: the cursor and the screen go back
+    """ESC abandons a search or a long move: the cursor and the screen go back
     to where the command started, the bottom row says so, and whatever was
     typed ahead is thrown away with it.  Only commands that change no text are
-    stopped; a delete that pages runs to its end, '^C' or not."""
+    stopped; a delete that pages runs to its end, ESC or not.  '^C' is not the
+    key for it, and a key that SENDS an ESC sequence (an arrow, PgDn) is not
+    decoded: its bytes are keystrokes like any others."""
     big = make(12800)
 
     def start(e, ln):
@@ -8203,33 +8198,33 @@ def brk_cmds():
         idle(e)
 
     def cancel(e, keys, ln, tag, after=4.0, ahead='', limit=30):
-        """*keys* from line *ln*, '^C' *after* seconds into them."""
+        """*keys* from line *ln*, 'ESC' *after* seconds into them."""
         v0 = e.screen()
         scr0 = [''.join(r) for r in v0.screen]
         idle(e)
         t0 = tstates(e)
         e.s.send(keys)
         run_for(e, after)
-        e.s.send(ahead + '\x03')
+        e.s.send(ahead + '\x1b')
         idle(e)
         took = (tstates(e) - t0) / 2e6
         v = e.screen()
         scr = [''.join(r) for r in v.screen]
-        check(f'{tag}: {keys!r} ^C says so ({bottom(e)!r})',
+        check(f'{tag}: {keys!r} ESC says so ({bottom(e)!r})',
               bottom(e) == 'Interrupted')
-        check(f'{tag}: {keys!r} ^C keeps the screen and the cursor',
+        check(f'{tag}: {keys!r} ESC keeps the screen and the cursor',
               scr[:23] == scr0[:23] and (v.row, v.col) == (v0.row, v0.col))
-        check(f'{tag}: {keys!r} ^C is back in {took:.1f} s ({limit} allowed)',
+        check(f'{tag}: {keys!r} ESC is back in {took:.1f} s ({limit} allowed)',
               took < limit)
         e.s.send('\x07')
         idle(e)
-        check(f'{tag}: {keys!r} ^C leaves the cursor on line {ln} '
+        check(f'{tag}: {keys!r} ESC leaves the cursor on line {ln} '
               f'({bottom(e)!r})', f'line {ln} ' in bottom(e))
         e.s.send('\x0c')
         idle(e)
         v = e.screen()
         scr = [''.join(r) for r in v.screen]
-        check(f'{tag}: {keys!r} ^C and a repaint draws the same screen',
+        check(f'{tag}: {keys!r} ESC and a repaint draws the same screen',
               scr[:23] == scr0[:23] and (v.row, v.col) == (v0.row, v0.col))
 
     # --- the moves and the searches, each stopped part of the way there.
@@ -8242,7 +8237,9 @@ def brk_cmds():
         cancel(e, 'G', 6000, 'brk G')
         cancel(e, 'gg', 6000, 'brk gg')
         cancel(e, '12000G', 6000, 'brk 12000G')
-        cancel(e, '/zzzz\r', 6000, 'brk /')
+        # ('/' has come back in 27 to 31 s over many runs: the moment the ESC
+        #  lands is not exact.  Left alone it takes 65.)
+        cancel(e, '/zzzz\r', 6000, 'brk /', limit=45)
         cancel(e, '?zzzz\r', 6000, 'brk ?')
         cancel(e, 'n', 6000, 'brk n')
         cancel(e, 'N', 6000, 'brk N')
@@ -8263,20 +8260,20 @@ def brk_cmds():
         got = ''.join(v.screen[v.row]).rstrip()
         check(f"brk: 'a left alone still goes to its mark ({got!r})",
               got == txt(6000))
-        # --- what was typed ahead goes with it: an 'x' before the ^C and one
+        # --- what was typed ahead goes with it: an 'x' before the ESC and one
         #     while the window pages back are both dropped ---
         v0 = e.screen()
         e.s.send('G')
         run_for(e, 4.0)
-        e.s.send('xx\x03')
+        e.s.send('xx\x1b')
         run_for(e, 0.5)
         e.s.send('x')
         idle(e)
-        check(f"brk: G xx^C x says Interrupted ({bottom(e)!r})",
+        check(f"brk: G xxESC x says Interrupted ({bottom(e)!r})",
               bottom(e) == 'Interrupted')
         e.s.send('\x07')
         idle(e)
-        check(f"brk: G xx^C x changed nothing ({bottom(e)!r})",
+        check(f"brk: G xxESC x changed nothing ({bottom(e)!r})",
               'line 6000 ' in bottom(e) and '[+]' not in bottom(e)
               and 'Modified' not in bottom(e))
         # ... and a key typed once it is back is a key again
@@ -8285,6 +8282,34 @@ def brk_cmds():
         v = e.screen()
         got = ''.join(v.screen[v.row]).rstrip()
         check(f'brk: j afterwards moves a line ({got!r})', got == txt(6001))
+        # --- an arrow key's first byte is an ESC, so it stops the move too,
+        #     and the rest of it goes with the type-ahead: the 'A' that ends
+        #     a cursor-up must not open an insert ---
+        e.s.send('6000G')
+        idle(e)
+        e.s.send('G')
+        run_for(e, 4.0)
+        e.s.send('\x1b[A')
+        idle(e)
+        check(f"brk: G then an arrow key says Interrupted ({bottom(e)!r})",
+              bottom(e) == 'Interrupted')
+        e.s.send('j\x07')
+        idle(e)
+        check(f"brk: ... and its last byte opened no insert ({bottom(e)!r})",
+              'line 6001 ' in bottom(e) and 'Modified' not in bottom(e))
+        # --- '^C' is not the key: the move runs to its end ---
+        e.s.send('6000G')
+        idle(e)
+        e.s.send('G')
+        run_for(e, 4.0)
+        e.s.send('\x03')
+        idle(e)
+        check(f"brk: G ^C is not interrupted ({bottom(e)!r})",
+              bottom(e) != 'Interrupted')
+        e.s.send('\x07')
+        idle(e)
+        check(f"brk: G ^C still went to the last line ({bottom(e)!r})",
+              'line 12800 ' in bottom(e) and 'Modified' not in bottom(e))
         check('brk: nothing was changed (:q exits)', at_ccp(e, ':q\r'))
     finally:
         e.close()
@@ -8295,45 +8320,70 @@ def brk_cmds():
         start(e, 6000)
         e.s.send('dG')
         run_for(e, 4.0)
-        e.s.send('\x03')
+        e.s.send('\x1b')
         idle(e)
-        check(f"brk: dG ^C is not interrupted ({bottom(e)!r})",
+        check(f"brk: dG ESC is not interrupted ({bottom(e)!r})",
               bottom(e) != 'Interrupted')
         e.s.send('\x07')
         idle(e)
-        check(f"brk: dG ^C still deleted to the end ({bottom(e)!r})",
+        check(f"brk: dG ESC still deleted to the end ({bottom(e)!r})",
               'line 5999 ' in bottom(e))
         e.s.send(':w\r')
         idle(e)
         got = saved_bytes(e)
-        check(f'brk: dG ^C saved {len(got)} bytes, the first 5999 lines',
+        check(f'brk: dG ESC saved {len(got)} bytes, the first 5999 lines',
               got == big[:5999 * 8])
     finally:
         e.close()
 
-    # --- '^C' with nothing running is no cancel waiting to happen: the next
+    # --- 'ESC' with nothing running is no cancel waiting to happen: the next
     #     move goes where it is sent ---
     e = Editor(big)
     try:
-        e.s.send('\x03')
+        e.s.send('\x1b')
         idle(e)
         e.s.send('300G')
         idle(e)
         v = e.screen()
         got = ''.join(v.screen[v.row]).rstrip()
-        check(f'brk: ^C at rest, then 300G goes to line 300 ({got!r})',
+        check(f'brk: ESC at rest, then 300G goes to line 300 ({got!r})',
               got == txt(300) and bottom(e) != 'Interrupted')
         # ... and one that arrives after a short move is done cancels nothing
         e.s.send('310G')
         idle(e)
-        e.s.send('\x03')
+        e.s.send('\x1b')
         idle(e)
         v = e.screen()
         got = ''.join(v.screen[v.row]).rstrip()
-        check(f'brk: 310G then ^C stays on line 310 ({got!r})',
+        check(f'brk: 310G then ESC stays on line 310 ({got!r})',
               got == txt(310) and bottom(e) != 'Interrupted')
     finally:
         e.close()
+
+    # --- no key that starts with an ESC is decoded.  An up-arrow is ESC, '[',
+    #     'A': nothing, nothing, append at the line's end.  PgDn is ESC, '[',
+    #     '6', '~': a count for '~', which takes none.  Home is ESC, '[', 'H'. ---
+    small = b'abcdefgh\r\nsecond line\r\nthird\r\n'
+    for keys, more, want, what in (
+            ('\x1b[A', 'Q\x1b', b'abcdefghQ\r\nsecond line\r\nthird\r\n',
+             'an up-arrow appends'),
+            ('\x1bOB', 'Q\x1b', b'BQ\r\nabcdefgh\r\nsecond line\r\nthird\r\n',
+             'a keypad down-arrow opens a line above and types a B'),
+            ('\x1b[6~', '', b'Abcdefgh\r\nsecond line\r\nthird\r\n',
+             'PgDn is 6~, and ~ takes no count'),
+            ('j\x1b[H', 'x', b'bcdefgh\r\nsecond line\r\nthird\r\n',
+             'Home is H, the top line of the screen')):
+        e = Editor(small)
+        try:
+            tap(e, keys)
+            if more:
+                tap(e, more)
+            tap(e, ':w\r')
+            got = saved_bytes(e)
+            check(f'brk: {keys!r} is typed keys -- {what} ({got[:24]!r})',
+                  got == want)
+        finally:
+            e.close()
 
 
 def lnum_cmds():
@@ -9087,7 +9137,7 @@ def main():
         print('\n=== the line number, kept as the window pages ===', flush=True)
         lnum_cmds()
     if not args or 'vim' in args or 'brk' in args:
-        print('\n=== ^C abandons a search or a long move ===', flush=True)
+        print('\n=== ESC abandons a search or a long move ===', flush=True)
         brk_cmds()
     if not args or 'vim' in args or 'find' in args:
         print('\n=== f F t T ; , vs vim ===', flush=True)

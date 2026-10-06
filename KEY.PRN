@@ -4,29 +4,27 @@
                                 ;============================================================
                                 ; FILE:    KEY.MAC
                                 ; PROJECT: VI
-                                ; MODULE:  Key decoder -- synchronous VT100 ESC-sequence parser.
+                                ; MODULE:  The keyboard -- one byte a key, over the type-ahead ring.
                                 ;------------------------------------------------------------
-                                ; GETKEY -- blocking key read with a VT100 ESC-sequence decoder.
+                                ; GETKEY -- blocking key read.  C = A = the byte, bit 7 off.
                                 ;   Console I/O: BCONST / BCONIN (EXTRN).  In the editor these are SCRN.MAC's
                                 ;   BIOS-direct console leaves; the CMDTST/MOTTST harnesses supply scripted
-                                ;   versions so the whole decode+dispatch path runs headless.
+                                ;   versions so the whole read+dispatch path runs headless.
                                 ;     BCONST: A=FFH char ready, A=00H not ready (non-blocking)
                                 ;     BCONIN: A=char (blocks until ready)
                                 ;
-                                ; GETKEY blocks until a char is available, then returns:
-                                ;   B=KT_CHAR, C=byte    for any non-ESC byte (printable or control)
-                                ;   B=KT_ACT,  C=ACT_xxx for a recognised ESC sequence or lone ESC
-                                ;   B=KT_NONE, C=0       for an unrecognised ESC sequence (discarded)
-                                ;
-                                ; ESC + unknown byte: returns ACT_ESC for the ESC; the unknown byte is saved in
-                                ; KPEND and returned as KT_CHAR on the next GETKEY call.  GK_POLL uses HL as a
-                                ; 16-bit countdown (ESCTMO=500 > 255), saved across each BIOS call because the
-                                ; BIOS console routines have no register contract.
+                                ; A key is a byte.  ESC is the byte 1BH and nothing more: it is never held back
+                                ; to see whether a '[' follows, so it acts at once, and the keys a terminal
+                                ; sends as an ESC sequence -- the arrows, Home, End, PgUp, PgDn, Ins, Del --
+                                ; are NOT decoded.  Their bytes are keystrokes like any others: an up-arrow
+                                ; is ESC, '[', 'A'.  That is the price of ESC being the key that stops a long
+                                ; command (KBBRK): one byte cannot both mean "stop" the moment it arrives and
+                                ; wait to find out whether it begins an arrow.
                                 ;------------------------------------------------------------
                                 ; TYPE-AHEAD RING (WordMaster's input mechanism; see RENDER.md).
                                 ; A KBRSIZ-byte ring (KBRING, 31 usable slots) sits over BCONIN.  The
                                 ; PRODUCER (KBPUMP) drains every byte the BIOS already has waiting into the ring
-                                ; without blocking; the CONSUMER path (KBGETB / GK_POLL) takes the oldest byte,
+                                ; without blocking; the CONSUMER (KBGETB) takes the oldest byte,
                                 ; blocking on BCONIN only when the ring is empty.  KBRDY pumps then reports
                                 ; whether a byte is waiting -- SCRN.MAC's paint loop polls it (RPOLL) so a slow
                                 ; repaint yields to pending keys.  The ring is transparent to a headless harness
@@ -57,11 +55,11 @@
   005C                   C      DFTFCB	EQU	005CH		; default FCB (command argument 1)
   0080                   C      CMDTAIL EQU	0080H		; command tail / default DMA
                          C      
+                         C      ;------------------------------------------------------------
+                         C      ; BDOS FUNCTION NUMBERS (only those the vi layer uses)
 	MACRO-80 3.44	09-Dec-81	PAGE	1-1
 
 
-                         C      ;------------------------------------------------------------
-                         C      ; BDOS FUNCTION NUMBERS (only those the vi layer uses)
                          C      ;------------------------------------------------------------
   0001                   C      BF_CONIN  EQU	1		; console input (blocking)
   0002                   C      BF_CONOUT EQU	2		; console output: E = char
@@ -79,7 +77,6 @@
   000A                   C      LF	EQU	0AH		; line feed  -- the line TERMINATOR
   000D                   C      CR	EQU	0DH		; carriage return -- decoration before LF
   001B                   C      ESC	EQU	1BH		; escape
-  0003                   C      CTRLC	EQU	03H		; ^C -- abandons a search or a long move
   007F                   C      DEL	EQU	7FH		; rubout / delete
   001A                   C      CPMEOF	EQU	1AH		; CP/M end-of-file marker (Ctrl-Z)
                          C      
@@ -116,12 +113,12 @@
   0001                   C      MW_FIL	EQU	1		; the file just opened
   0002                   C      MW_WRT	EQU	2		; ':w' wrote it
   0003                   C      MW_CTG	EQU	3		; '^G' -- where am I
-	MACRO-80 3.44	09-Dec-81	PAGE	1-2
-
-
   0004                   C      MW_BIG	EQU	4		; the yank register cannot hold that
                          C      
   0028                   C      EXMAX	EQU	40		; max chars on the ':' ex command line
+	MACRO-80 3.44	09-Dec-81	PAGE	1-2
+
+
                          C      
                          C      ;------------------------------------------------------------
                          C      ; RESERVE BLOCK -- sizes of storage that RSV.MAC holds above the linked image
@@ -133,28 +130,6 @@
   0003                   C      MKMAX	EQU	3		; marks 'a'-'c' -- three is enough (COMMANDS.md)
   0004                   C      MKSIZ	EQU	4		; each: a 3-byte file position (the 4th is spare)
                          C      
-                         C      ;------------------------------------------------------------
-                         C      ; KEY DECODER -- GETKEY return types (B) and action codes (C when B=KT_ACT).
-                         C      ; See KEY.MAC.
-                         C      ;------------------------------------------------------------
-  0000                   C      KT_NONE EQU	0		; no key (unrecognised ESC sequence, discarded)
-  0001                   C      KT_ACT	EQU	1		; C = ACT_xxx action code
-  0002                   C      KT_CHAR EQU	2		; C = ASCII character (printable or control)
-                         C      
-  0001                   C      ACT_CURUP EQU	1		; cursor up    (ESC[A / ESC OA)
-  0002                   C      ACT_CURDN EQU	2		; cursor down  (ESC[B / ESC OB)
-  0003                   C      ACT_CURRT EQU	3		; cursor right (ESC[C / ESC OC)
-  0004                   C      ACT_CURLT EQU	4		; cursor left  (ESC[D / ESC OD)
-  0005                   C      ACT_LINST EQU	5		; Home / line start (ESC[H / ESC[1~)
-  0006                   C      ACT_LINEN EQU	6		; End  / line end   (ESC[F / ESC[4~)
-  0007                   C      ACT_PGUP  EQU	7		; page up   (ESC[5~)
-  0008                   C      ACT_PGDN  EQU	8		; page down (ESC[6~)
-  0009                   C      ACT_INS	  EQU	9		; Insert key (ESC[2~)
-  000A                   C      ACT_DEL	  EQU	10		; Delete key (ESC[3~)
-  000B                   C      ACT_ESC	  EQU	11		; lone ESC (after timeout)
-  000B                   C      ACT_MAX	  EQU	11		; highest defined action code
-                         C      
-  01F4                   C      ESCTMO	EQU	500		; polls before a lone ESC is confirmed
                                 
                                 	EXTRN	KBRING			; RSV.MAC -- the ring, above the image
                                 
@@ -165,181 +140,10 @@
   0000'                         	CSEG
                                 
   0000'                         GETKEY:
-                                	; Return any pending byte saved from ESC+unknown
-  0000'   3A 01C1'              	LDA	KPEND
-  0003'   B7                    	ORA	A
-  0004'   C2 00E1'              	JNZ	GK_PEND
-                                
-  0007'   CD 010E'              	CALL	KBGETB		; next byte: ring first, else block on BCONIN
-  000A'   FE 1B                 	CPI	ESC
-  000C'   C2 00EA'              	JNZ	GK_CHAR
-                                
-                                	;--- ESC: poll for sequence continuation ---
-	MACRO-80 3.44	09-Dec-81	PAGE	1-3
-
-
-  000F'   CD 00F3'              	CALL	GK_POLL		; A = next byte, 0 = timeout
-  0012'   B7                    	ORA	A
-  0013'   CA 0023'              	JZ	GK_ESC_LN	; timeout: standalone ESC
-  0016'   FE 5B                 	CPI	'['
-  0018'   CA 0028'              	JZ	GK_CSI
-  001B'   FE 4F                 	CPI	'O'
-  001D'   CA 0091'              	JZ	GK_SS3
-                                	; unknown follow-on: ACT_ESC now, save the byte for next call
-  0020'   32 01C1'              	STA	KPEND
-  0023'                         GK_ESC_LN:
-  0023'   06 01                 	MVI	B,KT_ACT
-  0025'   0E 0B                 	MVI	C,ACT_ESC
-  0027'   C9                    	RET
-                                
-                                	;--- ESC [ sequence (CSI) ---
-  0028'                         GK_CSI:
-  0028'   3E 00                 	MVI	A,0
-  002A'   32 01C0'              	STA	KPARAM
-  002D'   CD 00F3'              	CALL	GK_POLL
-  0030'   B7                    	ORA	A
-  0031'   CA 00EE'              	JZ	GK_NONE
-  0034'   FE 30                 	CPI	'0'
-  0036'   DA 004A'              	JC	GKCSIF
-  0039'   FE 3A                 	CPI	'9'+1
-  003B'   D2 004A'              	JNC	GKCSIF
-                                	; single digit parameter: save and read the final byte
-  003E'   D6 30                 	SUI	'0'
-  0040'   32 01C0'              	STA	KPARAM
-  0043'   CD 00F3'              	CALL	GK_POLL
-  0046'   B7                    	ORA	A
-  0047'   CA 00EE'              	JZ	GK_NONE
-  004A'                         GKCSIF:
-  004A'   FE 41                 	CPI	'A'
-  004C'   CA 00AF'              	JZ	GKCUUP
-  004F'   FE 42                 	CPI	'B'
-  0051'   CA 00B4'              	JZ	GKCUDN
-  0054'   FE 43                 	CPI	'C'
-  0056'   CA 00B9'              	JZ	GKCURT
-  0059'   FE 44                 	CPI	'D'
-  005B'   CA 00BE'              	JZ	GKCULT
-  005E'   FE 48                 	CPI	'H'
-  0060'   CA 00C3'              	JZ	GKLNST
-  0063'   FE 46                 	CPI	'F'
-  0065'   CA 00C8'              	JZ	GKLNEN
-  0068'   FE 7E                 	CPI	'~'
-  006A'   C2 00EE'              	JNZ	GK_NONE
-                                	; '~': dispatch on KPARAM
-  006D'   3A 01C0'              	LDA	KPARAM
-  0070'   FE 01                 	CPI	1
-  0072'   CA 00C3'              	JZ	GKLNST	      ; ESC[1~ = Home
-  0075'   FE 02                 	CPI	2
-  0077'   CA 00CD'              	JZ	GK_INS		; ESC[2~ = Insert
-  007A'   FE 03                 	CPI	3
-  007C'   CA 00D2'              	JZ	GK_DEL		; ESC[3~ = Delete
-  007F'   FE 04                 	CPI	4
-  0081'   CA 00C8'              	JZ	GKLNEN	      ; ESC[4~ = End
-	MACRO-80 3.44	09-Dec-81	PAGE	1-4
-
-
-  0084'   FE 05                 	CPI	5
-  0086'   CA 00D7'              	JZ	GK_PGUP		; ESC[5~ = PgUp
-  0089'   FE 06                 	CPI	6
-  008B'   CA 00DC'              	JZ	GK_PGDN		; ESC[6~ = PgDn
-  008E'   C3 00EE'              	JMP	GK_NONE
-                                
-                                	;--- ESC O sequence (SS3) ---
-  0091'                         GK_SS3:
-  0091'   CD 00F3'              	CALL	GK_POLL
-  0094'   B7                    	ORA	A
-  0095'   CA 00EE'              	JZ	GK_NONE
-  0098'   FE 41                 	CPI	'A'
-  009A'   CA 00AF'              	JZ	GKCUUP
-  009D'   FE 42                 	CPI	'B'
-  009F'   CA 00B4'              	JZ	GKCUDN
-  00A2'   FE 43                 	CPI	'C'
-  00A4'   CA 00B9'              	JZ	GKCURT
-  00A7'   FE 44                 	CPI	'D'
-  00A9'   CA 00BE'              	JZ	GKCULT
-  00AC'   C3 00EE'              	JMP	GK_NONE
-                                
-                                	;--- ACT_xxx return paths ---
-  00AF'                         GKCUUP:
-  00AF'   0E 01                 	MVI	C,ACT_CURUP
-  00B1'   C3 00DE'              	JMP	GK_ACT
-  00B4'                         GKCUDN:
-  00B4'   0E 02                 	MVI	C,ACT_CURDN
-  00B6'   C3 00DE'              	JMP	GK_ACT
-  00B9'                         GKCURT:
-  00B9'   0E 03                 	MVI	C,ACT_CURRT
-  00BB'   C3 00DE'              	JMP	GK_ACT
-  00BE'                         GKCULT:
-  00BE'   0E 04                 	MVI	C,ACT_CURLT
-  00C0'   C3 00DE'              	JMP	GK_ACT
-  00C3'                         GKLNST:
-  00C3'   0E 05                 	MVI	C,ACT_LINST
-  00C5'   C3 00DE'              	JMP	GK_ACT
-  00C8'                         GKLNEN:
-  00C8'   0E 06                 	MVI	C,ACT_LINEN
-  00CA'   C3 00DE'              	JMP	GK_ACT
-  00CD'                         GK_INS:
-  00CD'   0E 09                 	MVI	C,ACT_INS
-  00CF'   C3 00DE'              	JMP	GK_ACT
-  00D2'                         GK_DEL:
-  00D2'   0E 0A                 	MVI	C,ACT_DEL
-  00D4'   C3 00DE'              	JMP	GK_ACT
-  00D7'                         GK_PGUP:
-  00D7'   0E 07                 	MVI	C,ACT_PGUP
-  00D9'   C3 00DE'              	JMP	GK_ACT
-  00DC'                         GK_PGDN:
-  00DC'   0E 08                 	MVI	C,ACT_PGDN
-  00DE'                         GK_ACT:
-  00DE'   06 01                 	MVI	B,KT_ACT
-  00E0'   C9                    	RET
-                                
-  00E1'                         GK_PEND:
-	MACRO-80 3.44	09-Dec-81	PAGE	1-5
-
-
-  00E1'   4F                    	MOV	C,A
-  00E2'   3E 00                 	MVI	A,0
-  00E4'   32 01C1'              	STA	KPEND
-  00E7'   06 02                 	MVI	B,KT_CHAR
-  00E9'   C9                    	RET
-                                
-  00EA'                         GK_CHAR:
-  00EA'   4F                    	MOV	C,A
-  00EB'   06 02                 	MVI	B,KT_CHAR
-  00ED'   C9                    	RET
-                                
-  00EE'                         GK_NONE:
-  00EE'   06 00                 	MVI	B,KT_NONE
-  00F0'   0E 00                 	MVI	C,0
-  00F2'   C9                    	RET
-                                
-                                ;------------------------------------------------------------
-                                ; GK_POLL - poll up to ESCTMO times for one console byte (from the ring).
-                                ; Exit: A = byte read; A = 0 on timeout (NUL also treated as timeout).
-                                ; HL is the 16-bit countdown, saved across each ring call (KBRDY pumps via the
-                                ; BIOS and clobbers HL) -- otherwise the countdown is destroyed and a lone ESC
-                                ; spins.  A type-ahead ESC sequence is already buffered, so KBRDY returns it at
-                                ; once; a lone ESC finds the ring empty and rides the countdown to timeout.
-                                ;------------------------------------------------------------
-  00F3'                         GK_POLL:
-  00F3'   21 01F4               	LXI	H,ESCTMO
-  00F6'                         GKP_LP:
-  00F6'   7C                    	MOV	A,H
-  00F7'   B5                    	ORA	L
-  00F8'   CA 010C'              	JZ	GKP_TO
-  00FB'   2B                    	DCX	H
-  00FC'   E5                    	PUSH	H
-  00FD'   CD 0118'              	CALL	KBRDY		; pump the ring; A=FF if a byte is waiting
-  0100'   E1                    	POP	H
-  0101'   B7                    	ORA	A
-  0102'   CA 00F6'              	JZ	GKP_LP
-  0105'   E5                    	PUSH	H
-  0106'   CD 018F'              	CALL	KBTAKE		; consume it (KBRDY confirmed non-empty)
-  0109'   E1                    	POP	H
-  010A'   B7                    	ORA	A
-  010B'   C0                    	RNZ
-  010C'                         GKP_TO:
-  010C'   AF                    	XRA	A
-  010D'   C9                    	RET
+  0000'   CD 0007'              	CALL	KBGETB		; next byte: ring first, else block on BCONIN
+  0003'   E6 7F                 	ANI	7FH
+  0005'   4F                    	MOV	C,A
+  0006'   C9                    	RET
                                 
                                 ;------------------------------------------------------------
                                 ; TYPE-AHEAD RING PRIMITIVES
@@ -347,162 +151,162 @@
                                 ; KBGETB - consumer: return the next byte in A, blocking only if none is ready.
                                 ; Drains any waiting bytes into the ring first, so a burst is captured, then
                                 ; takes the oldest; an empty ring falls through to the blocking BIOS read.
-  010E'                         KBGETB:
-  010E'   CD 0165'              	CALL	KBPUMP		; capture anything already waiting
-  0111'   CD 018F'              	CALL	KBTAKE		; oldest ring byte -> A (CY=1 if empty)
-  0114'   D0                    	RNC
-  0115'   C3 0000*              	JMP	BCONIN		; ring empty -> block for the next byte
-	MACRO-80 3.44	09-Dec-81	PAGE	1-6
-
-
+  0007'                         KBGETB:
+  0007'   CD 005E'              	CALL	KBPUMP		; capture anything already waiting
+  000A'   CD 0088'              	CALL	KBTAKE		; oldest ring byte -> A (CY=1 if empty)
+  000D'   D0                    	RNC
+  000E'   C3 0000*              	JMP	BCONIN		; ring empty -> block for the next byte
                                 
                                 ; KBRDY - pump the ring, then A=0FFH if it holds a byte, else A=00H.  Peeks
-                                ; only (takes nothing), so the byte stays for the next KBGETB/GK_POLL.  This is
+                                ; only (takes nothing), so the byte stays for the next KBGETB.  This is
                                 ; RPOLL: the paint loop calls it to yield to type-ahead.  Clobbers HL,DE,BC.
-  0118'                         KBRDY:
-  0118'   CD 0165'              	CALL	KBPUMP
-  011B'   3A 01C2'              	LDA	KBHEAD
-  011E'   47                    	MOV	B,A
-  011F'   3A 01C3'              	LDA	KBTAIL
-  0122'   B8                    	CMP	B
-  0123'   CA 0129'              	JZ	KR_NO
-  0126'   3E FF                 	MVI	A,0FFH
-  0128'   C9                    	RET
-  0129'                         KR_NO:
-  0129'   AF                    	XRA	A
-  012A'   C9                    	RET
+  0011'                         KBRDY:
+  0011'   CD 005E'              	CALL	KBPUMP
+  0014'   3A 00B9'              	LDA	KBHEAD
+  0017'   47                    	MOV	B,A
+  0018'   3A 00BA'              	LDA	KBTAIL
+  001B'   B8                    	CMP	B
+  001C'   CA 0022'              	JZ	KR_NO
+  001F'   3E FF                 	MVI	A,0FFH
+  0021'   C9                    	RET
+  0022'                         KR_NO:
+  0022'   AF                    	XRA	A
+  0023'   C9                    	RET
                                 
                                 ; KBPOLL - WordMaster's GETKEY contract (WM 6094) for the engine's long loops
                                 ; (GOLINE scan, RDSEC disk read, POLLBRK): drain waiting BIOS bytes into the
+	MACRO-80 3.44	09-Dec-81	PAGE	1-3
+
+
                                 ; ring without blocking; BC, DE, HL preserved; NZ if a byte is queued.
-  012B'                         KBPOLL:
-  012B'   C5                    	PUSH	B
-  012C'   D5                    	PUSH	D
-  012D'   E5                    	PUSH	H
-  012E'   CD 0118'              	CALL	KBRDY
-  0131'   B7                    	ORA	A
-  0132'   E1                    	POP	H
-  0133'   D1                    	POP	D
-  0134'   C1                    	POP	B
-  0135'   C9                    	RET
+  0024'                         KBPOLL:
+  0024'   C5                    	PUSH	B
+  0025'   D5                    	PUSH	D
+  0026'   E5                    	PUSH	H
+  0027'   CD 0011'              	CALL	KBRDY
+  002A'   B7                    	ORA	A
+  002B'   E1                    	POP	H
+  002C'   D1                    	POP	D
+  002D'   C1                    	POP	B
+  002E'   C9                    	RET
                                 
-                                ; KBBRK - is a ^C waiting?  Pumps the ring, then looks through what it holds:
-                                ; NZ and A=0FFH if a ^C is there -- and the ring is emptied, the ^C and all
+                                ; KBBRK - is an ESC waiting?  Pumps the ring, then looks through what it holds:
+                                ; NZ and A=0FFH if an ESC is there -- and the ring is emptied, the ESC and all
                                 ; that was typed round it -- else Z.  A long command that can be abandoned
                                 ; asks this as it pages (CMD.MAC CNTTST).  The ring is searched, not a flag
-                                ; kept as the bytes come in, so a ^C typed when nothing was running is only
-                                ; ever a key: it is taken in its turn like any other.  Clobbers HL,DE,BC.
-  0136'                         KBBRK:
-  0136'   CD 0165'              	CALL	KBPUMP
-  0139'   3A 01C3'              	LDA	KBTAIL
-  013C'   4F                    	MOV	C,A
-  013D'   3A 01C2'              	LDA	KBHEAD
-  0140'                         KBK_LP:
-  0140'   B9                    	CMP	C
-  0141'   C8                    	RZ			; looked at all of it: none
-  0142'   5F                    	MOV	E,A
-  0143'   16 00                 	MVI	D,0
-  0145'   21 0000*              	LXI	H,KBRING
-  0148'   19                    	DAD	D		; HL = &KBRING[index]
-  0149'   3C                    	INR	A
-  014A'   E6 1F                 	ANI	KBRSIZ-1
-  014C'   47                    	MOV	B,A		; B = the next index
-  014D'   7E                    	MOV	A,M
-  014E'   FE 03                 	CPI	CTRLC
-  0150'   78                    	MOV	A,B
-  0151'   C2 0140'              	JNZ	KBK_LP
-	MACRO-80 3.44	09-Dec-81	PAGE	1-7
-
-
-  0154'   79                    	MOV	A,C
-  0155'   32 01C2'              	STA	KBHEAD		; head = tail: empty
-  0158'   F6 FF                 	ORI	0FFH
-  015A'   C9                    	RET
+                                ; kept as the bytes come in, so an ESC typed when nothing was running is only
+                                ; ever a key: it is taken in its turn like any other.  An ESC ANYWHERE in the
+                                ; ring counts, so an insert typed ahead of a long move stops the move with the
+                                ; ESC that ends it.  Clobbers HL,DE,BC.
+  002F'                         KBBRK:
+  002F'   CD 005E'              	CALL	KBPUMP
+  0032'   3A 00BA'              	LDA	KBTAIL
+  0035'   4F                    	MOV	C,A
+  0036'   3A 00B9'              	LDA	KBHEAD
+  0039'                         KBK_LP:
+  0039'   B9                    	CMP	C
+  003A'   C8                    	RZ			; looked at all of it: none
+  003B'   5F                    	MOV	E,A
+  003C'   16 00                 	MVI	D,0
+  003E'   21 0000*              	LXI	H,KBRING
+  0041'   19                    	DAD	D		; HL = &KBRING[index]
+  0042'   3C                    	INR	A
+  0043'   E6 1F                 	ANI	KBRSIZ-1
+  0045'   47                    	MOV	B,A		; B = the next index
+  0046'   7E                    	MOV	A,M
+  0047'   FE 1B                 	CPI	ESC
+  0049'   78                    	MOV	A,B
+  004A'   C2 0039'              	JNZ	KBK_LP
+  004D'   79                    	MOV	A,C
+  004E'   32 00B9'              	STA	KBHEAD		; head = tail: empty
+  0051'   F6 FF                 	ORI	0FFH
+  0053'   C9                    	RET
                                 
                                 ; KBFLSH - throw away everything typed so far: what the ring holds and what
                                 ; the BIOS still has waiting.  Clobbers HL,DE,BC,A.
-  015B'                         KBFLSH:
-  015B'   CD 0165'              	CALL	KBPUMP
-  015E'   3A 01C3'              	LDA	KBTAIL
-  0161'   32 01C2'              	STA	KBHEAD
-  0164'   C9                    	RET
+  0054'                         KBFLSH:
+  0054'   CD 005E'              	CALL	KBPUMP
+  0057'   3A 00BA'              	LDA	KBTAIL
+  005A'   32 00B9'              	STA	KBHEAD
+  005D'   C9                    	RET
                                 
                                 ; KBPUMP - producer: move every byte the BIOS already has into the ring, without
                                 ; blocking; stop when the BIOS has none waiting or the ring is full.  Clobbers
                                 ; HL,DE,BC,A.
-  0165'                         KBPUMP:
-  0165'                         KP_LP:
-  0165'   CD 01AD'              	CALL	KBFULL		; A=0FFH if full
-  0168'   B7                    	ORA	A
-  0169'   C0                    	RNZ
-  016A'   CD 0000*              	CALL	BCONST		; byte waiting at the BIOS?
-  016D'   B7                    	ORA	A
-  016E'   C8                    	RZ
-  016F'   CD 0000*              	CALL	BCONIN		; A = the byte (does not block: status said ready)
-  0172'   CD 0178'              	CALL	KBPUT		; append it to the ring
-  0175'   C3 0165'              	JMP	KP_LP
+  005E'                         KBPUMP:
+	MACRO-80 3.44	09-Dec-81	PAGE	1-4
+
+
+  005E'                         KP_LP:
+  005E'   CD 00A6'              	CALL	KBFULL		; A=0FFH if full
+  0061'   B7                    	ORA	A
+  0062'   C0                    	RNZ
+  0063'   CD 0000*              	CALL	BCONST		; byte waiting at the BIOS?
+  0066'   B7                    	ORA	A
+  0067'   C8                    	RZ
+  0068'   CD 0000*              	CALL	BCONIN		; A = the byte (does not block: status said ready)
+  006B'   CD 0071'              	CALL	KBPUT		; append it to the ring
+  006E'   C3 005E'              	JMP	KP_LP
                                 
                                 ; KBPUT - append the byte in A to the ring (caller guarantees not full).
-  0178'                         KBPUT:
-  0178'   F5                    	PUSH	PSW		; save the byte
-  0179'   3A 01C3'              	LDA	KBTAIL
-  017C'   5F                    	MOV	E,A
-  017D'   16 00                 	MVI	D,0
-  017F'   21 0000*              	LXI	H,KBRING
-  0182'   19                    	DAD	D		; HL = &KBRING[tail]
-  0183'   F1                    	POP	PSW
-  0184'   77                    	MOV	M,A		; store
-  0185'   3A 01C3'              	LDA	KBTAIL
-  0188'   3C                    	INR	A
-  0189'   E6 1F                 	ANI	KBRSIZ-1	; wrap (mask = size-1)
-  018B'   32 01C3'              	STA	KBTAIL
-  018E'   C9                    	RET
+  0071'                         KBPUT:
+  0071'   F5                    	PUSH	PSW		; save the byte
+  0072'   3A 00BA'              	LDA	KBTAIL
+  0075'   5F                    	MOV	E,A
+  0076'   16 00                 	MVI	D,0
+  0078'   21 0000*              	LXI	H,KBRING
+  007B'   19                    	DAD	D		; HL = &KBRING[tail]
+  007C'   F1                    	POP	PSW
+  007D'   77                    	MOV	M,A		; store
+  007E'   3A 00BA'              	LDA	KBTAIL
+  0081'   3C                    	INR	A
+  0082'   E6 1F                 	ANI	KBRSIZ-1	; wrap (mask = size-1)
+  0084'   32 00BA'              	STA	KBTAIL
+  0087'   C9                    	RET
                                 
                                 ; KBTAKE - remove the oldest ring byte.  CY=1 (ring empty) or CY=0 with A=byte.
-  018F'                         KBTAKE:
-  018F'   3A 01C2'              	LDA	KBHEAD
-  0192'   47                    	MOV	B,A
-  0193'   3A 01C3'              	LDA	KBTAIL
-  0196'   B8                    	CMP	B
-  0197'   CA 01AB'              	JZ	KTK_EMP		; head == tail -> empty
-  019A'   58                    	MOV	E,B
-  019B'   16 00                 	MVI	D,0
-  019D'   21 0000*              	LXI	H,KBRING
-  01A0'   19                    	DAD	D		; HL = &KBRING[head]
-  01A1'   4E                    	MOV	C,M		; C = byte
-	MACRO-80 3.44	09-Dec-81	PAGE	1-8
-
-
-  01A2'   78                    	MOV	A,B
-  01A3'   3C                    	INR	A
-  01A4'   E6 1F                 	ANI	KBRSIZ-1
-  01A6'   32 01C2'              	STA	KBHEAD
-  01A9'   79                    	MOV	A,C		; A = byte, CY=0 (from ANI)
-  01AA'   C9                    	RET
-  01AB'                         KTK_EMP:
-  01AB'   37                    	STC
-  01AC'   C9                    	RET
+  0088'                         KBTAKE:
+  0088'   3A 00B9'              	LDA	KBHEAD
+  008B'   47                    	MOV	B,A
+  008C'   3A 00BA'              	LDA	KBTAIL
+  008F'   B8                    	CMP	B
+  0090'   CA 00A4'              	JZ	KTK_EMP		; head == tail -> empty
+  0093'   58                    	MOV	E,B
+  0094'   16 00                 	MVI	D,0
+  0096'   21 0000*              	LXI	H,KBRING
+  0099'   19                    	DAD	D		; HL = &KBRING[head]
+  009A'   4E                    	MOV	C,M		; C = byte
+  009B'   78                    	MOV	A,B
+  009C'   3C                    	INR	A
+  009D'   E6 1F                 	ANI	KBRSIZ-1
+  009F'   32 00B9'              	STA	KBHEAD
+  00A2'   79                    	MOV	A,C		; A = byte, CY=0 (from ANI)
+  00A3'   C9                    	RET
+  00A4'                         KTK_EMP:
+  00A4'   37                    	STC
+  00A5'   C9                    	RET
                                 
                                 ; KBFULL - A=0FFH if the ring is full ((tail+1) wraps onto head), else A=00H.
-  01AD'                         KBFULL:
-  01AD'   3A 01C3'              	LDA	KBTAIL
-  01B0'   3C                    	INR	A
-  01B1'   E6 1F                 	ANI	KBRSIZ-1
-  01B3'   47                    	MOV	B,A
-  01B4'   3A 01C2'              	LDA	KBHEAD
-  01B7'   B8                    	CMP	B
-  01B8'   CA 01BD'              	JZ	KF_YES
-  01BB'   AF                    	XRA	A
-  01BC'   C9                    	RET
-  01BD'                         KF_YES:
-  01BD'   3E FF                 	MVI	A,0FFH
-  01BF'   C9                    	RET
+  00A6'                         KBFULL:
+  00A6'   3A 00BA'              	LDA	KBTAIL
+  00A9'   3C                    	INR	A
+  00AA'   E6 1F                 	ANI	KBRSIZ-1
+  00AC'   47                    	MOV	B,A
+  00AD'   3A 00B9'              	LDA	KBHEAD
+	MACRO-80 3.44	09-Dec-81	PAGE	1-5
+
+
+  00B0'   B8                    	CMP	B
+  00B1'   CA 00B6'              	JZ	KF_YES
+  00B4'   AF                    	XRA	A
+  00B5'   C9                    	RET
+  00B6'                         KF_YES:
+  00B6'   3E FF                 	MVI	A,0FFH
+  00B8'   C9                    	RET
                                 
-  01C0'                         	CSEG
-  01C0'   00                    KPARAM: DB	0		; CSI parameter digit accumulator
-  01C1'   00                    KPEND:	DB	0		; pending char from ESC+unknown
-  01C2'   00                    KBHEAD: DB	0		; ring read index (oldest byte)
-  01C3'   00                    KBTAIL: DB	0		; ring write index (next free slot)
+  00B9'                         	CSEG
+  00B9'   00                    KBHEAD: DB	0		; ring read index (oldest byte)
+  00BA'   00                    KBTAIL: DB	0		; ring write index (next free slot)
                                 
                                 	END
 	MACRO-80 3.44	09-Dec-81	PAGE	S
@@ -511,40 +315,26 @@
 Macros:
 
 Symbols:
-0002 	ACT_CURDN       0004 	ACT_CURLT       0003 	ACT_CURRT       
-0001 	ACT_CURUP       000A 	ACT_DEL         000B 	ACT_ESC         
-0009 	ACT_INS         0006 	ACT_LINEN       0005 	ACT_LINST       
-000B 	ACT_MAX         0008 	ACT_PGDN        0007 	ACT_PGUP        
-0170*	BCONIN          016B*	BCONST          0005 	BDOS            
+0069*	BCONIN          0064*	BCONST          0005 	BDOS            
 0007 	BEL             0001 	BF_CONIN        0002 	BF_CONOUT       
 000B 	BF_CONST        0019 	BF_CURDSK       0009 	BF_PRTSTR       
 0008 	BS              0080 	CMDTAIL         001A 	CPMEOF          
-000D 	CR              0003 	CTRLC           007F 	DEL             
-005C 	DFTFCB          0080 	DOTMAX          0000 	EM_CMD          
-0003 	EM_EX           0001 	EM_INS          0002 	EM_REP          
-001B 	ESC             01F4 	ESCTMO          0028 	EXMAX           
-0000I'	GETKEY          004A'	GKCSIF          00B4'	GKCUDN          
-00BE'	GKCULT          00B9'	GKCURT          00AF'	GKCUUP          
-00C8'	GKLNEN          00C3'	GKLNST          00F6'	GKP_LP          
-010C'	GKP_TO          00DE'	GK_ACT          00EA'	GK_CHAR         
-0028'	GK_CSI          00D2'	GK_DEL          0023'	GK_ESC_LN       
-00CD'	GK_INS          00EE'	GK_NONE         00E1'	GK_PEND         
-00DC'	GK_PGDN         00D7'	GK_PGUP         00F3'	GK_POLL         
-0091'	GK_SS3          0136I'	KBBRK           015BI'	KBFLSH          
-01AD'	KBFULL          010E'	KBGETB          01C2'	KBHEAD          
-0140'	KBK_LP          012BI'	KBPOLL          0165'	KBPUMP          
-0178'	KBPUT           0118I'	KBRDY           019E*	KBRING          
-0020 	KBRSIZ          01C3'	KBTAIL          018F'	KBTAKE          
-01BD'	KF_YES          01C0'	KPARAM          01C1'	KPEND           
-0165'	KP_LP           0129'	KR_NO           01AB'	KTK_EMP         
-0001 	KT_ACT          0002 	KT_CHAR         0000 	KT_NONE         
-000A 	LF              0003 	MKMAX           0004 	MKSIZ           
-0004 	MW_BIG          0003 	MW_CTG          0001 	MW_FIL          
-0000 	MW_NON          0002 	MW_WRT          0000 	NUL             
-0003 	R_DLIN          0000 	R_FULL          0004 	R_ICH           
-0005 	R_ILIN          0006 	R_JOIN          0002 	R_LINE          
-0001 	R_MOVE          0009 	TAB             0008 	TABWID          
-0000 	WBOOT           
+000D 	CR              007F 	DEL             005C 	DFTFCB          
+0080 	DOTMAX          0000 	EM_CMD          0003 	EM_EX           
+0001 	EM_INS          0002 	EM_REP          001B 	ESC             
+0028 	EXMAX           0000I'	GETKEY          002FI'	KBBRK           
+0054I'	KBFLSH          00A6'	KBFULL          0007'	KBGETB          
+00B9'	KBHEAD          0039'	KBK_LP          0024I'	KBPOLL          
+005E'	KBPUMP          0071'	KBPUT           0011I'	KBRDY           
+0097*	KBRING          0020 	KBRSIZ          00BA'	KBTAIL          
+0088'	KBTAKE          00B6'	KF_YES          005E'	KP_LP           
+0022'	KR_NO           00A4'	KTK_EMP         000A 	LF              
+0003 	MKMAX           0004 	MKSIZ           0004 	MW_BIG          
+0003 	MW_CTG          0001 	MW_FIL          0000 	MW_NON          
+0002 	MW_WRT          0000 	NUL             0003 	R_DLIN          
+0000 	R_FULL          0004 	R_ICH           0005 	R_ILIN          
+0006 	R_JOIN          0002 	R_LINE          0001 	R_MOVE          
+0009 	TAB             0008 	TABWID          0000 	WBOOT           
 
 
 

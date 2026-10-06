@@ -1,7 +1,7 @@
 # VI — a vi-style editor for CP/M 2.2 on the 8080
 
 `VI.COM` is a screen editor for CP/M 2.2 that behaves like vi. It runs on a
-plain 8080 in a 56 K TPA, it is 18,816 bytes, and it edits files far larger
+plain 8080 in a 56 K TPA, it is 18,560 bytes, and it edits files far larger
 than memory — 100 K files are ordinary — by paging text to and from disk.
 
 vim 9.1 is the reference for behaviour. A command is not finished here until it
@@ -31,7 +31,7 @@ Commands, with counts (`5j`, `3dd`, `20G`):
 
 | | |
 |---|---|
-| move | `h j k l` `0` `^` `$` `<CR>` `w b W B e` `G` `gg` `H M L`, arrows, PgUp/PgDn |
+| move | `h j k l` `0` `^` `$` `<CR>` `w b W B e` `G` `gg` `H M L` |
 | scroll | `^F ^B` `^D ^U` `^L` `^G` |
 | insert | `i a I A` `o O` `R` `r{c}`, with BS/DEL rubbing out across lines as vim does |
 | edit | `x` `dd` `D` `C` `J` `~` `u` `.` |
@@ -48,7 +48,9 @@ not a permanent status line. `^G` says which file, its flags, and where the
 cursor is. A file on another drive is named with its drive (`"B:TEST.TXT"`),
 the way vim names a path outside the current directory.
 
-Not here, on purpose: `%` `<< >>` `s S cc` `^E ^Y` `:100`
+Not here, on purpose: the arrow keys, Home, End, PgUp and PgDn (a terminal
+sends them as ESC sequences, and ESC is the key that stops a long command, so
+their bytes are taken as typed keys), `%` `<< >>` `s S cc` `^E ^Y` `:100`
 (use `100G`), named registers, regular expressions, `:set` and multiple
 windows. Each omission is priced and argued in `COMMANDS.md` — the binary is
 the scarce resource, since every byte of the image comes out of the editing
@@ -66,7 +68,7 @@ costs depends on whether it has to page. A move inside the window is as quick
 as in a small file; `G` from the top of 100 K takes 46 seconds and `:w` takes
 51, and a real drive adds its seeks to both. Some big commands are refused
 rather than attempted (a `dd` or `yy` of more than the 23 K the yank register
-holds), and a change of more than 1024 bytes cannot be undone. `^C` stops a
+holds), and a change of more than 1024 bytes cannot be undone. ESC stops a
 move or a search that is taking too long and puts the cursor back where it
 was.
 
@@ -141,13 +143,13 @@ editing a 100 K file on a 56 K machine possible at all. The transcription is
 deliberate: the engine is kept as WordMaster wrote it, and every place it
 differs is flagged at the site and listed in `DESIGN.md` §3 (including a fix for
 a real WordMaster bug in `FILLBUF`). WordMaster's user interface is *not* kept —
-the vi layer, the renderer and the key decoder are this project's own.
+the vi layer, the renderer and the keyboard reader are this project's own.
 
 ## License
 
 MIT — see [`LICENSE`](LICENSE).
 
-That covers this project's own work: the vi layer, the renderer, the key
-decoder, the build and the tests. It cannot cover the WordMaster-derived parts
+That covers this project's own work: the vi layer, the renderer, the keyboard
+reader, the build and the tests. It cannot cover the WordMaster-derived parts
 of `BUF.MAC` and `PAGE.MAC`, whose copyright belongs to MicroPro and its
 successors and is not this author's to license.

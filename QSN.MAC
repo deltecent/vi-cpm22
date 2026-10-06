@@ -22,7 +22,7 @@
 	EXTRN	CUROFF, CHARAT, CMP16	; BUF.MAC
 	EXTRN	COL			; CMD.MAC -- the column, as the editor has it
 	EXTRN	CMDDIS, QUITF		; CMD.MAC -- one key, and the flag ':q' sets
-	EXTRN	GETKEY			; KEY.MAC -- the decoded key
+	EXTRN	GETKEY			; KEY.MAC -- the next key
 
 	CSEG
 
@@ -31,7 +31,7 @@
 ; loop in VI.MAC, because it repaints between the keys, so this too is code the
 ; editor itself can never reach.
 CMDRUN:
-	CALL	GETKEY		; B = KT_xxx, C = char / action
+	CALL	GETKEY		; C = the key
 	CALL	CMDDIS
 	LDA	QUITF
 	ORA	A

@@ -29,7 +29,7 @@ neither this script nor a reader can verify by looking -- that the VI.DOC
 shipping inside CPM22-8MB-56K-VI.DSK is still the VI.DOC in the repo.
 
 The text itself is checked by hand against COMMANDS.md, and its command list
-comes from CMDTAB / ACTTAB / EXTAB in CMD.MAC rather than from memory.  When
+comes from CMDTAB / EXTAB in CMD.MAC rather than from memory.  When
 a command is added or removed, this file is part of the change.
 
 The NUMBERS are not typed in at all.  Every time in the LARGE FILES section
@@ -95,10 +95,14 @@ MOVING ---------------------------------------------------------------------
     t{c} T{c}       the same, but stopping just short of it
     ;  ,            that find again / the same find reversed
 
-The arrow keys work as h j k l, and PgUp / PgDn as ^B / ^F.
-
-^C stops a G, a gg or a search that is taking too long, and puts the
+ESC stops a G, a gg or a search that is taking too long, and puts the
 cursor back where it was: see LARGE FILES.
+
+The arrow keys, Home, End, PgUp, PgDn, Ins and Del are NOT supported.
+A terminal sends each of them as ESC followed by other characters, and
+the editor takes those one at a time as if they had been typed: the
+up-arrow is ESC [ A, so it ends up appending at the end of the line.
+Press ESC, then u if the text was changed, and use h j k l ^B ^F.
 
 f F t T and their repeats look on THIS LINE only, take counts (3fx), and
 ring the bell without moving when the character is not there.
@@ -336,8 +340,8 @@ def figures():
                        ("u after dd G", "Cannot undo: change has paged out")):
         if cell(name, 2) != said:
             missing.append(f"{name} (which no longer says {said!r})")
-    for name, said in (("G from the top, ^C 10 s into it", "Interrupted"),
-                       ("/zzzz from line 6000, ^C 10 s into it",
+    for name, said in (("G from the top, ESC 10 s into it", "Interrupted"),
+                       ("/zzzz from line 6000, ESC 10 s into it",
                         "Interrupted"),
                        ("/zzzz from line 6000, never found",
                         "Pattern not found: zzzz")):
@@ -374,7 +378,7 @@ The times are for a 100 K file of 12800 short lines, on a 2 MHz 8080 and a
 9600-baud terminal.  They leave out the drive's head seeks and the wait
 for a sector to come round, so on a real drive every time over a second
 or two is LONGER than shown.  Nothing is drawn while a long command runs.
-The editor has not hung; the cursor comes back when it is done, and ^C
+The editor has not hung; the cursor comes back when it is done, and ESC
 stops a move or a search before then (see below).
 
 The limits:
@@ -416,17 +420,19 @@ Slow, because the file has to go through the window:
 {two(':e! at line 6000', ':e! after x at line 6000')}   {t(':e! after x at the top')} at line 1
 {two(':%s/0/1/', ':%s/0/1/ (12800 lines)')}   every line; over 100 lines, {t(':6000,6100s/0/1/')}
 
-^C stops a move or a search -- G, gg, {{n}}G, 'a, `a, / ? n and N -- and
+ESC stops a move or a search -- G, gg, {{n}}G, 'a, `a, / ? n and N -- and
 says "Interrupted".  The cursor and the screen go back to where the
 command began, as they do when a search finds nothing, and anything typed
-ahead is dropped.  Going back has to page too, so it is not instant:
+ahead is dropped.  That includes an insert typed ahead of the move: the
+ESC that ends it stops the move, so wait for the cursor before typing
+one.  Going back has to page too, so it is not instant:
 
-{two('G from line 1, ^C at 10 s', 'G from the top, ^C 10 s into it')}   in all
+{two('G from line 1, ESC at 10 s', 'G from the top, ESC 10 s into it')}   in all
 {two('/text, not in the file', '/zzzz from line 6000, never found')}
-{two('  ... ^C at 10 s', '/zzzz from line 6000, ^C 10 s into it')}   in all
+{two('  ... ESC at 10 s', '/zzzz from line 6000, ESC 10 s into it')}   in all
 
 A command that changes the text is not stopped: dG, :s, a put and :w run
-to the end, and the ^C is taken afterwards as a key that does nothing.
+to the end, and the ESC is taken afterwards as a key that does nothing.
 
 Going BACK costs more once something has been changed: gg from the last
 line is {t('gg from the end, after x there')} after an x there, because the text passed over

@@ -39,7 +39,7 @@
 	PUBLIC	CMDTAB, OPCTAB			; the two tables build_vi.py pairs up
 
 	EXTRN	GETKEY				; KEY.MAC
-	EXTRN	KBBRK, KBFLSH			; KEY.MAC -- a ^C waiting / drop type-ahead
+	EXTRN	KBBRK, KBFLSH			; KEY.MAC -- an ESC waiting / drop type-ahead
 	EXTRN	OPENZ				; PAGE.MAC -- open + load (cold)
 	EXTRN	TFCB, WRTO, TEXIST, DISCRD, CNTLF ; PAGE.MAC -- :w name, :e
 	EXTRN	REOPEN, SEEKTO			; PAGE.MAC -- :w keeps editing
@@ -102,7 +102,7 @@
 ;replays.  Both are no-ops while '.' is itself replaying.  CDMODE is the mode
 ;dispatch proper.
 CMDDIS:
-	XRA	A		; no command is ever left open to a ^C by the
+	XRA	A		; no command is ever left open to an ESC by the
 	STA	BRKARM		;   one before it (BRKON)
 	CALL	DOTPRE
 	CALL	CDMODE
@@ -120,21 +120,19 @@ CD_REP:
 	JMP	VIREP
 
 ;============================================================
-; VICMD -- command-mode key.  B = KT type, C = char / action.
+; VICMD -- command-mode key.  C = the key.
 ; Count prefix accumulates into CMDCNT; a leading '0' is the BOL motion, a '0'
 ; after a count is a digit.  Pending 'g' (for gg) and pending 'd' (for dd) are
 ; cleared on every dispatched command except the one that re-arms them.
 ;============================================================
 VICMD:
-	MOV	A,B
-	CPI	KT_NONE
-	RZ			; discarded key
-	CPI	KT_ACT
-	JZ	VIC_ACT
+	MOV	A,C
+	CPI	ESC
+	JZ	VIC_ESC
 	LDA	GPEND		; 'r' pending: this char is the replacement, a
 	CPI	PR		;   count digit included (vim's 'r3' stores '3')
 	JZ	VR_DO
-	;--- KT_CHAR: maybe a count digit ---
+	;--- maybe a count digit ---
 	MOV	A,C
 	CPI	'1'
 	JC	VIC_NOTD	; < '1'
@@ -197,21 +195,20 @@ VIC_TB:
 VIC_SW:
 	CALL	SETMOV		; dropped: nothing drawn, nothing moved
 	JMP	GETCNT		; the count goes with it (tail: GETCNT RETs)
-VIC_ACT:
-	XRA	A		; action key clears all pending state
+VIC_ESC:
+	XRA	A		; ESC drops whatever was pending, the count too
 	STA	GPEND
 	STA	GSAVE
 	STA	PENDOP
 	STA	PSAVE
-	LXI	H,ACTTAB
-	JMP	VSCANQ
+	JMP	VIC_SW
 
 ;------------------------------------------------------------
 ; VSCAN -- table dispatch.  C = key, HL -> {DB ch, DW addr}
 ; table ending DB 0.  Match -> JMP handler (handler RETs to VICMD's caller).
 ; Miss -> RET.  Preserves B,C.
 ;
-; VSCANQ is the same dispatch for the two TOP-LEVEL key tables, where a miss
+; VSCANQ is the same dispatch for the TOP-LEVEL key table, where a miss
 ; means the key is not a command at all: no handler ran, so nothing was drawn
 ; and nothing moved, and the frame is a reposition rather than a 24-row
 ; repaint (a repaint costs seconds at 9600 baud, for a key that did
@@ -288,17 +285,7 @@ DOTPRE:
 	SHLD	DOTSP
 	CALL	UNDBEG		; ... and 'u' hears that boundary too
 DOTP1:
-	MOV	A,B
-	CPI	KT_NONE
-	JZ	DOTPX		; a discarded key is not a keystroke
-	CPI	KT_ACT
 	MOV	A,C
-	JZ	DOTP2
-	ANI	7FH		; a char stands for itself (CPYGAP masks inserts
-	JMP	DOTP3		;   the same way), bit 7 marks an action key
-DOTP2:
-	ORI	80H		; an action key (an arrow) rides in bit 7
-DOTP3:
 	STA	DOTLK		; the last key recorded (DOTPOST reads it)
 	MOV	B,A
 	LHLD	DOTSP
@@ -416,13 +403,6 @@ DOTLP:
 	CALL	DOTGET
 	JC	DOTDN
 	MOV	C,A
-	MVI	B,KT_CHAR
-	ORA	A
-	JP	DOTLP2
-	ANI	7FH		; bit 7: the key was an action, not a char
-	MOV	C,A
-	MVI	B,KT_ACT
-DOTLP2:
 	LDA	DOTIX
 	INR	A
 	STA	DOTIX
@@ -482,7 +462,7 @@ MKC_LP:
 
 ;MKGETK -- C = this command's next key.  During a '.' replay it has to come
 ;from the recording: calling GETKEY there would stop dead waiting for a key
-;nobody is going to press.  CY = there is no key, or it was not a character.
+;nobody is going to press.  CY = there is no key, or it was an ESC.
 ;A key typed here did not come through the dispatcher, so it is handed to
 ;DOTPRE to join the recording: that is what lets '.' repeat "dfa", "dgg" and
 ;"d'a".
@@ -500,11 +480,10 @@ MKGETK:
 	RET
 MKG_KB:
 	CALL	GETKEY
-	MOV	A,B
-	CPI	KT_CHAR
+	CPI	ESC
 	STC
-	RNZ			; an action key (ESC) cancels the command
-	CALL	DOTPRE		; B, C kept
+	RZ			; ESC cancels the command
+	CALL	DOTPRE		; C kept
 	ORA	A		; CY clear
 	RET
 
@@ -774,7 +753,7 @@ MKJ_GO:
 				;   moves: GPLACE measures the landing against
 				;   it, and one left over from an earlier 'G'
 				;   had it keep a window the line is not in
-	CALL	BRKON		; ... and a ^C may stop it from here on
+	CALL	BRKON		; ... and an ESC may stop it from here on
 	CALL	MKPAGE		; HL = the mark's offset in the window
 	CALL	BRKOFF		; (A only)
 	JC	BRKBAK
@@ -1409,7 +1388,7 @@ GC_HAVE:
 	RET
 
 ;CNTTST -- WM 1175: Z iff the command count is exhausted -- both CMDCNT and the
-;auxiliary counter AUXCNT are zero -- then poll for a ^C break.  BUF.MAC's PAGESTP
+;auxiliary counter AUXCNT are zero -- then poll for an ESC break.  BUF.MAC's PAGESTP
 ;(reached from DELTO) and the count loops (the line moves, dd, the search
 ;sweep) test it to decide whether to stop or page one more step.  POLLBRK is tail-called (JMP) and
 ;preserves the ORA-set Z flag (PAGE.MAC POLLBRK, as WM, brackets its body in
@@ -1417,7 +1396,7 @@ GC_HAVE:
 CNTTST:				; WM 1175
 	LDA	BRKARM
 	ORA	A
-	CNZ	BRKTST		; a ^C spends the count: every loop stops here
+	CNZ	BRKTST		; an ESC spends the count: every loop stops here
 	PUSH	H
 	LHLD	CMDCNT
 	LDA	AUXCNT		; low byte of the auxiliary count (WM's L271E)
@@ -1427,9 +1406,9 @@ CNTTST:				; WM 1175
 	JMP	POLLBRK
 
 ;============================================================
-; ^C -- abandon a search or a long move.
+; ESC -- abandon a search or a long move.
 ;
-; Every loop that pages asks CNTTST whether to go on, so that is where a ^C is
+; Every loop that pages asks CNTTST whether to go on, so that is where an ESC is
 ; looked for: it zeroes the count, and the loop ends the way it ends when the
 ; count runs out.  Nothing is half done, because the commands that can be
 ; stopped change nothing -- BRKON arms the test only with no operator pending,
@@ -1438,12 +1417,12 @@ CNTTST:				; WM 1175
 ;
 ; The command then goes back to where it started (BRKBAK), as a search that
 ; found nothing does: the screen was not repainted, so it is already right.
-; Going back pages, and that is not stopped by a second ^C.
+; Going back pages, and that is not stopped by a second ESC.
 ;============================================================
 
 ;BRKON -- a command that may page a long way is starting: keep the place it
 ; started from (the cursor's position in the file, and LNDLT for its row), and
-; arm the ^C test unless an operator is waiting for this motion.
+; arm the ESC test unless an operator is waiting for this motion.
 BRKON:
 	LXI	H,SOFF
 	CALL	FPSTO
@@ -1481,7 +1460,7 @@ BT_NO:
 BRKOFF:
 	XRA	A
 	STA	BRKARM
-;BRKQ -- CY iff a ^C stopped it.
+;BRKQ -- CY iff an ESC stopped it.
 BRKQ:
 	LDA	BRKHIT
 	ORA	A
@@ -2790,7 +2769,7 @@ VC_REDR:
 VC_G:
 	CALL	SETMOV
 	CALL	GZONE		; the screen's top line, before the move
-	CALL	BRKON		; ... and a ^C may stop it from here on
+	CALL	BRKON		; ... and an ESC may stop it from here on
 	LHLD	CMDCNT
 	MOV	A,H
 	ORA	L
@@ -3079,8 +3058,8 @@ GP_ONS:
 ; forward motion; linewise (j k G H M L) deletes whole lines start-line..end-line.
 ;============================================================
 
-;OPPEND -- PSAVE = pending operator, C = the following key (always KT_CHAR here;
-; action keys cleared PENDOP in VIC_ACT).  Apply the operator to this key.
+;OPPEND -- PSAVE = pending operator, C = the following key (never an ESC:
+; VIC_ESC cleared PENDOP).  Apply the operator to this key.
 OPPEND:
 	XRA	A
 	STA	CWEOL		; set only by the 'cw' -> 'ce' rewrite below
@@ -4096,10 +4075,9 @@ VT_PUT:
 
 ;VC_R -- 'r': pending; the next char replaces the one under the cursor.  VICMD
 ; routes that char to VR_DO before the count digits, so 'r3' stores '3' as vim
-; does.  An ESC drops it (an action key: VIC_ACT clears the pending state).
+; does.  An ESC drops it (VIC_ESC clears the pending state).
 ; DEVIATION: a count is ignored -- vim's '3rx' replaces three chars, or refuses
-; when the line is shorter; and an arrow key clears the pending 'r' and moves,
-; where vim drops it.
+; when the line is shorter.
 VC_R:
 	CALL	MOVCNT		; a cursor motion, and its count
 	MVI	A,PR
@@ -4803,14 +4781,11 @@ VP_BEL:
 ; put back (vim rejoins it).  Neither loses or corrupts text.
 ;============================================================
 
-;VIREP -- one key in replace mode.  B = KT type, C = char/action.
+;VIREP -- one key in replace mode.  C = the key.
 VIREP:
-	MOV	A,B
-	CPI	KT_ACT
-	JZ	VI_ACT		; ESC: command mode, the cursor steps left
-	CPI	KT_CHAR
-	RNZ			; ignore anything else
 	MOV	A,C
+	CPI	ESC
+	JZ	VI_ESC		; ESC: command mode, the cursor steps left
 	CPI	CR
 	JZ	VP_CR
 	CPI	LF		; ^J is a newline too, as in insert
@@ -4893,14 +4868,11 @@ VP_BSM:
 
 ;============================================================
 
-;VIINS -- one key in insert mode.  B = KT type, C = char/action.
+;VIINS -- one key in insert mode.  C = the key.
 VIINS:
-	MOV	A,B
-	CPI	KT_ACT
-	JZ	VI_ACT
-	CPI	KT_CHAR
-	RNZ			; ignore anything else
 	MOV	A,C
+	CPI	ESC
+	JZ	VI_ESC
 	CPI	CR
 	JZ	VI_CR
 	CPI	LF		; ^J is a newline too (a bare LF would break the row paint)
@@ -4967,15 +4939,12 @@ VI_BS:
 VI_BSJ:				;   char is inside the row -- redraw just that row
 	CALL	MARKMOD
 	JMP	DELPRV
-;VI_ACT -- ESC: back to command mode.  Nothing is inserted and nothing is
+;VI_ESC -- ESC: back to command mode.  Nothing is inserted and nothing is
 ; deleted -- the cursor steps one left -- so this is a cursor reposition, not
 ; a repaint.  (What the row shows does not change: the mode word is MODEMS's,
 ; and a cursor sitting on a TAB moves to the tab's last column, which is where
 ; SCRN.MAC's own TABCUR puts it for a command-mode frame.)
-VI_ACT:
-	MOV	A,C
-	CPI	ACT_ESC
-	RNZ			; ignore arrows etc. in insert (minimal)
+VI_ESC:
 	MVI	A,EM_CMD
 	STA	EDMODE
 	CALL	SETMOV
@@ -5006,12 +4975,8 @@ RDLINE:
 	CALL	EXPRM		; bottom row cleared, prompt shown
 RL_LP:
 	CALL	GETKEY
-	MOV	A,B
-	CPI	KT_ACT
-	JZ	RL_ACT
-	CPI	KT_CHAR
-	JNZ	RL_LP		; ignore other keys
-	MOV	A,C
+	CPI	ESC
+	JZ	RL_CAN
 	CPI	CR
 	JZ	RL_DONE
 	CPI	BS
@@ -5046,10 +5011,6 @@ RL_BS:				; WM LINEPOP
 	SHLD	RLPTR
 	CALL	EXRUB		; WM BSCHAR
 	JMP	RL_LP
-RL_ACT:
-	MOV	A,C
-	CPI	ACT_ESC
-	JNZ	RL_LP
 RL_CAN:
 	MVI	A,' '		; vim: the cancelled line goes, its prompt char too
 	CALL	EXPRM		;   (the row cleared, a blank where the prompt was)
@@ -5063,9 +5024,7 @@ RL_DONE:
 ;VC_BZ -- 'Z': pending; ZZ writes a changed text and quits -- vim's ZZ, which
 ; is ':x' (so no '!' and no file name: a buffer with none says so).  A count is
 ; ignored.  Only a second 'Z' may follow (VICDSP drops any other key, as vim
-; does); 'g' pending drops this one the same way.  DEVIATION: an action key
-; (arrow/PgUp/PgDn -- no vi key of its own) clears the pending 'Z' and runs,
-; where vim would drop it; VIC_ACT clears the pending state before dispatch.
+; does); 'g' pending drops this one the same way.
 VC_BZ:
 	CALL	SETMOV
 	LDA	GSAVE
@@ -5916,7 +5875,6 @@ AG_LP:
 	ORA	A
 	JZ	AG_G
 	MOV	C,A
-	MVI	B,KT_CHAR
 	PUSH	H
 	CALL	VICMD
 	POP	H
@@ -5924,7 +5882,6 @@ AG_LP:
 	JMP	AG_LP
 AG_G:
 	MVI	C,'G'
-	MVI	B,KT_CHAR
 	JMP	VICMD
 
 ;NRMDRV -- HL = an FCB: a drive byte of 0 becomes the current drive's, so
@@ -6616,7 +6573,7 @@ SRCHN:
 	CALL	GZONE		; the screen's top line, before the cursor moves
 	CALL	BRKON		; where it started (the sweep moves the cursor
 				;   with PUTCUR, which does not maintain LNDLT;
-				;   GOTO does), and a ^C may stop it
+				;   GOTO does), and an ESC may stop it
 SN_LP:
 	CALL	SRCHGO
 	JC	SN_BAD
@@ -6676,7 +6633,7 @@ SRCHW:
 	XRA	A
 	STA	AUXCNT
 SW_LP:
-	CALL	BRKQ		; a ^C spent the count, here or on the way to
+	CALL	BRKQ		; an ESC spent the count, here or on the way to
 	RC			;   the wrapped pass: SCRLST no longer pages
 	CALL	SRCH1
 	RNC
@@ -7124,25 +7081,6 @@ CMDTAB:
 	DW	VC_AQ
 	DB	0
 
-ACTTAB:
-	DB	ACT_CURLT
-	DW	VC_H
-	DB	ACT_CURRT
-	DW	VC_L
-	DB	ACT_CURDN
-	DW	VC_J
-	DB	ACT_CURUP
-	DW	VC_K
-	DB	ACT_LINST
-	DW	VC_0
-	DB	ACT_LINEN
-	DW	VC_EOL
-	DB	ACT_PGUP
-	DW	VC_PGUP
-	DB	ACT_PGDN
-	DW	VC_PGDN
-	DB	0
-
 ;============================================================
 ; DATA
 ;============================================================
@@ -7282,8 +7220,8 @@ YNCNT:	DW	0		; YNLINE: the lines it still wants
 SCNT:	DW	0		; searches still to do (the count)
 SOFF:	DB	0,0,0		; BRKON: where in the FILE the command began
 SLDLT:	DW	0		; ... and LNDLT: for a search that fails, and
-				;   any move a ^C stops
-BRKARM: DB	0		; nonzero: CNTTST looks for a ^C
+				;   any move an ESC stops
+BRKARM: DB	0		; nonzero: CNTTST looks for an ESC
 BRKHIT: DB	0		; nonzero: one was found, and the count spent
 SSKIP:	DB	0		; skip the character under the cursor (not
 				;   on the wrapped pass)

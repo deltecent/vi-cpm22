@@ -36,7 +36,7 @@
 	EXTRN	MODEMS			; SCRN.MAC -- '-- INSERT --' on the bottom row
 	EXTRN	MSGPST			; CMD.MAC  -- the message this key left
 	EXTRN	SCPRE			; SCRN.MAC -- snapshot displayed viewport
-	EXTRN	GETKEY			; KEY.MAC  -- decoded key
+	EXTRN	GETKEY			; KEY.MAC  -- the next key
 	EXTRN	CMDDIS, QUITF		; CMD.MAC  -- dispatch one key / quit flag
 	EXTRN	RINTENT			; CMD.MAC  -- render intent (default per key)
 	EXTRN	VISTK			; RSV.MAC  -- the stack, above the image
@@ -61,7 +61,7 @@ START:
 	CALL	SCDRAW			; first full paint
 	CALL	MSGPST			; ... and vim's load line under it
 MLOOP:
-	CALL	GETKEY			; B = KT_xxx, C = char / action code
+	CALL	GETKEY			; C = the key
 	CALL	SCPRE			; snapshot the displayed viewport pre-dispatch
 	MVI	A,R_FULL		; default: full repaint unless a motion lowers it
 	STA	RINTENT

@@ -29,7 +29,7 @@ back to one of them.
   between the top of the program and the BDOS (`BUFEND = [0006H] - 1`; WM's
   `INIT` stops 7 pages lower only when that vector's low byte is not 06H, which
   is something loaded under the BDOS, a debugger for one). With a 56 K CP/M it
-  is 26,733 bytes in this build. **Every byte of the image comes out of
+  is 27,088 bytes in this build. **Every byte of the image comes out of
   the arena**, so the binary is the scarce resource. Commands are priced in
   bytes before they are built, and a command that earns too little gets cut.
 - **The console is a 9600-baud serial line**, about 960 characters a second. A
@@ -63,7 +63,7 @@ Six code modules plus a reserve block, linked in this order (a seventh,
 | `VI.MAC` | entry at `0100H`: read the command tail, open the file, then the loop *key → dispatch → paint* | VI |
 | `SCRN.MAC` | BIOS-direct console output, geometry probe, placement (`LAYOUT`), all painting, the message row | VI (placement follows WordMaster's model) |
 | `CMD.MAC` | the vi layer: key tables, dispatch (`CMDDIS`), motions, operators, insert/replace, ex line, `.`, marks, search sweep, command-line switches | VI |
-| `KEY.MAC` | VT100 key decoder and the type-ahead ring | VI (the ring is WordMaster's mechanism) |
+| `KEY.MAC` | the keyboard: one byte a key, over the type-ahead ring | VI (the ring is WordMaster's mechanism) |
 | `PAGE.MAC` | files and paging: record engine, load, spill/rewind, save and rename | WordMaster 5.55A, verbatim, plus appended glue |
 | `BUF.MAC` | the gap buffer: pointer row, insert/delete/move, line moves, matcher, Q-buffer | WordMaster 5.55A, verbatim, plus the logical-offset API and undo capture |
 | `RSV.MAC` | emits no bytes; names the storage above the image | VI |
@@ -171,8 +171,8 @@ move would break:
               pointer row, text + gap, Q-buffer (the yank register), undo region
     BUFEND  = BDOS base - 1   (B605H with a 56 K CP/M; see section 1)
 
-In this build: the image is 18793 bytes, the `.COM` file 18816 bytes (147
-records), the reserve block 815 bytes (`4A69H`–`4D97H`), and the stack 128
+In this build: the image is 18438 bytes, the `.COM` file 18560 bytes (145
+records), the reserve block 815 bytes (`4906H`–`4C34H`), and the stack 128
 bytes. **The size that matters is a 4 K BLOCK BOUNDARY**, because that is what
 the 8 MB disk allocates in: 16384 bytes occupy four blocks and one byte more
 occupies five. This build is past that line by design (`f F t T ; ,` would not
@@ -211,7 +211,6 @@ the keyboard, from `.`, from the `+{n}` switch, or from the headless test
 harnesses. Commands are table rows:
 
 - `CMDTAB`: command-mode keys
-- `ACTTAB`: decoded arrow and function keys
 - `EXTAB`: ex commands
 - `OPCTAB`: the motion class for each key an operator accepts
 
@@ -413,18 +412,22 @@ Detail is in `RENDER.md`. The design decisions:
     typed during a long operation are kept rather than lost.
   - The full repaint checks the ring between rows (`KBRDY`) and abandons the frame
     when a key is waiting. `FORCEF` makes the next frame a full one.
-  - `^C` abandons a search or a long move. Every loop that pages asks `CNTTST`
+  - ESC abandons a search or a long move. Every loop that pages asks `CNTTST`
     whether its count is spent, so that is the one place the ring is searched
-    for a `^C` (`KBBRK`): finding one zeroes the count, and the loop ends as it
+    for an ESC (`KBBRK`): finding one zeroes the count, and the loop ends as it
     does when the count runs out. The test is armed (`BRKON`) only by `G`, `gg`,
     the mark jumps and the searches, and only with no operator pending, so
     nothing that changes text is ever stopped half-way. The command then pages
     back to the file position it started from (`BRKBAK`, the path a failed
     search takes) and empties the ring. The ring is searched rather than a flag
-    set as bytes arrive, so a `^C` typed when nothing is running is an ordinary
-    key and cannot cancel a later command.
-- **ESC sequences** (CSI and SS3 arrows, Home/End, PgUp/PgDn, Ins/Del) are decoded
-  in `GETKEY`. A lone ESC is confirmed after `ESCTMO` = 500 polls.
+    set as bytes arrive, so an ESC typed when nothing is running is an ordinary
+    key and cannot cancel a later command. An ESC anywhere in the ring counts,
+    so an insert typed ahead of a long move stops it.
+- **A key is a byte.** `GETKEY` returns the next one in `C`, bit 7 off, and
+  there are no key types. ESC sequences (arrows, Home/End, PgUp/PgDn, Ins/Del)
+  are **not decoded**: ESC is the cancel key, so it must act as it arrives and
+  cannot wait to see whether a `[` follows. The bytes of an arrow key are
+  dispatched as the keystrokes they are (`COMMANDS.md`).
 
 ---
 
@@ -489,8 +492,5 @@ change.
   bridge's root is where `R` reads and `W` writes.
 - **Test constants that depend on the arena are measured, not written in.**
   Every byte added to the image shrinks the arena and moves them.
-- **A lone ESC sits in `GK_POLL`** waiting for the rest of a sequence. The guest
-  looks idle before the key is handled, so a test must wait for the editor
-  rather than read the screen mid-keystroke.
 - **A comments-only change** is proven by rebuilding and comparing `VI.COM`'s
   checksum.

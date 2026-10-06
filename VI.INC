@@ -38,7 +38,6 @@ TAB	EQU	09H		; horizontal tab
 LF	EQU	0AH		; line feed  -- the line TERMINATOR
 CR	EQU	0DH		; carriage return -- decoration before LF
 ESC	EQU	1BH		; escape
-CTRLC	EQU	03H		; ^C -- abandons a search or a long move
 DEL	EQU	7FH		; rubout / delete
 CPMEOF	EQU	1AH		; CP/M end-of-file marker (Ctrl-Z)
 
@@ -89,25 +88,3 @@ KBRSIZ	EQU	32		; KEY.MAC's type-ahead ring (a power of two)
 MKMAX	EQU	3		; marks 'a'-'c' -- three is enough (COMMANDS.md)
 MKSIZ	EQU	4		; each: a 3-byte file position (the 4th is spare)
 
-;------------------------------------------------------------
-; KEY DECODER -- GETKEY return types (B) and action codes (C when B=KT_ACT).
-; See KEY.MAC.
-;------------------------------------------------------------
-KT_NONE EQU	0		; no key (unrecognised ESC sequence, discarded)
-KT_ACT	EQU	1		; C = ACT_xxx action code
-KT_CHAR EQU	2		; C = ASCII character (printable or control)
-
-ACT_CURUP EQU	1		; cursor up    (ESC[A / ESC OA)
-ACT_CURDN EQU	2		; cursor down  (ESC[B / ESC OB)
-ACT_CURRT EQU	3		; cursor right (ESC[C / ESC OC)
-ACT_CURLT EQU	4		; cursor left  (ESC[D / ESC OD)
-ACT_LINST EQU	5		; Home / line start (ESC[H / ESC[1~)
-ACT_LINEN EQU	6		; End  / line end   (ESC[F / ESC[4~)
-ACT_PGUP  EQU	7		; page up   (ESC[5~)
-ACT_PGDN  EQU	8		; page down (ESC[6~)
-ACT_INS	  EQU	9		; Insert key (ESC[2~)
-ACT_DEL	  EQU	10		; Delete key (ESC[3~)
-ACT_ESC	  EQU	11		; lone ESC (after timeout)
-ACT_MAX	  EQU	11		; highest defined action code
-
-ESCTMO	EQU	500		; polls before a lone ESC is confirmed

@@ -51,7 +51,7 @@ from smoke_vi import Editor, SYM                           # noqa: E402
 CLOCK_HZ = 2e6
 NLINES = 12800
 BIG = b"".join(b"%06d\r\n" % i for i in range(1, NLINES + 1))
-ESC, CR, CTRLC = "\x1b", "\r", "\x03"
+ESC, CR = "\x1b", "\r"
 
 # (section, name, keys typed first, keys measured)
 ROWS = [
@@ -69,12 +69,12 @@ ROWS = [
     ("Moving", "`'a` to line 100 from line 6000",
      ["100G", "ma", "6000G"], ["'a"]),
     ("Moving", "`^G` at the end", ["G"], ["\x07"]),
-    ("Moving", "`G` from the top, `^C` 10 s into it", [],
-     ["G", (10, CTRLC)]),
+    ("Moving", "`G` from the top, ESC 10 s into it", [],
+     ["G", (10, ESC)]),
     ("Moving", "`/zzzz` from line 6000, never found", ["6000G"],
      ["/zzzz" + CR]),
-    ("Moving", "`/zzzz` from line 6000, `^C` 10 s into it", ["6000G"],
-     ["/zzzz" + CR, (10, CTRLC)]),
+    ("Moving", "`/zzzz` from line 6000, ESC 10 s into it", ["6000G"],
+     ["/zzzz" + CR, (10, ESC)]),
     ("Moving", "`/012000` from the top", [], ["/012000" + CR]),
     ("Moving", "`/000100` from line 6000 (wraps)", ["6000G"],
      ["/000100" + CR]),
@@ -175,9 +175,8 @@ def type_(e, keys):
         if i + 1 < len(keys) and isinstance(keys[i + 1], tuple):
             continue                        # ... which is still running
         settle(e)
-        # A lone ESC is only an ESC once GETKEY's timeout has run, and the
-        # guest idles on the keyboard all the while: wait for the mode
-        # message to go, which is when the user sees the insert end.
+        # An ESC that ends an insert: wait for the mode message to go,
+        # which is when the user sees the insert end.
         for _ in range(50):
             if was is None or bottom(e) != was:
                 break
