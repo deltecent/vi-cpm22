@@ -2098,6 +2098,11 @@ BDO_NX: LHLD	CNTV
 ; char, and is left on the line's end past it, as any 'w' that runs off a line
 ; is: WDO_DN pulls it back and says so (WPULL), so that 'dw' there takes the
 ; char as it does on the last char of any other line.
+; Under an operator the LAST word of the count does not leave its line (vim's
+; fwd_word, 'eol'): the first step that comes to a line's end stops there, so
+; 'dw' on a line's last word takes the word and keeps the line break.  The
+; words before the last run on freely -- 'd2w' there takes the line break and
+; the next line's first word as well.
 FWD1:
 	CALL	CCLS
 	STA	WKCLS		; the starting class
@@ -2106,6 +2111,8 @@ FWD1:
 	JZ	FW_WD
 	STC
 	RM			; -1: already at the end
+	CALL	WLAST
+	RZ
 	CPI	2
 	JNZ	FW_WD		; 1: a next line was reached
 	CALL	ATEOF		; 2: on the line's end -- the last line?
@@ -2125,6 +2132,9 @@ FW_WLP:
 	CALL	INCC
 	ORA	A
 	RM			; the end of the file (NC)
+	JZ	FW_WLP
+	CALL	WLAST
+	RZ
 	JMP	FW_WLP
 FW_WS:
 	CALL	CCLS		; then over blanks to the next word
@@ -2135,7 +2145,27 @@ FW_WS:
 	CALL	INCC
 	ORA	A
 	RM
+	JZ	FW_WS
+	CALL	WLAST
+	RZ
 	JMP	FW_WS
+
+;WLAST -- A = INCC's answer, kept.  Z (and NC) iff this is the last word of the
+; count and an operator is waiting on it: the step stops where it is.
+WLAST:
+	MOV	B,A
+	LHLD	CNTV
+	MOV	A,H
+	ORA	L
+	JNZ	WL_X		; words still owed
+	LDA	PSAVE
+	ORA	A
+	JZ	WL_NO		; a plain 'w'
+	XRA	A
+WL_X:	MOV	A,B
+	RET
+WL_NO:	ORA	B
+	RET
 
 ;BCK1 -- vim bck_word, once.  CY = failed: the cursor was at the file's start.
 BCK1:
@@ -2312,6 +2342,8 @@ EDO_LP: LHLD	CNTV
 	DCX	H
 	SHLD	CNTV
 	CALL	ESTEP
+	LXI	H,CWEOL		; only the count's first word stays where it is
+	MVI	M,0
 	JNC	EDO_LP
 	JMP	WDO_DN
 
@@ -2328,10 +2360,14 @@ ESTEP:
 	JM	ES_F
 	CALL	CCLS
 	ORA	A
-	JZ	ES_WS
+	JZ	ES_ST
 	LXI	H,WKCLS
 	CMP	M
 	JZ	ES_SK		; still in the word it started in: on to its end
+ES_ST:
+	LDA	CWEOL		; it started on a word's last char.  As 'cw'
+	ORA	A		;   that char is the word's end already, and
+	JNZ	ES_BK		;   the step stays on it (vim end_word, 'stop')
 ES_WS:
 	CALL	CCLS		; over blanks, line ends and empty lines
 	ORA	A
@@ -2353,7 +2389,7 @@ ES_SL:
 	LXI	H,WKCLS
 	CMP	M
 	JZ	ES_SL
-	JMP	DECC		; ... and back onto its last char (NC)
+ES_BK:	JMP	DECC		; ... and back onto its last char (NC)
 
 ;--- e / E stay because OPPEND rewrites a pending "cw"/"cW" to "ce"/"cE"
 ; and dispatches it through CMDTAB (vi's one operator+motion special case),
@@ -2991,8 +3027,8 @@ OPP_W:
 	MOV	A,C
 	SUI	'w'-'e'		; 'w'->'e' and 'W'->'E' (both 18 apart)
 	MOV	C,A
-	MVI	A,1		; ... but it is still a 'w' where the line ends:
-	STA	CWEOL		;   see the clamp in OPA_F
+	MVI	A,1		; ... and one that does not leave a word's last
+	STA	CWEOL		;   char for the next word's: see ESTEP
 OPP_ND:
 	MOV	A,C		; 'gg' is two keys, and the second has to be read
 	CPI	'g'		;   HERE, as a mark's letter is: left to the next
@@ -3355,20 +3391,10 @@ OPA_F:
 	;    text, and taking it leaves half a line end in the file.  So the
 	;    span never runs past the content end of the line it landed on
 	;    (vim: 'd$' on an empty line changes nothing, 'de' on the file's
-	;    last char takes it and keeps the line end).
-	;    'cw' stops at the content end of the line it STARTED on, where a
-	;    plain 'ce' (and 'de') runs on into the next line's word and 'd%'
-	;    crosses to its mate -- all four recorded from vim 9.1.  vim's 'cw'
-	;    is not simply 'ce': the rewrite keeps 'w's own end-of-line stop, so
-	;    that clamp hangs off CWEOL (the rewrite) and not off the class. ---
+	;    last char takes it and keeps the line end). ---
 	INX	H		; inclusive endpoint -> hi = end+1
 	SHLD	OPHI		; park it: CEND clobbers DE
-	DCX	H		; the line it landed on ...
-	LDA	CWEOL
-	ORA	A
-	JZ	OPA_LE
-	LHLD	OPLO		; ... or, for 'cw', the one it started on
-OPA_LE:
+	DCX	H		; the line it landed on
 	CALL	CEND		; HL = that line's content end
 	XCHG			; DE = it
 	LHLD	OPHI		; HL = hi
@@ -3381,37 +3407,90 @@ OPA_LE:
 	XCHG			; HL = the content end: the span stops there
 	JMP	OPA_HI
 OPA_EX:
-	;--- exclusive and forward: vim's 'w' under an operator stops at the end
-	;    of the line (fwd_word's 'eol'), so the span is cut back to the
-	;    cursor line's content end -- 'dw' on the last word of a line
-	;    deletes to the line's end and does NOT join the next line up.
-	;    The end goes to OPHI first: CEND does not preserve DE. ---
-	SHLD	OPHI		; the motion's own end, for now
-	LHLD	OPLO
-	CALL	CEND		; HL = the start line's content end
-	XCHG			; DE = that content end
-	LDA	WPULL		; the motion landed on a line's end and was
-	ORA	A		;   pulled back onto its last char (the command
-	JNZ	OPA_CE		;   cursor may not sit past it): under an
-	LHLD	OPHI		;   operator vim's own w stops AT that end, so
-	CALL	CMP16		;   the span runs to the line's content end --
-	JNC	OPA_DO		;   'dw' on the last word of the last line
-OPA_CE:				;   deletes the word, not all but its last char
-	LHLD	OPLO
-	CALL	CMP16		; DE = the content end vs HL = lo: Z iff equal
-	JZ	OPA_LN
-	XCHG			; HL = the content end
+	;--- exclusive and forward.  A motion that came to rest on a line's
+	;    end was pulled back onto the last char (WPULL: the command cursor
+	;    may not sit past it), and its span runs to that line's content
+	;    end -- 'dw' on a line's last word takes the word and not all but
+	;    its last char.  One that was not may have stopped in a line's
+	;    first column, which OPA_C1 sees to. ---
+	SHLD	OPHI
+	LDA	WPULL
+	ORA	A
+	JZ	OPA_C1
+	INX	H
 OPA_HI:
 	SHLD	OPHI
 ;OPA_DO -- delete the charwise span, then place the cursor: a delete never
 ; leaves it past the line's last char, a change leaves it at the deletion point
 ; (where the typed text goes).
+; A DELETE of more than one line that leaves nothing but blanks on either side
+; of it -- only blanks before its start, only blanks from its end to the line's
+; end -- takes the whole lines instead (vim's op_delete; recorded from vim 9.1:
+; 'd2w' from an empty line takes it and the next line's only word, lines and
+; all).  A change never does.
 OPA_DO:
-	CALL	OPDSPN
+	CALL	OPSPNL
+	MOV	A,H
+	ORA	L
+	JNZ	OPA_D1
+	LHLD	OPLO		; nothing is spanned, so nothing changes: back
+	JMP	GOTO		;   to where the span starts
+OPA_D1:
 	LDA	PSAVE
 	CPI	'c'
-	RZ
+	JZ	OPDSPN
+	CALL	SPNBRK
+	JNC	OPA_D2
+	LHLD	OPHI
+	CALL	CEND
+	XCHG			; DE = the content end of the line it ends in
+	LHLD	OPHI
+OPA_BL:
+	CALL	CMP16
+	JZ	OPA_BI		; only blanks after it
+	PUSH	D
+	PUSH	H
+	CALL	CHARAT
+	POP	H
+	POP	D
+	INX	H
+	CALL	BLANKQ
+	JZ	OPA_BL
+OPA_D2:
+	CALL	OPDSPN
 	JMP	CLAMPE
+OPA_BI:
+	CALL	LOIND
+	JNZ	OPA_D2
+	LHLD	OPHI
+	CALL	NLSTART
+	SHLD	OPHI
+	JMP	C1_LW
+
+;LOIND -- Z iff only blanks lie before OPLO on its line.
+LOIND:
+	LHLD	OPLO
+	CALL	BOL
+LI_LP:
+	PUSH	H
+	XCHG
+	LHLD	OPLO
+	CALL	CMP16		; DE = the scan vs HL = lo
+	POP	H
+	RZ
+	PUSH	H
+	CALL	CHARAT
+	POP	H
+	INX	H
+	CALL	BLANKQ
+	JZ	LI_LP
+	RET
+;BLANKQ -- Z iff A is a space or a TAB.
+BLANKQ:
+	CPI	' '
+	RZ
+	CPI	TAB
+	RET
 ;OPA_C1 -- a span that crosses lines and ends in a line's FIRST column: a
 ; backward word ('db' from the start of a line) or a jump to a mark.  vim's
 ; rule for an exclusive motion ending there (':help exclusive'):
@@ -3435,23 +3514,8 @@ OPA_C1:
 	LHLD	OPHI
 	CALL	CMP16		; DE = that line's start vs HL = hi
 	JNZ	OPA_DO		; it ends inside a line: as it stands
-	LHLD	OPLO
-	CALL	BOL
-C1_LP:
-	PUSH	H
-	XCHG
-	LHLD	OPLO
-	CALL	CMP16		; DE = the scan vs HL = lo
-	POP	H
+	CALL	LOIND
 	JZ	C1_LW		; only blanks before lo: whole lines
-	PUSH	H
-	CALL	CHARAT
-	POP	H
-	INX	H
-	CPI	' '
-	JZ	C1_LP
-	CPI	TAB
-	JZ	C1_LP
 C1_CH:
 	LHLD	OPHI		; back over the line break to the content end
 	DCX	H		;   of the line before
@@ -3500,23 +3564,6 @@ OPDSPN:
 	JMP	SETLIN		; no break: 'dw' 'cw' 'D' changed one row, and
 				;   only that row is stale -- 1.6 s of repaint
 				;   for a word was the whole cost of these
-
-;OPA_LN -- the span came out empty because the line holds nothing at all (the
-; cursor is on an empty line): vim's do_pending_operator promotes such a span to
-; LINEWISE there ('inindent'), so 'dw' takes the line away, exactly as a 'J' on
-; the line above would.  A change has nothing to delete: it just opens its
-; insert on the empty line (vim's 'cw' there is a linewise change, same effect).
-OPA_LN:
-	LDA	PSAVE
-	CPI	'c'
-	JNZ	OPA_LD
-	LHLD	OPLO		; nothing to delete, and the motion has moved
-	JMP	GOTO		;   on: back to the empty line to insert there
-OPA_LD:
-	LHLD	OPLO
-	SHLD	OPSTA
-	SHLD	OPEND2
-	JMP	OPALIN
 
 ;OPALSP -- the linewise span [OPSTA,OPEND2] as whole lines: OPLO = the start of
 ; the LOW endpoint's line, OPHI = the start of the line past the HIGH one.
@@ -7035,7 +7082,7 @@ DDSNG:	DB	0		; 1 = the current dd deletes a single line (DL paint)
 OPCLSV: DB	0		; operator: motion class (0 excl, 1 incl, 2 linewise,
 				;   3 excl but a jump -- no end-of-line clamp)
 CWEOL:	DB	0		; operator: the motion is 'cw' rewritten to 'ce',
-				;   so it stops at the line's content end
+				;   and its first word is yet to be stepped
 OPSTA:	DW	0		; operator: span start (cursor before the motion)
 OPEND2: DW	0		; operator: span end (cursor after the motion)
 OPSFP:	DB	0,0,0		; operator: the start as a place in the file

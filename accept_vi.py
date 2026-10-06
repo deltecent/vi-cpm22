@@ -3303,10 +3303,9 @@ VIM_OPMX = [
 MK = '2G6lma7G9lmb'
 OPMX_OPEN = {}
 for _issue, _rows in (
-        (12, [('4G7l', 'dw'), ('4G7l', 'd2w'), ('4G7l', 'dW'), ('4G7l', 'd2W')]),
         (19, [('4G7l', 'ygg'), ('gg0', 'ygg'), ('G$', 'ygg'), ('4G7l', 'd2gg')]
          + [(MK + p, o + m) for p in ('4G7l', 'gg0', 'G$')
-            for o, m in (('d', '`a'), ('d', '`b'), ('y', "'a"), ('y', "'b"))])):
+            for o, m in (('d', '`a'), ('d', '`b'), ('y', "'a"), ('y', "'b"))]),):
     for _r in _rows:
         OPMX_OPEN[_r] = _issue
 
@@ -3403,6 +3402,112 @@ VIM_SHORT = [
     (['2G', 'd5b'], b'cc dd\r\n\r\nee ff\r\n', (0, 0)),
 ]
 
+# A count on a word motion under an operator, and 'cw' on a word's last char.
+# 'cw' is 'ce', except that from a word's last char it stays there (so 'cw' on
+# a one-letter word changes that word, not the next one too) -- and only the
+# count's FIRST word stays.  Under 'd' only the count's LAST word stops at its
+# line's end; the ones before it run on over the line break.  A delete of more
+# than one line that leaves only blanks before and after it takes the lines
+# whole.  Same shape as VIM_COL1, on WORD_TEXT (a line with trailing blanks, an
+# indented line, an empty line, a one-word line).
+WORD_TEXT = b'aa bb c\r\ndd ee  \r\n  ff gg\r\n\r\nhh\r\nx yy z\r\n'
+VIM_WORD = [
+    (['gg0l', 'cwQ\x1b'], b'aQ bb c\r\ndd ee  \r\n  ff gg\r\n\r\nhh\r\nx yy z\r\n', (0, 1)),
+    (['gg0l', 'c2wQ\x1b'], b'aQ c\r\ndd ee  \r\n  ff gg\r\n\r\nhh\r\nx yy z\r\n', (0, 1)),
+    (['gg0l', 'cWQ\x1b'], b'aQ bb c\r\ndd ee  \r\n  ff gg\r\n\r\nhh\r\nx yy z\r\n', (0, 1)),
+    (['gg0l', 'c3wQ\x1b'], b'aQ\r\ndd ee  \r\n  ff gg\r\n\r\nhh\r\nx yy z\r\n', (0, 1)),
+    (['gg$', 'cwQ\x1b'], b'aa bb Q\r\ndd ee  \r\n  ff gg\r\n\r\nhh\r\nx yy z\r\n', (0, 6)),
+    (['gg$', 'c2wQ\x1b'], b'aa bb Q ee  \r\n  ff gg\r\n\r\nhh\r\nx yy z\r\n', (0, 6)),
+    (['gg$', 'c3wQ\x1b'], b'aa bb Q  \r\n  ff gg\r\n\r\nhh\r\nx yy z\r\n', (0, 6)),
+    (['gg0', 'c4wQ\x1b'], b'Q ee  \r\n  ff gg\r\n\r\nhh\r\nx yy z\r\n', (0, 0)),
+    (['gg0w', 'c2wQ\x1b'], b'aa Q\r\ndd ee  \r\n  ff gg\r\n\r\nhh\r\nx yy z\r\n', (0, 3)),
+    (['gg0w', 'c3wQ\x1b'], b'aa Q ee  \r\n  ff gg\r\n\r\nhh\r\nx yy z\r\n', (0, 3)),
+    (['gg02l', 'cwQ\x1b'], b'aaQbb c\r\ndd ee  \r\n  ff gg\r\n\r\nhh\r\nx yy z\r\n', (0, 2)),
+    (['gg02l', 'c2wQ\x1b'], b'aaQc\r\ndd ee  \r\n  ff gg\r\n\r\nhh\r\nx yy z\r\n', (0, 2)),
+    (['gg02l', 'c3wQ\x1b'], b'aaQ\r\ndd ee  \r\n  ff gg\r\n\r\nhh\r\nx yy z\r\n', (0, 2)),
+    (['G0', 'cwQ\x1b'], b'aa bb c\r\ndd ee  \r\n  ff gg\r\n\r\nhh\r\nQ yy z\r\n', (5, 0)),
+    (['G0', 'c2wQ\x1b'], b'aa bb c\r\ndd ee  \r\n  ff gg\r\n\r\nhh\r\nQ z\r\n', (5, 0)),
+    (['G$', 'cwQ\x1b'], b'aa bb c\r\ndd ee  \r\n  ff gg\r\n\r\nhh\r\nx yy Q\r\n', (5, 5)),
+    (['G$', 'c2wQ\x1b'], b'aa bb c\r\ndd ee  \r\n  ff gg\r\n\r\nhh\r\nx yy Q\r\n', (5, 5)),
+    (['G0', 'c9wQ\x1b'], b'aa bb c\r\ndd ee  \r\n  ff gg\r\n\r\nhh\r\nQ\r\n', (5, 0)),
+    (['2G0w', 'cwQ\x1b'], b'aa bb c\r\ndd Q  \r\n  ff gg\r\n\r\nhh\r\nx yy z\r\n', (1, 3)),
+    (['2G0w', 'c2wQ\x1b'], b'aa bb c\r\ndd Q gg\r\n\r\nhh\r\nx yy z\r\n', (1, 3)),
+    (['2G$', 'cwQ\x1b'], b'aa bb c\r\ndd ee Q\r\n  ff gg\r\n\r\nhh\r\nx yy z\r\n', (1, 6)),
+    (['2G$', 'c2wQ\x1b'], b'aa bb c\r\ndd ee Qgg\r\n\r\nhh\r\nx yy z\r\n', (1, 6)),
+    (['3G0', 'cwQ\x1b'], b'aa bb c\r\ndd ee  \r\nQff gg\r\n\r\nhh\r\nx yy z\r\n', (2, 0)),
+    (['3G0', 'c2wQ\x1b'], b'aa bb c\r\ndd ee  \r\nQgg\r\n\r\nhh\r\nx yy z\r\n', (2, 0)),
+    (['4G', 'cwQ\x1b'], b'aa bb c\r\ndd ee  \r\n  ff gg\r\nQ\r\nhh\r\nx yy z\r\n', (3, 0)),
+    (['4G', 'c2wQ\x1b'], b'aa bb c\r\ndd ee  \r\n  ff gg\r\nQ\r\nx yy z\r\n', (3, 0)),
+    (['3G$', 'c2wQ\x1b'], b'aa bb c\r\ndd ee  \r\n  ff gQ\r\nx yy z\r\n', (2, 6)),
+    (['3G$', 'c3wQ\x1b'], b'aa bb c\r\ndd ee  \r\n  ff gQ yy z\r\n', (2, 6)),
+    (['gg0', 'd3w'], b'\r\ndd ee  \r\n  ff gg\r\n\r\nhh\r\nx yy z\r\n', (0, 0)),
+    (['gg0', 'd4w'], b'ee  \r\n  ff gg\r\n\r\nhh\r\nx yy z\r\n', (0, 0)),
+    (['gg0w', 'd2w'], b'aa \r\ndd ee  \r\n  ff gg\r\n\r\nhh\r\nx yy z\r\n', (0, 2)),
+    (['gg0w', 'd3w'], b'aa ee  \r\n  ff gg\r\n\r\nhh\r\nx yy z\r\n', (0, 3)),
+    (['gg$', 'dw'], b'aa bb \r\ndd ee  \r\n  ff gg\r\n\r\nhh\r\nx yy z\r\n', (0, 5)),
+    (['gg$', 'd2w'], b'aa bb ee  \r\n  ff gg\r\n\r\nhh\r\nx yy z\r\n', (0, 6)),
+    (['gg$', 'd3w'], b'aa bb \r\n  ff gg\r\n\r\nhh\r\nx yy z\r\n', (0, 5)),
+    (['gg0w', 'd4w'], b'aa \r\n  ff gg\r\n\r\nhh\r\nx yy z\r\n', (0, 2)),
+    (['gg0w', 'd5w'], b'aa gg\r\n\r\nhh\r\nx yy z\r\n', (0, 3)),
+    (['gg0w', 'd6w'], b'aa \r\n\r\nhh\r\nx yy z\r\n', (0, 2)),
+    (['gg0w', 'd7w'], b'aa \r\nhh\r\nx yy z\r\n', (0, 2)),
+    (['2G0', 'dw'], b'aa bb c\r\nee  \r\n  ff gg\r\n\r\nhh\r\nx yy z\r\n', (1, 0)),
+    (['2G0', 'd2w'], b'aa bb c\r\n\r\n  ff gg\r\n\r\nhh\r\nx yy z\r\n', (1, 0)),
+    (['2G0w', 'dw'], b'aa bb c\r\ndd \r\n  ff gg\r\n\r\nhh\r\nx yy z\r\n', (1, 2)),
+    (['2G0w', 'd2w'], b'aa bb c\r\ndd gg\r\n\r\nhh\r\nx yy z\r\n', (1, 3)),
+    (['2G0w', 'd3w'], b'aa bb c\r\ndd \r\n\r\nhh\r\nx yy z\r\n', (1, 2)),
+    (['2G0w', 'd4w'], b'aa bb c\r\ndd \r\nhh\r\nx yy z\r\n', (1, 2)),
+    (['2G$', 'dw'], b'aa bb c\r\ndd ee \r\n  ff gg\r\n\r\nhh\r\nx yy z\r\n', (1, 5)),
+    (['2G$', 'd2w'], b'aa bb c\r\ndd ee gg\r\n\r\nhh\r\nx yy z\r\n', (1, 6)),
+    (['3G0', 'dw'], b'aa bb c\r\ndd ee  \r\nff gg\r\n\r\nhh\r\nx yy z\r\n', (2, 0)),
+    (['3G0', 'd2w'], b'aa bb c\r\ndd ee  \r\ngg\r\n\r\nhh\r\nx yy z\r\n', (2, 0)),
+    (['3G0', 'd3w'], b'aa bb c\r\ndd ee  \r\n\r\n\r\nhh\r\nx yy z\r\n', (2, 0)),
+    (['3G0', 'd4w'], b'aa bb c\r\ndd ee  \r\nhh\r\nx yy z\r\n', (2, 0)),
+    (['3G$', 'd2w'], b'aa bb c\r\ndd ee  \r\n  ff g\r\nhh\r\nx yy z\r\n', (2, 5)),
+    (['3G$', 'd3w'], b'aa bb c\r\ndd ee  \r\n  ff g\r\nx yy z\r\n', (2, 5)),
+    (['3G$', 'd4w'], b'aa bb c\r\ndd ee  \r\n  ff gyy z\r\n', (2, 6)),
+    (['4G', 'd2w'], b'aa bb c\r\ndd ee  \r\n  ff gg\r\nx yy z\r\n', (3, 0)),
+    (['4G', 'd3w'], b'aa bb c\r\ndd ee  \r\n  ff gg\r\nyy z\r\n', (3, 0)),
+    (['5G', 'dw'], b'aa bb c\r\ndd ee  \r\n  ff gg\r\n\r\n\r\nx yy z\r\n', (4, 0)),
+    (['5G', 'd2w'], b'aa bb c\r\ndd ee  \r\n  ff gg\r\n\r\nyy z\r\n', (4, 0)),
+    (['5G', 'd3w'], b'aa bb c\r\ndd ee  \r\n  ff gg\r\n\r\nz\r\n', (4, 0)),
+    (['5G', 'd4w'], b'aa bb c\r\ndd ee  \r\n  ff gg\r\n\r\n', (3, 0)),
+    (['5G', 'd9w'], b'aa bb c\r\ndd ee  \r\n  ff gg\r\n\r\n', (3, 0)),
+    (['G0', 'd3w'], b'aa bb c\r\ndd ee  \r\n  ff gg\r\n\r\nhh\r\n\r\n', (5, 0)),
+    (['G0', 'd4w'], b'aa bb c\r\ndd ee  \r\n  ff gg\r\n\r\nhh\r\n\r\n', (5, 0)),
+    (['G0w', 'd2w'], b'aa bb c\r\ndd ee  \r\n  ff gg\r\n\r\nhh\r\nx \r\n', (5, 1)),
+    (['G0w', 'd3w'], b'aa bb c\r\ndd ee  \r\n  ff gg\r\n\r\nhh\r\nx \r\n', (5, 1)),
+    (['gg0w', 'd2W'], b'aa \r\ndd ee  \r\n  ff gg\r\n\r\nhh\r\nx yy z\r\n', (0, 2)),
+    (['gg0w', 'd3W'], b'aa ee  \r\n  ff gg\r\n\r\nhh\r\nx yy z\r\n', (0, 3)),
+    (['gg0w', 'c2WQ\x1b'], b'aa Q\r\ndd ee  \r\n  ff gg\r\n\r\nhh\r\nx yy z\r\n', (0, 3)),
+    (['2G0', 'd3W'], b'aa bb c\r\ngg\r\n\r\nhh\r\nx yy z\r\n', (1, 0)),
+    # the same rule for any delete of more than one line ('de', a mark), and
+    # '.' and 'u' after these
+    (['3G0', 'd3e'], b'aa bb c\r\ndd ee  \r\nx yy z\r\n', (2, 0)),
+    (['3G0', 'd2e'], b'aa bb c\r\ndd ee  \r\n\r\n\r\nhh\r\nx yy z\r\n', (2, 0)),
+    (['4G', 'de'], b'aa bb c\r\ndd ee  \r\n  ff gg\r\nx yy z\r\n', (3, 0)),
+    (['4G', 'd2e'], b'aa bb c\r\ndd ee  \r\n  ff gg\r\n yy z\r\n', (3, 0)),
+    (['3G0', 'c3eQ\x1b'], b'aa bb c\r\ndd ee  \r\nQ\r\nx yy z\r\n', (2, 0)),
+    (['2G$ma3G0', 'd`a'], b'aa bb c\r\ndd ee \r\n  ff gg\r\n\r\nhh\r\nx yy z\r\n', (1, 5)),
+    (['5G$ma3G0', 'd`a'], b'aa bb c\r\ndd ee  \r\nh\r\nx yy z\r\n', (2, 0)),
+    (['3G0ma5G$', 'd`a'], b'aa bb c\r\ndd ee  \r\nh\r\nx yy z\r\n', (2, 0)),
+    (['gg0', 'd2e'], b' c\r\ndd ee  \r\n  ff gg\r\n\r\nhh\r\nx yy z\r\n', (0, 0)),
+    (['gg0', 'd3e'], b'\r\ndd ee  \r\n  ff gg\r\n\r\nhh\r\nx yy z\r\n', (0, 0)),
+    (['gg0', 'd5e'], b'  ff gg\r\n\r\nhh\r\nx yy z\r\n', (0, 2)),
+    (['2G0', 'd2e'], b'aa bb c\r\n  \r\n  ff gg\r\n\r\nhh\r\nx yy z\r\n', (1, 0)),
+    (['5G', 'd4e'], b'aa bb c\r\ndd ee  \r\n  ff gg\r\n\r\n', (3, 0)),
+    (['5G', 'de'], b'aa bb c\r\ndd ee  \r\n  ff gg\r\n\r\n\r\nx yy z\r\n', (4, 0)),
+    (['5G', 'd2e'], b'aa bb c\r\ndd ee  \r\n  ff gg\r\n\r\n yy z\r\n', (4, 0)),
+    (['gg0w', 'd4e'], b'aa   \r\n  ff gg\r\n\r\nhh\r\nx yy z\r\n', (0, 3)),
+    (['3G0', 'd4e'], b'aa bb c\r\ndd ee  \r\n yy z\r\n', (2, 0)),
+    (['gg0', 'cwQ\x1b', 'w', '.'], b'Q Q c\r\ndd ee  \r\n  ff gg\r\n\r\nhh\r\nx yy z\r\n', (0, 2)),
+    (['gg$', 'cwQ\x1b', '2G0', '.'], b'aa bb Q\r\nQ ee  \r\n  ff gg\r\n\r\nhh\r\nx yy z\r\n', (1, 0)),
+    (['gg0w', 'd2w', 'u'], b'aa bb c\r\ndd ee  \r\n  ff gg\r\n\r\nhh\r\nx yy z\r\n', (0, 3)),
+    (['gg0w', 'd3w', '2G0', '.'], b'aa ee  \r\n\r\n\r\nhh\r\nx yy z\r\n', (1, 0)),
+    (['4G', 'd2w', 'u'], b'aa bb c\r\ndd ee  \r\n  ff gg\r\n\r\nhh\r\nx yy z\r\n', (3, 0)),
+    (['4G', 'd2w', 'gg', '.'], b'c\r\ndd ee  \r\n  ff gg\r\nx yy z\r\n', (0, 0)),
+]
+
 
 def col1_like_vim():
     """A span ending in a line's first column goes as vim takes it."""
@@ -3412,6 +3517,11 @@ def col1_like_vim():
 def short_like_vim():
     """An operator over a motion that fell short takes what vim takes."""
     span_table('short', SHORT_TEXT, VIM_SHORT)
+
+
+def word_like_vim():
+    """A counted word motion under an operator takes what vim takes."""
+    span_table('word', WORD_TEXT, VIM_WORD)
 
 
 def span_table(name, text, table):
@@ -6870,6 +6980,7 @@ def pgop_cmds():
                       (['4000G', 'ma', '6000G', '3l'], "y'a"),
                       (['6000G', '3l'], 'y2000j'),
                       (['6000G', '3l'], 'd3000w'), (['6000G', '3l'], 'd3000W'),
+                      (['6000G', '3l'], 'c3000w'),
                       (['6000G', '3l'], 'd3000b'), (['6000G', '3l'], 'd3000B'),
                       (['6000G', '3l'], 'd2000$'), (['6000G', '3l'], 'c2000$')):
         e = Editor(big)
@@ -6963,9 +7074,9 @@ def pgop_cmds():
     try:
         tap(e, '5G3l'); tap(e, 'd2w'); tap(e, ':w\r')
         got = saved_bytes(e)
-        still_open(22, f'5G3l d2w takes the rest of the line and the next '
-                       f'({len(got)} bytes)',
-                   got == L(1, 4) + b'000\r\n' + L(7, 40))
+        check(f'5G3l d2w takes the rest of the line and the next '
+              f'({len(got)} bytes)',
+              got == L(1, 4) + b'000\r\n' + L(7, 40))
     finally:
         e.close()
 
@@ -8224,6 +8335,7 @@ def main():
         opmx_like_vim()
         col1_like_vim()
         short_like_vim()
+        word_like_vim()
     if not args or 'vim' in args or 'dot' in args:
         print('\n=== . (repeat) vs vim ===', flush=True)
         dot_like_vim()
