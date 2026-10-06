@@ -1721,6 +1721,7 @@ VC_J:
 	CALL	GLCHK		; the goal column, from the cursor if stale
 	CALL	GETCNT		; HL = count
 	CALL	JCORE
+	CALL	JKDRP
 	JMP	JKLAND
 
 ;VC_K -- up count lines, clamped at the first line.
@@ -1729,7 +1730,22 @@ VC_K:
 	CALL	GLCHK
 	CALL	GETCNT
 	CALL	KCORE
+	CALL	JKDRP
 	JMP	JKLAND
+
+;JKDRP -- DE = the lines JCORE / KCORE moved.  None -- 'j' on the last line,
+; 'k' on the first -- and the motion has failed: an operator waiting on it is
+; dropped, as vim drops it, where a line span that starts and ends on one line
+; would take that line ('dj' on the last line deleted it).  A count that runs
+; out of lines short has still moved, and its operator stands.  It is asked
+; here and not in the cores: 'dH' on the top row moves no lines either, and
+; takes its line.
+JKDRP:
+	MOV	A,D
+	ORA	E
+	RNZ
+	STA	PSAVE
+	RET
 
 ;GLCHK -- GOALCOL 0FFFEH (stale: the file was just opened, or an edit moved
 ; the cursor) -> take it from the cursor now, as vim's w_set_curswant does.
