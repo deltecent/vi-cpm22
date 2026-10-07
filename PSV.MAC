@@ -1,0 +1,38 @@
+;============================================================
+; FILE:    PSV.MAC
+; PROJECT: VI
+; MODULE:  SAVEFIL -- the pager tests' write-back step.
+;------------------------------------------------------------
+; A TEST HOOK, and nothing else.  SAVEFIL is WordMaster's ENDEDIT (WM 557-567),
+; verbatim: SAVCLO, then the two renames.  It writes back only the file it
+; read, so the editor does not call it -- ':w' goes through WRTO, which can
+; name another file -- but all four pager tests (PGTST, PGXTST, PGXINS,
+; PGBKTST) drive it as their last step, and that is how WM's own save side
+; (SAVCLO -> FLUSHTX/FILLBF2 and RENAME) stays gated.  So it lives in its own
+; module and links into those stubs alone, as QSN.MAC does for CMDTST and
+; MOTTST.  In PAGE.MAC it was 26 bytes of VI.COM the editor cannot reach.
+;============================================================
+	PUBLIC	SAVEFIL
+
+	EXTRN	SAVCLO, RENAME		; PAGE.MAC
+	EXTRN	NEWFIL, OUTFCB, BAKEXT	; PAGE.MAC
+
+	CSEG
+
+;============================================================
+; SAVEFIL -- finish the file: flush the buffer to name.$$$ then swap names
+; (source -> name.BAK, name.$$$ -> original).  Verbatim ENDEDIT (WM 557-567).
+;============================================================
+SAVEFIL:			; WM 557 (ENDEDIT)
+	CALL	SAVCLO
+	LXI	H,NEWFIL
+	MOV	A,M
+	ORA	A
+	LXI	D,5CH
+	LXI	H,BAKEXT
+	CZ	RENAME		; not new: source -> name.BAK
+	LXI	D,OUTFCB
+	LXI	H,65H
+	JMP	RENAME		; name.$$$ -> original type (005CH+9 = 0065H)
+
+	END

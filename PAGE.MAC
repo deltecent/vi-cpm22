@@ -56,7 +56,8 @@ BS	EQU	08H
 PGINIT	EQU	200H		; WM 20 -- cold WRLIM/RDLIM (no-spill window)
 
 ;--- entry points the harness / editor calls -------------------------------
-	PUBLIC	OPENFIL, SAVEFIL
+	PUBLIC	OPENFIL
+	PUBLIC	RENAME, BAKEXT	; PSV.MAC -- the pager tests' SAVEFIL
 	PUBLIC	FILLBUF, SAVCLO
 ;--- the disk seam BUF.MAC reaches -----------------------------------------
 	PUBLIC	MKROOM, REWIND, UPDMARK, MARKGB
@@ -152,22 +153,6 @@ OPRD:				; cold-start the pager state.  WM does this by
 	SHLD	TOPLF		; (appended) no line is behind the window yet
 	CALL	FILLBUF		; WM 518 -- read the file into the buffer
 	RET
-
-;============================================================
-; SAVEFIL -- finish the file: flush the buffer to name.$$$ then swap names
-; (source -> name.BAK, name.$$$ -> original).  Verbatim ENDEDIT (WM 557-567).
-;============================================================
-SAVEFIL:			; WM 557 (ENDEDIT)
-	CALL	SAVCLO
-	LXI	H,NEWFIL
-	MOV	A,M
-	ORA	A
-	LXI	D,5CH
-	LXI	H,BAKEXT
-	CZ	RENAME		; not new: source -> name.BAK
-	LXI	D,OUTFCB
-	LXI	H,65H
-	JMP	RENAME		; name.$$$ -> original type (005CH+9 = 0065H)
 
 ;============================================================
 ; APPENDED (NOT WordMaster): vi ':w' saves and keeps editing.  WM has no such

@@ -87,8 +87,8 @@ back to one of them.
 
 ## 2. Layers and link order
 
-Six code modules plus a reserve block, linked in this order (a seventh,
-`QSN.MAC`, links into the harnesses alone):
+Six code modules plus a reserve block, linked in this order (two more,
+`QSN.MAC` and `PSV.MAC`, link into the harnesses alone):
 
     L80 VI,SCRN,CMD,KEY,PAGE,BUF,RSV,VI/Y/N/E
 
@@ -102,6 +102,7 @@ Six code modules plus a reserve block, linked in this order (a seventh,
 | `BUF.MAC` | the gap buffer: pointer row, insert/delete/move, line moves, matcher, Q-buffer | WordMaster 5.55A, verbatim, plus the logical-offset API and undo capture |
 | `RSV.MAC` | emits no bytes; names the storage above the image | VI |
 | `QSN.MAC` | the harnesses' hooks (`QSNAP`, `CMDRUN`); links into CMDTST/MOTTST only, never into `VI.COM` | VI |
+| `PSV.MAC` | the pager tests' write-back step (`SAVEFIL`); links into PGTST/PGXTST/PGXINS/PGBKTST only | WordMaster 5.55A, verbatim |
 
 **Link order is load-bearing.** `VI` links first so `START` sits at the TPA
 base. `RSV` links last and emits nothing, so its base is the top of the image.
@@ -141,8 +142,9 @@ WordMaster. The engine changes only for a stated reason.
   before the warm boot. The edit itself is lost; the file on disk is untouched.
 - WordMaster's `GETKEY` is replaced by `KBPOLL` (KEY.MAC) in `RDSEC` and
   `POLLBRK`, so the long engine loops drain type-ahead into VI's ring.
-- `OPENFIL`/`SAVEFIL` wrap WordMaster's inline open and `ENDEDIT` sequences as
-  callable routines. They keep one drive and user 0.
+- `OPENFIL` wraps WordMaster's inline open sequence as a callable routine
+  (`SAVEFIL`, in `PSV.MAC`, does the same for `ENDEDIT`). They keep one drive
+  and user 0.
 - **A WordMaster bug fix in `FILLBUF`.** WordMaster stores the last record's byte
   count only when it finds a `^Z`. A file that ends exactly on a record boundary
   without one left the count at 0. `PAGEBOT` then stepped the source back without
@@ -184,9 +186,9 @@ WordMaster. The engine changes only for a stated reason.
   `REOPEN` and `SEEKTO` let `:w` keep editing at the same line, row and column.
   They are built only from WordMaster primitives (`SAVCLO`, `RENAME`, `RENF`,
   `DELF`, `MAKEF`, `RDNEXT`). `SAVEFIL` (WordMaster's `ENDEDIT`) can only write
-  back the file it read, so the editor does not call it. It stays because the
-  four pager tests use it as their save step, which is what tests WordMaster's
-  own save side.
+  back the file it read, so the editor does not call it. It lives in `PSV.MAC`
+  and links into the four pager tests alone: they use it as their save step,
+  which is what tests WordMaster's own save side.
 - **Undo capture** in the primitives (§5).
 
 **Layout contracts inherited from WordMaster**, which code relies on and which a
@@ -233,7 +235,9 @@ overrun into the arena. **Nothing may assume a `DS` starts at zero.**
 **Test hooks do not ship.** `QSN.MAC` holds `QSNAP` (the cursor snapshot
 `cmdtst.py`/`mottst.py` read) and `CMDRUN` (the headless key loop); the editor
 reaches neither — `VI.MAC` has its own loop, because it repaints between keys
-— so the module links into CMDTST and MOTTST and not into `VI.COM`.
+— so the module links into CMDTST and MOTTST and not into `VI.COM`. `PSV.MAC`
+holds `SAVEFIL`, WordMaster's `ENDEDIT`, the same way: the four pager tests
+write back through it and the editor writes through `WRTO`.
 
 **The stack is 128 bytes** because `.` replays keys through `CMDDIS` from inside
 a handler, which adds a level of nesting.

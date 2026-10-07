@@ -201,15 +201,14 @@ this; its cursor rows are still checked.
 vim searches with a regular expression: `/a.*b`, `/^foo`, `/\<word\>`. This
 searches for the characters typed, exactly as typed — `.` matches a dot and `*`
 matches an asterisk. An 8080 has no room for a regex engine (the matcher that
-*is* here, `MATCHF` + `MATCHB` + `SCANF` + `SCANB` + `WCMATCH`, is 111 bytes
+*is* here, `MATCHF` + `MATCHB` + `SCANF` + `SCANB`, is under a hundred bytes
 altogether), and a literal search is the part of `/` that gets used.
 
-WordMaster's own search wildcards still reach `WCMATCH`, because the matchers
-compare through it: `^A` matches any character, `^S` any non-alphanumeric, `^O`
-negates the next. They are WordMaster's syntax rather than vim's and nothing
-advertises them, but they are not removed either — they cost nothing and the
-`RDLINE` prompt drops control characters, so they can only arrive in a pattern
-deliberately.
+WordMaster's own search wildcards are cut: `^A` matched any character, `^S` any
+non-alphanumeric, `^O` negated the next, all through `WCMATCH`. The `RDLINE`
+prompt drops control characters, so no pattern could ever hold one, and the
+scanners called `WCMATCH` on every byte that did not match — most of the cost
+of looking for a newline.
 
 ### Deviation: overlapping matches
 
@@ -303,7 +302,7 @@ on the line vim keeps for what it just did.
 |-------|-------|
 | `BUF.MAC` — gap buffer | trusted (verbatim WM); `LOGLEN` = resident length, correct for a window |
 | `PAGE.MAC` — pager + safe-save | trusted engine (verbatim WM); proven byte-exact through the editor at 0–100 K. `:w`-and-continue uses appended `REOPEN`/`SEEKTO` (WM `H` re-init plus the `SAVCLO` flush/refill loop); `:w {file}`/`:e` use appended `WRTO`/`DISCRD`; appended `TOPLF` (`TLFADD`/`TLFSUB` in `PAGEOUT`/`REWIND`) counts the line ends behind the window for `CNTLF` (WM's `SAVCLO`, `RENAME`, `RENF`, `DELF`, `RDNEXT`) |
-| `PAGE.MAC` — `SAVEFIL` (WM 557, `ENDEDIT`) | **still live code, not dead**: it writes back only the file it read, so the *editor* does not call it (it writes through `WRTO`, which can name another file), but all four pager tests — `PGTST`, `PGXTST`, `PGXINS`, `PGBKTST` — drive it as their write-back step, and that is how WM's own save side (`SAVCLO` → `FLUSHTX`/`FILLBF2` + the two renames) stays gated. Keep it: it is 26 bytes, and dropping it shrinks `VI.COM` only when that crosses a 128-byte record boundary. If it is ever removed, those four stubs must be pointed at `WRTO` first |
+| `PSV.MAC` — `SAVEFIL` (WM 557, `ENDEDIT`) | **a test hook, verbatim WM**: it writes back only the file it read, so the *editor* does not call it (it writes through `WRTO`, which can name another file), but all four pager tests — `PGTST`, `PGXTST`, `PGXINS`, `PGBKTST` — drive it as their write-back step, and that is how WM's own save side (`SAVCLO` → `FLUSHTX`/`FILLBF2` + the two renames) stays gated. It links into those four stubs and not into `VI.COM` |
 | `KEY.MAC` — keyboard and type-ahead ring | trusted (paging-orthogonal) |
 | `SCRN.MAC` — terminal I/O half | trusted (`BCONxx`/`OUTCH`/`OUTSTR`/`GOTOXY`/DSR/`RDNUM`) |
 | `SCRN.MAC` — viewport/paint | built on WM's cursor-relative model (`WINROW`, `LINPOSB`, `RGET`/`NEEDIN`, `WRLIM` as WM `MEASURE`); see `RENDER.md` |

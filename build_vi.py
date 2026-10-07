@@ -53,21 +53,23 @@ TARGETS = {
     # on a file that fits (nothing evicts).  PGTST loads a real file, checksums it,
     # saves it back; pgtst.py byte-compares the round-trip (see pgtst.py).
     # BUF links last (arena at the image top); PAGE's data sits below it.
-    "PGTST": ["PGTST", "PAGE", "BUF", "RSV"],
+    # PSV is SAVEFIL, the write-back step the four pager tests share -- a
+    # test hook, so it links HERE and not into VI.COM (see PSV.MAC).
+    "PGTST": ["PGTST", "PAGE", "BUF", "PSV", "RSV"],
     # Paging exerciser: same modules as PGTST, but the driver shrinks the
     # window (WINCAP) so an over-large file forces real eviction -- MKROOM/SPILL
     # on load-overflow and SAVCLO's FLUSHTX/FILLBF2 multi-batch write-behind on
     # save.  pgxtst.py byte-compares the paged round-trip (see pgxtst.py).
-    "PGXTST": ["PGXTST", "PAGE", "BUF", "RSV"],
+    "PGXTST": ["PGXTST", "PAGE", "BUF", "PSV", "RSV"],
     # Insert-overflow exerciser: shrinks the window, then inserts far more
     # than it holds so MKGAP->MKROOM->SPILL evicts the TXTBEG side to OUTFCB
     # mid-edit; pgxins.py byte-compares the reassembled file (see pgxins.py).
-    "PGXINS": ["PGXINS", "PAGE", "BUF", "RSV"],
+    "PGXINS": ["PGXINS", "PAGE", "BUF", "PSV", "RSV"],
     # Backward-paging exerciser: forces a forward spill (as PGXINS), then
     # scrolls back via PAGEDIR (DIRFLG<0) so REWIND re-reads OUTFCB records and
     # SPILLB/PAGEBOT evicts the bottom (incl. VIBACKUP$$$) -- the backward
     # read/write path; pgbktst.py byte-compares the round-trip.
-    "PGBKTST": ["PGBKTST", "PAGE", "BUF", "RSV"],
+    "PGBKTST": ["PGBKTST", "PAGE", "BUF", "PSV", "RSV"],
     # Command-layer exerciser: the key decoder (KEY) + the vi command core
     # (CMD) driven headlessly by scripted console I/O.  CMDTST
     # replays a vi session (motions, x, dd, insert, :wq) over a resident file and

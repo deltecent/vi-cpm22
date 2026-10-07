@@ -26,7 +26,7 @@
 	PUBLIC	CMDDIS
 	PUBLIC	EDMODE, QUITF, MODF, CMDCNT
 	PUBLIC	MSGPST				; the message this key left
-	PUBLIC	COL				; QSN.MAC's cursor column (test hook)
+	PUBLIC	BOL				; QSN.MAC's cursor column (test hook)
 	PUBLIC	RINTENT				; render intent (read by SCRN.MAC)
 	PUBLIC	ILN				; ... and the lines an R_ILIN opens
 	PUBLIC	ICHAPP				; ... 1 = an R_ICH needs no ICH
@@ -1467,14 +1467,6 @@ EOLC_LS:
 EOLC_MT:
 	LHLD	WKBOL
 	RET
-
-;COL -- HL(off) -> HL = off - BOL(off).
-COL:
-	PUSH	H
-	CALL	BOL
-	POP	D		; DE = off
-	XCHG			; HL = off, DE = bol
-	JMP	SUBHD
 
 ;--- the idioms this module repeats, each written once ---------------------
 ; Every one of these is the sequence it replaces, tail-called so the last
@@ -6952,9 +6944,8 @@ EXTAB:
 ; vi's search on WordMaster's matcher.  What it is NOT: vim searches with a
 ; REGULAR EXPRESSION and this searches for the literal string typed.  An 8080
 ; has no room for a regex engine; COMMANDS.md records the deviation.  (WM's own
-; search wildcards -- ^A any, ^S separator, ^O not -- still reach WCMATCH from
-; here, because MATCHF/MATCHB compare through it, but they are WordMaster's
-; syntax, not vim's, and nothing advertises them.)
+; search wildcards -- ^A any, ^S separator, ^O not -- are cut from BUF.MAC:
+; RDLINE drops control characters, so no pattern could ever hold one.)
 ;
 ; Recorded from vim before any of this was written (VIM_SRCH, accept_vi.py):
 ;   - '/' starts one character PAST the cursor and lands ON the match's first

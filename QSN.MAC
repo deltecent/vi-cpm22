@@ -20,7 +20,8 @@
 	PUBLIC	TOFFV, TLINEV, TCOLV	; ... what the harness reads
 
 	EXTRN	CUROFF, CHARAT, CMP16	; BUF.MAC
-	EXTRN	COL			; CMD.MAC -- the column, as the editor has it
+	EXTRN	SUBHD			; BUF.MAC
+	EXTRN	BOL			; CMD.MAC -- the line's start, as the editor has it
 	EXTRN	CMDDIS, QUITF		; CMD.MAC -- one key, and the flag ':q' sets
 	EXTRN	GETKEY			; KEY.MAC -- the next key
 
@@ -69,6 +70,14 @@ QS_COL:
 	CALL	COL
 	SHLD	TCOLV
 	RET
+
+;COL -- HL(off) -> HL = off - BOL(off).
+COL:
+	PUSH	H
+	CALL	BOL
+	POP	D		; DE = off
+	XCHG			; HL = off, DE = bol
+	JMP	SUBHD
 
 QSWKI:	DW	0		; the scan index
 TOFFV:	DW	0		; cursor logical offset
