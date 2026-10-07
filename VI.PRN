@@ -98,6 +98,7 @@
   0004                   C      R_ICH	EQU	4		; one printable char inserted mid-line -> ICH (no tail redraw)
   0005                   C      R_ILIN	EQU	5		; one line opened at the cursor row -> IL + redraw that row and the one above
   0006                   C      R_JOIN	EQU	6		; the line below joined onto the cursor's -> redraw that row + DL the one under it
+  0007                   C      R_DCH	EQU	7		; chars deleted at the cursor, none after it a TAB -> DCH
                          C      
                          C      ;------------------------------------------------------------
                          C      ; EDITOR MODES (EDMODE)
@@ -115,10 +116,10 @@
   0003                   C      MW_CTG	EQU	3		; '^G' -- where am I
   0004                   C      MW_BIG	EQU	4		; the yank register cannot hold that
                          C      
-  0028                   C      EXMAX	EQU	40		; max chars on the ':' ex command line
 	MACRO-80 3.44	09-Dec-81	PAGE	1-2
 
 
+  0028                   C      EXMAX	EQU	40		; max chars on the ':' ex command line
                          C      
                          C      ;------------------------------------------------------------
                          C      ; RESERVE BLOCK -- sizes of storage that RSV.MAC holds above the linked image
@@ -174,10 +175,10 @@
   0032'   3E 00                 	MVI	A,R_FULL		; default: full repaint unless a motion lowers it
   0034'   32 0000*              	STA	RINTENT
   0037'   CD 0000*              	CALL	CMDDIS			; dispatch through the vi core (may set R_MOVE)
-  003A'   3A 0000*              	LDA	QUITF
 	MACRO-80 3.44	09-Dec-81	PAGE	1-3
 
 
+  003A'   3A 0000*              	LDA	QUITF
   003D'   B7                    	ORA	A
   003E'   C2 004D'              	JNZ	MQUIT			; quitting: do not repaint what we are leaving
   0041'   CD 0000*              	CALL	SCDRAW			; repaint: full, or cursor-only for a still motion
@@ -211,12 +212,12 @@ Symbols:
 0003 	MW_CTG          0001 	MW_FIL          0000 	MW_NON          
 0002 	MW_WRT          0000 	NUL             0000 	PL_ASK          
 0002 	PL_MID          0001 	PL_SET          003B*	QUITF           
-0035*	RINTENT         0003 	R_DLIN          0000 	R_FULL          
-0004 	R_ICH           0005 	R_ILIN          0006 	R_JOIN          
-0002 	R_LINE          0001 	R_MOVE          004E*	SCDONE          
-0042*	SCDRAW          000A*	SCINIT          0030*	SCPRE           
-0000'	START           0009 	TAB             0008 	TABWID          
-0001*	VISTK           0000 	WBOOT           
+0035*	RINTENT         0007 	R_DCH           0003 	R_DLIN          
+0000 	R_FULL          0004 	R_ICH           0005 	R_ILIN          
+0006 	R_JOIN          0002 	R_LINE          0001 	R_MOVE          
+004E*	SCDONE          0042*	SCDRAW          000A*	SCINIT          
+0030*	SCPRE           0000'	START           0009 	TAB             
+0008 	TABWID          0001*	VISTK           0000 	WBOOT           
 
 
 

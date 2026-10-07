@@ -6396,6 +6396,156 @@ def wrap_cmds():
         e.close()
 
 
+def paint_lines():
+    """Lines of 1 to 5 rows, every screen row saying which line's which row it
+    is -- so a row on the screen after a key is either one that was there
+    before it or one the key had to draw, and there is no mistaking them."""
+    hs = [1, 3, 1, 2, 1, 1, 4, 1, 2, 1, 5, 1, 1, 3, 2, 1]
+    out = []
+    for i in range(1, 61):
+        h = hs[(i - 1) % len(hs)]
+        t = ''.join(('L%02d.%02d ' % (i, r)).ljust(80, 'x') for r in range(h))
+        out.append(t[:len(t) - 71 + (7 * i) % 60])
+    return out
+
+
+def new_rows(old, new):
+    """The rows of *new* that a longest common subsequence with *old* leaves
+    out: what a painter free to shift rows up and down would still draw."""
+    n, m = len(old), len(new)
+    L = [[0] * (m + 1) for _ in range(n + 1)]
+    for i in range(n - 1, -1, -1):
+        for j in range(m - 1, -1, -1):
+            L[i][j] = (L[i + 1][j + 1] + 1 if old[i] == new[j]
+                       else max(L[i + 1][j], L[i][j + 1]))
+    i = j = 0
+    out = []
+    while j < m:
+        if i < n and old[i] == new[j]:
+            i += 1; j += 1
+        elif i < n and L[i + 1][j] >= L[i][j + 1]:
+            i += 1
+        else:
+            out.append(j); j += 1
+    return out
+
+
+def wrap_paint():
+    """With wrapped lines on the screen a key still sends only the rows it
+    changed: the text above and below is moved by the terminal, not sent
+    again.  After every key the screen is what a full repaint ('^L') draws,
+    and the bytes sent are held to the rows that are new -- for an edit, with
+    the rest of the cursor's line from the row the cursor was on."""
+    def edit_rows(v):
+        return [''.join(r).rstrip() for r in v.screen[:23]]
+
+    def step(e, tag, keys, edit=False):
+        v0 = e.screen()
+        s0 = edit_rows(v0)
+        before = len(e.cap.getvalue())
+        for k in re.split('(\x1b)', keys):
+            if k == '\x1b':
+                send_keys(e, k)
+            elif k:
+                e.key(k)
+        sent = len(e.cap.getvalue()) - before
+        v1 = e.screen()
+        s1 = edit_rows(v1)
+        new = set(new_rows(s0, s1))
+        if edit:
+            # the cursor line's rows, from the one the cursor was on
+            last = v1.row - e.s.mem(SYM['CSUB'])[0] + e.s.mem(SYM['HTAB'] + e.s.mem(SYM['HTCUR'])[0])[0]
+            new |= set(range(min(v0.row, v1.row), min(last, 23)))
+        # (an insert shows and clears the mode message as well)
+        budget = 96 + 64 * keys.count('\x1b') + sum(len(s1[r]) + 12 for r in new)
+        check(f'{tag} {keys!r}: {sent} bytes sent, the rows that changed are '
+              f'{budget}', sent <= budget)
+        e.key('\x0c')
+        v2 = e.screen()
+        check(f'{tag} {keys!r}: the screen is what a full repaint draws',
+              edit_rows(v2) == s1 and (v2.row, v2.col) == (v1.row, v1.col))
+
+    data = ''.join(l + '\r\n' for l in paint_lines()).encode()
+    w2 = wrap_files()['w2']
+    for name, text, runs in [
+        ('moves', data, ['j'] * 30 + ['k'] * 30 + ['\x04', '\x04', '\x15', '\x15',
+                                              '12j', '\x04', '\x15', 'G', 'k', 'k',
+                                              '\x15', 'gg']),
+        ('@ rows', w2, ['20j', 'j', 'j', 'k', 'k', '5k', '4j', 'j', 'j']),
+    ]:
+        e = Editor(text)
+        try:
+            for k in runs:
+                step(e, f'paint {name}', k)
+        finally:
+            e.close()
+    for name, text, runs in [
+        ('edits', data, ['x', 'j', 'x', '$', 'x', '0', '3x', 'rZ', '~', 'dw', 'j',
+                         'dd', 'P', 'j', 'dd', 'p', 'J', 'j', 'J', 'D', 'k',
+                         'ia\x1b', 'A-\x1b', 'ocd\x1b', 'Oef\x1b', '7G', '100l',
+                         'i\r\x1b', 'k', 'J', 'cwq\x1b', 'yyP', '18G', 'dd', 'j',
+                         'J', 'ogh\x1b', 'dd']),
+        ('edits by @ rows', w2, ['x', '19j', 'x', 'dd', 'P', 'ozz\x1b', 'dd', 'k',
+                                 'J', 'iq\x1b']),
+    ]:
+        e = Editor(text)
+        try:
+            for k in runs:
+                step(e, f'paint {name}', k, edit=True)
+        finally:
+            e.close()
+
+    # --- prose typed at the bottom of the screen: a char is a char, and the
+    #     one that takes the line onto a new row moves the screen up a row ---
+    e = Editor(data)
+    try:
+        e.key('G')
+        e.key('o')
+        worst = edge = 0
+        for i in range(170):
+            before = len(e.cap.getvalue())
+            e.key('abcdefghij'[i % 10])
+            sent = len(e.cap.getvalue()) - before
+            if i % 80 in (79, 0):
+                edge = max(edge, sent)
+            else:
+                worst = max(worst, sent)
+        check(f'paint typing: a char at the end of a wrapped line is {worst} '
+              f'bytes', worst <= 2)
+        check(f'paint typing: the char that fills a row, and the next, are at '
+              f'most {edge} bytes', edge <= 200)
+        send_keys(e, '\x1b')
+        v1 = e.screen()
+        e.key('\x0c')
+        v2 = e.screen()
+        check('paint typing: the screen is what a full repaint draws',
+              edit_rows(v2) == edit_rows(v1) and (v2.row, v2.col) == (v1.row, v1.col))
+        # --- x is the terminal's delete-character, not a row sent again ---
+        e.key('k')
+        e.key('0')
+        before = len(e.cap.getvalue())
+        e.key('x')
+        out = e.cap.getvalue()[before:]
+        check(f'paint x: delete-character and nothing else ({out!r})',
+              out == '\x1b[1P')
+        before = len(e.cap.getvalue())
+        e.key('3x')
+        out = e.cap.getvalue()[before:]
+        check(f'paint 3x: three cells ({out!r})', out.endswith('\x1b[3P'))
+        e.key('$')
+        before = len(e.cap.getvalue())
+        e.key('x')
+        out = e.cap.getvalue()[before:]
+        v1 = e.screen()
+        e.key('\x0c')
+        v2 = e.screen()
+        check(f'paint x: at the line end ({out!r})',
+              len(out) <= 32 and edit_rows(v2) == edit_rows(v1)
+              and (v2.row, v2.col) == (v1.row, v1.col))
+    finally:
+        e.close()
+
+
 def bottom(e):
     return ''.join(e.screen().screen[23]).rstrip()
 
@@ -9654,6 +9804,7 @@ def main():
         print('\n=== long lines wrap ===', flush=True)
         wrap_like_vim()
         wrap_cmds()
+        wrap_paint()
     if not args or 'vim' in args or 'find' in args:
         print('\n=== f F t T ; , vs vim ===', flush=True)
         find_like_vim()

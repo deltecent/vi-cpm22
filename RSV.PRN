@@ -111,14 +111,15 @@
   0004                   C      R_ICH	EQU	4		; one printable char inserted mid-line -> ICH (no tail redraw)
   0005                   C      R_ILIN	EQU	5		; one line opened at the cursor row -> IL + redraw that row and the one above
   0006                   C      R_JOIN	EQU	6		; the line below joined onto the cursor's -> redraw that row + DL the one under it
+  0007                   C      R_DCH	EQU	7		; chars deleted at the cursor, none after it a TAB -> DCH
                          C      
                          C      ;------------------------------------------------------------
                          C      ; EDITOR MODES (EDMODE)
                          C      ;------------------------------------------------------------
-  0000                   C      EM_CMD	EQU	0		; command mode (default)
 	MACRO-80 3.44	09-Dec-81	PAGE	1-2
 
 
+  0000                   C      EM_CMD	EQU	0		; command mode (default)
   0001                   C      EM_INS	EQU	1		; insert mode
   0002                   C      EM_REP	EQU	2		; replace mode ('R')
   0003                   C      EM_EX	EQU	3		; ex command line (transient, inside VC_EX)
@@ -174,10 +175,10 @@
   0080                          RVSECN	EQU	128		; SECBUF:  one CP/M sector
   00FF                          RVHTN	EQU	255		; HTAB:    a byte a line; SCRN.MAC HTPUT drops
                                 				;          a 256th
-                                ;MKSAV is a copy of MKTAB that CMD.MAC makes and restores with COPY12.
 	MACRO-80 3.44	09-Dec-81	PAGE	1-3
 
 
+                                ;MKSAV is a copy of MKTAB that CMD.MAC makes and restores with COPY12.
                                 ;CHECK VI.INC MKMAX*MKSIZ = 12
                                 
                                 ;--- Layout, as offsets from the image top ----------------------------------
@@ -250,11 +251,12 @@ Symbols:
 042E 	RVSIZE          0000 	RVSTK           0080 	RVSTKN          
 0263 	RVUND           00A8 	RVUNDN          01DE 	RVWRT           
 0003 	RVWRTN          018C 	RVZTP           0003 	RVZTPN          
-0003 	R_DLIN          0000 	R_FULL          0004 	R_ICH           
-0005 	R_ILIN          0006 	R_JOIN          0002 	R_LINE          
-0001 	R_MOVE          01E2I'	SECBUF          0009 	TAB             
-0008 	TABWID          0263I'	UNDREC          0080I'	VISTK           
-0000 	WBOOT           01DEI'	WRTYP           018CI'	ZTOP            
+0007 	R_DCH           0003 	R_DLIN          0000 	R_FULL          
+0004 	R_ICH           0005 	R_ILIN          0006 	R_JOIN          
+0002 	R_LINE          0001 	R_MOVE          01E2I'	SECBUF          
+0009 	TAB             0008 	TABWID          0263I'	UNDREC          
+0080I'	VISTK           0000 	WBOOT           01DEI'	WRTYP           
+018CI'	ZTOP            
 
 
 

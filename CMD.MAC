@@ -30,6 +30,7 @@
 	PUBLIC	RINTENT				; render intent (read by SCRN.MAC)
 	PUBLIC	ILN				; ... and the lines an R_ILIN opens
 	PUBLIC	ICHAPP				; ... 1 = an R_ICH needs no ICH
+	PUBLIC	DCHN				; ... the cells an R_DCH deletes
 	PUBLIC	ILABOV				; ... 1 = an R_ILIN's row above is stale
 	PUBLIC	CNTTST				; count-test (BUF.MAC PAGESTP reads)
 	PUBLIC	MKSHFT				; the marks follow an edit (VI.MAC hooks it)
@@ -1589,7 +1590,8 @@ SETFUL:
 	STA	RINTENT
 	RET
 
-;TAILTAB -- A = 1 if a TAB occurs from the cursor to the end of its line, else 0.
+;TAILTAB -- A = 1 if a TAB (or any control char) occurs from the cursor to the
+; end of its line, else 0.
 ; Scans forward from the cursor via CHARAT until LF or end of text (no gap move).
 ; Gates the ICH insert fast path: a tab after the cursor would re-expand.
 TAILTAB:
@@ -1605,8 +1607,11 @@ TT_LP:
 	CALL	CHARAT
 	CPI	LF
 	JZ	TT_NO		; end of line -> no tab
-	CPI	TAB
-	JZ	TT_YES
+	CPI	CR
+	JZ	TT_NX		; (the line end's own)
+	CPI	' '
+	JC	TT_YES
+TT_NX:
 	LHLD	TTI
 	INX	H
 	SHLD	TTI
@@ -4287,6 +4292,18 @@ VC_X:
 VX_USEA:
 	XCHG			; HL = available
 VX_DEL:
+	;--- plain chars, and plain chars after them: the terminal can close
+	;    the cells up itself (R_DCH).  A TAB there would change width. ---
+	PUSH	H
+	CALL	TAILTAB
+	POP	H
+	ORA	H		; (or more of them than a byte counts)
+	JNZ	VX_D1
+	MOV	A,L
+	STA	DCHN
+	MVI	A,R_DCH
+	STA	RINTENT
+VX_D1:
 	CALL	DELFWD		; HL = del bytes, forward-delete from cursor
 	CALL	MARKMOD
 	JMP	CLAMPE		; pull the cursor back to the line's content end
@@ -7600,6 +7617,7 @@ RINTENT:DB	R_FULL		; render intent for the last key (SCRN.MAC reads)
 ILN:	DB	1		; lines an R_ILIN paint opens (SCRN.MAC reads)
 ICHAPP:	DB	0		; 1 = the R_ICH char went at the row's end, so
 				;   nothing follows it to shift: no ICH needed
+DCHN:	DB	1		; the cells an R_DCH paint deletes (SCRN.MAC reads)
 ILABOV:	DB	0		; 1 = the row above an R_ILIN's opened rows lost
 				;   text to them and must be redrawn too
 GOALCOL:DW	0FFFEH		; sticky goal screen column for j/k (0FFFFH = EOL, 0FFFEH = stale)

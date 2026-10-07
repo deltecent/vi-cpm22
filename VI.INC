@@ -65,6 +65,7 @@ R_DLIN	EQU	3		; one line deleted at the cursor row -> DL + redraw bottom
 R_ICH	EQU	4		; one printable char inserted mid-line -> ICH (no tail redraw)
 R_ILIN	EQU	5		; one line opened at the cursor row -> IL + redraw that row and the one above
 R_JOIN	EQU	6		; the line below joined onto the cursor's -> redraw that row + DL the one under it
+R_DCH	EQU	7		; chars deleted at the cursor, none after it a TAB -> DCH
 
 ;------------------------------------------------------------
 ; EDITOR MODES (EDMODE)

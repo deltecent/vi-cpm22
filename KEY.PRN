@@ -104,6 +104,7 @@
   0004                   C      R_ICH	EQU	4		; one printable char inserted mid-line -> ICH (no tail redraw)
   0005                   C      R_ILIN	EQU	5		; one line opened at the cursor row -> IL + redraw that row and the one above
   0006                   C      R_JOIN	EQU	6		; the line below joined onto the cursor's -> redraw that row + DL the one under it
+  0007                   C      R_DCH	EQU	7		; chars deleted at the cursor, none after it a TAB -> DCH
                          C      
                          C      ;------------------------------------------------------------
                          C      ; EDITOR MODES (EDMODE)
@@ -115,10 +116,10 @@
                          C      
                          C      ; THE MESSAGE THE BOTTOM ROW STILL OWES (MSGWHT).  A message is drawn after the
                          C      ; frame, never during the command, because a full repaint blanks that row.
-  0000                   C      MW_NON	EQU	0		; nothing to say
 	MACRO-80 3.44	09-Dec-81	PAGE	1-2
 
 
+  0000                   C      MW_NON	EQU	0		; nothing to say
   0001                   C      MW_FIL	EQU	1		; the file just opened
   0002                   C      MW_WRT	EQU	2		; ':w' wrote it
   0003                   C      MW_CTG	EQU	3		; '^G' -- where am I
@@ -174,10 +175,10 @@
   001B'   B8                    	CMP	B
   001C'   CA 0022'              	JZ	KR_NO
   001F'   3E FF                 	MVI	A,0FFH
-  0021'   C9                    	RET
 	MACRO-80 3.44	09-Dec-81	PAGE	1-3
 
 
+  0021'   C9                    	RET
   0022'                         KR_NO:
   0022'   AF                    	XRA	A
   0023'   C9                    	RET
@@ -233,10 +234,10 @@
   0054'                         KBFLSH:
   0054'   CD 005E'              	CALL	KBPUMP
   0057'   3A 00BA'              	LDA	KBTAIL
-  005A'   32 00B9'              	STA	KBHEAD
 	MACRO-80 3.44	09-Dec-81	PAGE	1-4
 
 
+  005A'   32 00B9'              	STA	KBHEAD
   005D'   C9                    	RET
                                 
                                 ; KBPUMP - producer: move every byte the BIOS already has into the ring, without
@@ -292,10 +293,10 @@
   00A4'   37                    	STC
   00A5'   C9                    	RET
                                 
-                                ; KBFULL - A=0FFH if the ring is full ((tail+1) wraps onto head), else A=00H.
 	MACRO-80 3.44	09-Dec-81	PAGE	1-5
 
 
+                                ; KBFULL - A=0FFH if the ring is full ((tail+1) wraps onto head), else A=00H.
   00A6'                         KBFULL:
   00A6'   3A 00BA'              	LDA	KBTAIL
   00A9'   3C                    	INR	A
@@ -338,10 +339,11 @@ Symbols:
 0003 	MKMAX           0004 	MKSIZ           0004 	MW_BIG          
 0003 	MW_CTG          0001 	MW_FIL          0000 	MW_NON          
 0002 	MW_WRT          0000 	NUL             0000 	PL_ASK          
-0002 	PL_MID          0001 	PL_SET          0003 	R_DLIN          
-0000 	R_FULL          0004 	R_ICH           0005 	R_ILIN          
-0006 	R_JOIN          0002 	R_LINE          0001 	R_MOVE          
-0009 	TAB             0008 	TABWID          0000 	WBOOT           
+0002 	PL_MID          0001 	PL_SET          0007 	R_DCH           
+0003 	R_DLIN          0000 	R_FULL          0004 	R_ICH           
+0005 	R_ILIN          0006 	R_JOIN          0002 	R_LINE          
+0001 	R_MOVE          0009 	TAB             0008 	TABWID          
+0000 	WBOOT           
 
 
 

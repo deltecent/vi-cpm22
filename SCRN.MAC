@@ -25,12 +25,11 @@
 ; The top row is always the start of a line; a line the bottom has no room
 ; for is not shown, its rows hold '@'.
 ;
-; Also here (RENDER.md): runtime geometry (DSR probe), the RINTENT fast paths
-; (cursor-only, region scroll up/down, one-row redraw, ICH insert, DL line
-; delete), the RPOLL repaint abort, and the message row.  The region scrolls
-; take their line count from SCRLN, the number of lines the text moved up this
-; frame.  Every fast path but the cursor-only one takes a line to be a row, so
-; none is used while a wrapped line is on the screen (WRAPF).
+; Also here (RENDER.md): runtime geometry (DSR probe), the cheap paints the
+; RINTENT asks for, the RPOLL repaint abort, and the message row.  A cheap
+; paint is counted in ROWS: the rows the screen gave up or gained at the top,
+; the rows the edit at the cursor had and has.  The terminal moves what stands
+; (IL/DL in a scroll region) and only the rows that are new are sent.
 ;
 ; EXPORTS: BCONST, BCONIN, BCONOU      (BIOS-direct console leaves)
 ;          SCINIT, SCDRAW, SCDONE, SCPRE
@@ -71,12 +70,11 @@
 	EXTRN	ILN			; CMD.MAC -- lines an R_ILIN paint opens
 	EXTRN	ICHAPP			; CMD.MAC -- 1 = an R_ICH needs no ICH
 	EXTRN	ILABOV			; CMD.MAC -- 1 = an R_ILIN's row above is stale
+	EXTRN	DCHN			; CMD.MAC -- cells an R_DCH deletes
 	EXTRN	KBRDY			; KEY.MAC -- RPOLL: key waiting in the ring?
 	EXTRN	HTN, HTCUR		; CMD.MAC -- the row table: entries / cursor's
 	EXTRN	HTEOF, HTBOF		; ... and whether it reaches the file's ends
 	EXTRN	HTAB			; RSV.MAC -- the row table itself
-
-WR_EOL	EQU	2		; WRAPF from here up: the cursor has a row to itself
 
 	CSEG
 
@@ -209,25 +207,93 @@ GOROW1:
 CEKL:
 	LXI	H,SEK
 	JMP	OUTSTR
-;PTROW -- paint the line at row PROWN and step to the row under it: clear the
-; row, write the line (on as many rows as it takes), CR/LF (the last LF of a
-; full repaint lands on the message row, and a backward scroll's N <= NEDIT-1
-; keeps it inside the region), and count the row off.  Both paint loops are
-; this, once each.  When the cursor has a row to itself (WR_EOL) that row is
-; the one under its line's text, and is cleared and counted here as well.
-PTROW:
-	CALL	CEKL		; ESC[K -- clear the row
+;PRNG -- paint the edit rows from B up to (not including) C, counted from 0:
+; each cleared (ESC[K), the text on as many rows as its lines take, the fill
+; char on the rows past it.  The row table says which line row B is in and
+; how many of that line's rows are above it, and the reader is put there.
+; The one row a line may own with nothing on it -- the cursor's, past text
+; that filled the row above (LYXE) -- is cleared in its turn.  An empty range
+; sends nothing.  During a full repaint (FORCEF) a key that is waiting
+; abandons the frame, and the return from here is SCDRAW's own.
+PRNG:
+	MOV	A,B
+	CMP	C
+	RNC
+	STA	PROWN
+	MOV	A,C
+	STA	PEND
+	LDA	TXEND
+	DCR	A
+	CMP	B		; CY iff row B is past the text
+	JC	PG_GO
+	PUSH	B
+	CALL	RDTOP
+	CALL	HTTOP		; HL -> the top line's entry
+	POP	B
+	LXI	D,0		; D = the rows above the line, E = the lines
+PG_F:
+	MOV	A,D
+	ADD	M
+	CMP	B
+	JC	PG_N
+	JNZ	PG_H		; row B is one of this line's
+PG_N:
+	MOV	D,A
+	INR	E
+	INX	H
+	JMP	PG_F
+PG_H:
+	MOV	A,B
+	SUB	D
+	MOV	C,A
+	MVI	B,0		; BC = the rows of it above row B ...
+	MOV	A,E
+	LXI	H,0
+	ORA	A
+	JNZ	PG_K
+	LHLD	SKIPR		; ... and, for the top line, those off the top
+PG_K:
+	DAD	B
+	SHLD	PSKN
+	CALL	RDSKIP		; the reader at that line (A lines down)
+PG_GO:
+	LDA	PROWN
+	INR	A
+	MOV	B,A
+	MVI	C,1
+	CALL	GOTOXY
+PG_LP:
+	LDA	FORCEF
+	ORA	A
+	JZ	PG_P
+	CALL	KBRDY		; RPOLL: a key is waiting -> abandon the repaint
+	ORA	A
+	JZ	PG_P
+	POP	H		; (the cursor stays hidden: no flash in a burst)
+	RET
+PG_P:
+	CALL	CEKL
 	CALL	PAINTR
+	LDA	LYXE
+	ORA	A
+	JZ	PG_1
+	LDA	SROW		; was that the row over the cursor's own?
+	SUI	2
+	LXI	H,PROWN
+	CMP	M
+	JNZ	PG_1
 	CALL	PT_NL
-	LDA	WRAPF
-	CPI	WR_EOL
-	RC
-	LDA	SROW
+	CALL	CEKL
+PG_1:
+	LDA	PEND
 	DCR	A
 	LXI	H,PROWN
 	CMP	M
-	RNZ
-	CALL	CEKL
+	RZ
+	RC
+	CALL	PT_NL
+	JMP	PG_LP
+;PT_NL -- CR, LF: down a row, and count it.
 PT_NL:
 	MVI	A,CR
 	CALL	OUTCH
@@ -373,20 +439,32 @@ CLP_MAX:
 ; FRAME -- lay out, then pick the cheapest correct paint.
 ;============================================================
 
-;SCPRE -- snapshot what is on the screen (WINROW/WRAPF) into OLDWR/OLDWF.  The
-; main loop calls this after reading a key and before dispatch, so SCDRAW can
-; tell how far the text moved (SCRLN) and whether a line was wrapped.
+;SCPRE -- keep what is on the screen: the frame's facts (WINROW .. NXTR) are
+; copied to the OLD ones.  The main loop calls this after reading a key and
+; before dispatch, so SCDRAW can tell what the key changed.
 SCPRE:
-	LHLD	WINROW
-	SHLD	OLDWR
-	LDA	WRAPF
-	STA	OLDWF
-	LHLD	SKIPR
-	SHLD	OLDSK
+	LXI	H,WINROW
+	LXI	D,OLDWR
+	MVI	B,FRMLEN
+SP_LP:
+	MOV	A,M
+	STAX	D
+	INX	H
+	INX	D
+	DCR	B
+	JNZ	SP_LP
 	RET
 
+;SCDRAW -- lay the screen out and paint it the cheapest way that is right.
+; A cheap paint is two changes, each "this many rows were here, that many
+; are": one at the top row (the screen gave rows up, OPN, or gained them,
+; OPM, as the text scrolled) and one at the cursor (EDR: EDA rows before, EDB
+; now, to be drawn from row EDP).  The terminal moves the rows that stand,
+; the rows that are new are sent, and so is whatever the move left wrong at
+; the bottom.  When nothing moves and nothing is new, only the cursor goes.
+; Whatever does not fit that is a full repaint.
 SCDRAW:
-	CALL	LAYOUT		; WINROW/SCRLN/SCBOT/CURDCL/WRAPF (no output)
+	CALL	LAYOUT		; (no output)
 	CALL	CURSC		; SROW/SCOL
 	LDA	FORCEF		; a prior repaint aborted -> must repaint in full
 	ORA	A
@@ -396,145 +474,320 @@ SCDRAW:
 	LHLD	SKIPR
 	CALL	CMP16
 	JNZ	SCFULL
-	LDA	WRAPF		; the wrapping on this screen, or on the last
-	LXI	H,OLDWF
-	ORA	M
-	MOV	B,A
-	CPI	WR_EOL		; a row only the cursor holds came or went: the
-	JNC	SCFULL		;   lines under it moved, whatever the key was
+	LXI	H,0
+	SHLD	OPN		; (and OPM)
+	LDA	LYABV
+	MOV	B,A		; B = the edit's first row: the cursor line's
+	LDA	OLDCS		; C = the first row of it that can have changed:
+	LXI	H,CSRAW		;   the one the cursor was on, or the one it is
+	CMP	M
+	JC	SD_1
+	MOV	A,M
+SD_1:
+	ADD	B
+	MOV	C,A
+	LHLD	OLDCR		; E = the rows the line had (H: the line's under)
+	MOV	E,L
+	LDA	LYTSH
+	MOV	D,A		; D = the rows it has
 	LDA	RINTENT
-	CPI	R_MOVE
-	JNZ	SC_WR
-	LHLD	SCRLN
-	MOV	A,H
-	ORA	L
-	JZ	SCURS		; text still -> cursor only, wrapped or not
-SC_WR:
-	MOV	A,B		; every paint from here on takes a line to be a
-	ORA	A		;   row: a wrapped one on the screen -> repaint
-	JNZ	SCFULL
-	LDA	RINTENT
-	CPI	R_MOVE
-	JZ	SC_MV
-	CPI	R_LINE
-	JZ	SC_ED
-	CPI	R_ICH
-	JZ	SC_ED
+	ORA	A
+	JZ	SCFULL		; R_FULL
 	CPI	R_ILIN
-	JZ	SC_ILQ		; (its own test: it moves the cursor's row, and
-	CPI	R_DLIN		;   on the bottom row it scrolls the text too)
-	JZ	SC_ED
-	CPI	R_JOIN
-	JNZ	SCFULL		; anything else -> full repaint
-SC_ED:
-	;--- the in-place edit paints need the text to have stayed put ---
-	LHLD	SCRLN
+	JZ	SD_IL
+	PUSH	H
+	LHLD	LYDLT
 	MOV	A,H
 	ORA	L
-	JNZ	SCFULL
-	LHLD	OLDWR
-	XCHG
-	LHLD	WINROW
-	CALL	CMP16		; Z iff the cursor kept its row
-	JNZ	SCFULL
-	LDA	RINTENT
-	CPI	R_LINE
-	JZ	SC_LNBD
-	CPI	R_ICH
-	JZ	SC_ICH
+	POP	H
+	LDA	RINTENT		; (keeps the flags)
+	JNZ	SD_OL		; the cursor is on another line
+	CPI	R_MOVE
+	JNZ	SD_2
+	MVI	C,0FFH		; a move: none of the line to draw
+SD_2:
+	CPI	R_DLIN
+	JNZ	SD_3
+	MVI	D,0		; the line went
+SD_3:
 	CPI	R_JOIN
-	JZ	SC_JN
-	JMP	SCDL
-SC_MV:
-	;--- R_MOVE: the text moved up SCRLN lines (down if negative) ---
-	LHLD	SCRLN
+	JNZ	SD_AN
+	MOV	A,E		; the line under it went into it
+	ADD	H
+	MOV	E,A
+SD_AN:
+	LDA	OLDAB		; where the edit starts was that much lower: the
+	SUB	B		;   rows the screen gave up at the top.  Higher,
+	JC	SCFULL		;   and it is no paint of these
+	STA	OPN
+	JMP	SD_GO
+
+	;--- R_ILIN: ILN lines opened at the cursor ---
+SD_IL:
+	LHLD	LYDLT
 	MOV	A,H
 	ORA	A
-	JP	SC_FWD
+	JNZ	SCFULL
+	MOV	C,B		; drawn from the cursor's row, the first opened
+	MOV	D,A		; (no rows yet)
+	MOV	E,A		; (none were there)
+	ORA	L
+	JZ	SI_2		; opened where the cursor's line was: 'O', 'P'
+	DCR	A
+	JNZ	SCFULL
+	LDA	WINROW		; opened under it: it is the line above now, and
+	ORA	A		;   has to be on the screen
+	JZ	SCFULL
+	LDA	HTCUR
+	DCR	A
+	CALL	HTE
+	MOV	D,M		; D = that line's rows now
+	MOV	A,B
+	SUB	D
+	MOV	B,A		; the edit starts with it
+	LDA	OLDCR
+	MOV	E,A
+	LDA	ILABOV		; text came off it: drawn from the row the
+	ORA	A		;   cursor was on
+	JZ	SI_2
+	LDA	OLDCS
+	ADD	B
+	MOV	C,A
+SI_2:
+	PUSH	B
+	PUSH	D
+	LDA	ILN
+	MOV	B,A
+	LDA	HTCUR
+	CALL	SUMX		; A = the rows the opened lines take
+	POP	D
+	POP	B
+	JC	SCFULL		; (more than the screen shows)
+	ADD	D
+	MOV	D,A
+	JMP	SD_AN
+
+	;--- a move to another line: the text scrolled SCRLN lines ---
+SD_OL:
+	CPI	R_MOVE
+	JNZ	SCFULL
+	LHLD	SCRLN
+	MOV	A,H
+	ORA	L
+	JZ	SCURS		; it stood still: the cursor alone
+	MOV	A,H
+	ORA	A
+	JZ	SO_UP
+	INR	A
+	JNZ	SCFULL
+	SUB	L		; down: the new lines at the top, and their rows
+	JZ	SCFULL
+	CALL	SUMT
+	JC	SCFULL
+	STA	OPM
+	JMP	SO_GO
+SO_UP:
+	LDA	OLDBOT		; up: the last line that showed is that many
+	SUB	L		;   lines higher.  The row after it was OLDTX,
+	JC	SCFULL		;   and is the rows down to it now
+	INR	A
+	CALL	SUMT
+	JC	SCFULL
+	MOV	B,A
+	LDA	OLDTX
+	SUB	B
+	JC	SCFULL
+	JZ	SCFULL
+	STA	OPN
+SO_GO:
+	LXI	D,0		; no edit
+	MVI	C,0FFH
+
+	;--- B = the edit's first row, C = the first to draw, D = its rows
+	;    now, E = its rows before ---
+SD_GO:
+	MOV	A,B
+	STA	EDR
+	ADD	D
+	MOV	B,A		; B = the row after its last
+	LDA	NEDIT
+	CMP	B
+	JC	SCFULL		; (it runs off the screen)
+	MOV	A,C
+	STA	EDP
 	XCHG
-	LXI	H,0
-	CALL	SUBHD		; HL = -SCRLN
-	CALL	SCRNOK		; A = N (CY=0) if 1..NEDIT-1, else CY=1
-	JC	SCFULL
-	STA	SCLN
-	JMP	SCBWD
-SC_FWD:
-	CALL	SCRNOK
-	JC	SCFULL
-	STA	SCLN		; N in 1..NEDIT-1 -> region scroll
-	JMP	SCFWD
+	SHLD	EDA		; (and EDB)
+	XCHG
+	LHLD	OPN
+	MOV	A,H
+	ORA	L
+	JNZ	SD_PT
+	MOV	A,D
+	CMP	E
+	JNZ	SD_PT
+	MOV	A,C		; nothing moves.  Nothing to draw either: the
+	CMP	B		;   cursor alone
+	JNC	SCURS
+	INR	A
+	CMP	B
+	JNZ	SD_PT
+	LDA	RINTENT		; the line's last row, the cursor on it before
+	CPI	R_ICH		;   and after: a cell opened or closed there is
+	JZ	SC_ICH		;   the whole of it
+	CPI	R_DCH
+	JZ	SC_DCH
+SD_PT:
+	LHLD	SKIPR		; ('<<<' on the top row is not theirs to keep)
+	MOV	A,H
+	ORA	L
+	JNZ	SCFULL
+	CALL	CHIDE
+	LHLD	OPN
+	XCHG
+	LHLD	EDA
+	MOV	A,D
+	ORA	E
+	JNZ	SD_SH
+	MOV	A,H
+	CMP	L
+	JZ	SD_NS
+SD_SH:
+	CALL	SRGN		; scroll region = rows 1..NEDIT
+	LHLD	OPN
+	MVI	B,0
+	CALL	SHFT
+	LHLD	EDA
+	LDA	EDR
+	MOV	B,A
+	CALL	SHFT
+	CALL	CRGRS
+SD_NS:
+	MVI	B,0
+	LDA	OPM
+	MOV	C,A
+	CALL	PRNG		; the rows opened at the top
+	LHLD	EDA
+	LDA	EDR
+	ADD	H
+	MOV	C,A
+	LDA	EDP
+	MOV	B,A
+	CALL	PRNG		; the edit's own
+	;--- the bottom.  The rows that were good to the end of the screen
+	;    (all of them, or as far as the '@' rows) moved with the text; what
+	;    lies between where they end now and where good rows should end is
+	;    drawn, and so are the rows a move up left bare ---
+	LHLD	OLDTX
+	CALL	TEV
+	MOV	B,A
+	LHLD	TXEND
+	CALL	TEV
+	MOV	C,A
+	LHLD	OPN
+	XCHG			; E = OPN, D = OPM
+	LHLD	EDA		; L = EDA, H = EDB
+	MOV	A,D
+	ADD	H
+	MOV	D,A		; D = the rows that came
+	MOV	A,E
+	ADD	L
+	SUB	D		; A = the rows that went, less those
+	LXI	H,NEDIT
+	MOV	E,M
+	JC	SB_DN
+	MOV	D,A		; the text under them moved up D rows
+	MOV	A,E
+	SUB	D
+	MOV	E,A		; E = the first row that left bare
+	MOV	A,B
+	SUB	D
+	JNC	SB_1
+	XRA	A
+	JMP	SB_1
+SB_DN:
+	CMA
+	INR	A		; ... or down that many
+	ADD	B
+	JC	SB_0
+	CMP	E
+	JC	SB_1
+SB_0:
+	MOV	A,E
+SB_1:
+	CMP	C		; A = where the old good rows end now
+	MOV	B,A
+	JC	SB_2
+	MOV	B,C
+	MOV	C,A
+SB_2:
+	PUSH	B
+	PUSH	D
+	CALL	PRNG
+	POP	D
+	POP	B
+	MOV	A,C
+	CMP	E
+	JNC	SB_3
+	MOV	A,E
+SB_3:
+	MOV	B,A
+	LDA	NEDIT
+	MOV	C,A
+	CALL	PRNG
+	JMP	SCURS
+
+;SC_ICH -- R_ICH: a char was typed at the cell the cursor was on, which is
+; where the terminal's cursor still is.  ICH (ESC[1@) opens a cell there and
+; the char fills it; appended at the row's end (ICHAPP) the cell is blank and
+; nothing follows it, so the char alone is the whole frame.  Either way the
+; terminal leaves the cursor at SCOL, where insert mode wants it.
 SC_ICH:
-	;--- the inserted char sits at screen column SCOL-1; it must be a real
-	;    on-screen cell (SCOL >= 2), else fall back to the whole-line redraw ---
-	LDA	SCOL
-	CPI	2
-	JC	SC_LNBD
-	;--- appended at the row's end (ICHAPP): the cell is blank and nothing
-	;    follows it, so the char alone is the whole frame -- no ICH to open a
-	;    cell for it, and no hide/show, there being nothing to see happen
-	;    between the address and the byte.  The terminal leaves the cursor at
-	;    SCOL, where insert mode wants it, exactly as the ICH path does. ---
 	LDA	ICHAPP
 	ORA	A
-	JNZ	SC_ICA
-	CALL	CHIDE
-	CALL	SC_ICG		; address the inserted char's cell (SROW, SCOL-1)
+	JNZ	SC_ICC
 	LXI	H,SICH		; ESC[1@ -- open one cell, shift the tail right
 	CALL	OUTSTR
-	CALL	SC_ICC		; fills the opened cell; cursor advances to SCOL
-	LXI	H,SSHOW
-	JMP	OUTSTR
-SC_ICA:
-	CALL	SC_ICG
-	JMP	SC_ICC
-;SC_ICG -- address the inserted char's cell, (SROW, SCOL-1).
-SC_ICG:
-	LDA	SROW
-	MOV	B,A
-	LDA	SCOL
-	DCR	A
-	MOV	C,A
-	JMP	GOTOXY
-;SC_ICC -- emit the just-inserted byte, which is right before the gap.
 SC_ICC:
-	LHLD	GAPBEG
+	LHLD	GAPBEG		; the byte typed is right before the gap
 	DCX	H
 	MOV	A,M
 	JMP	OUTCH
-SC_LNBD:
-	;--- R_LINE: redraw only the cursor's row (tabs re-expanded), then
-	;    re-address and show the cursor ---
-	CALL	CHIDE
-	LDA	SROW
-	CALL	GOROW1		; column 1 of the current row, cleared
-	CALL	RDBOL		; read from the cursor line's first byte
-	CALL	PROW
+
+;SC_DCH -- R_DCH: DCHN cells went at the cell the cursor was on, which is
+; where the terminal's cursor still is: delete-character (ESC[<n>P) there
+; draws the rest of the row up, and the cursor is moved only if the delete
+; took the line's last char from under it.
+SC_DCH:
+	LXI	H,SCSI
+	CALL	OUTSTR
+	LDA	DCHN
+	CALL	EMITB
+	MVI	A,'P'
+	CALL	OUTCH
+	LHLD	OLDSC
+	XCHG
+	LHLD	SROW
+	CALL	CMP16
+	RZ
 	JMP	SCURS
 
-;SCFULL -- paint edit rows 1..NEDIT in place (home + CR,LF stepping), each
-; cleared with ESC[K; a line takes as many rows as it is wide, and the rows
-; past the text show '~' (or '@').  No ESC[2J (no blank flash).
-; Message row last; cursor hidden throughout, then addressed and shown.
+;SCFULL -- paint edit rows 1..NEDIT in place, each cleared with ESC[K; a line
+; takes as many rows as it is wide, and the rows past the text show '~' (or
+; '@').  No ESC[2J (no blank flash).  Message row last; cursor hidden
+; throughout, then addressed and shown.
+; FORCEF is set until the frame is whole.  A key that arrives part-way cuts it
+; short (PRNG): the pending key is dispatched, and the next SCDRAW repaints in
+; FULL even if that key is a pure motion (RENDER.md: an aborted frame stays
+; dirty -- no cheap paint over a half-painted screen).
 SCFULL:
 	CALL	CHIDE
-	CALL	RDTOP
-	CALL	GOTOP		; home to row 1
-	XRA	A
-	STA	PROWN
-	LHLD	SKIPR		; a line taller than the screen: from the row of
-	SHLD	PSKN		;   it that keeps the cursor on the screen
-ROW_LP:
-	CALL	KBRDY		; RPOLL: a key is waiting -> abort this repaint
-	ORA	A
-	JNZ	SCABRT
+	MVI	A,1
+	STA	FORCEF
+	MVI	B,0
 	LDA	NEDIT
-	MOV	B,A
-	LDA	PROWN
-	CMP	B
-	JNC	ROWS_DN
-	CALL	PTROW		; the row, then down to the next one
-	JMP	ROW_LP
-ROWS_DN:
+	MOV	C,A
+	CALL	PRNG
+	CALL	PT_NL
 	;--- message row (now at NROWS, col 1): vim leaves it blank ---
 	CALL	CEKL
 	LHLD	SKIPR		; rows of the top line are off the top: '<<<'
@@ -582,244 +835,86 @@ EXMSG:
 	POP	H
 	JMP	OUTSTR
 
-;SCFWD -- the text moved up N rows (SCLN, 1..NEDIT-1), no line wrapped.
-; Clamp the scroll region to the edit rows (message row protected), then N times:
-; delete the top region row (ESC[M) -- the terminal scrolls the region up one
-; line -- and draw the newly exposed row into row NEDIT.  Only the N exposed
-; rows (NEDIT-N .. NEDIT-1) are drawn; the overlap the terminal shifted is never
-; re-sent.  Short and bounded, so it runs to completion (no RPOLL abort).
-SCFWD:
-	CALL	CHIDE
-	CALL	SRGN		; scroll region = rows 1..NEDIT
-	CALL	RDTOP
-	LDA	SCLN
-	MOV	B,A
-	LDA	NEDIT
-	SUB	B		; A = NEDIT - N = first exposed row
-	STA	PROWN
-	CALL	RDSKIP		; reader at that row's line
-SFW_LP:
-	LDA	SCLN
-	ORA	A
-	JZ	SFW_DN
-	CALL	GOTOP		; region top row
-	LXI	H,SDL		; ESC[M (DL) at the top: region scrolls up 1
-	CALL	OUTSTR
-	LDA	NEDIT		; draw the exposed row into the bottom edit row
-	CALL	GOROW1		; ... addressed and cleared
-	CALL	PAINTR
-	LDA	PROWN
-	INR	A
-	STA	PROWN
-	LDA	SCLN
-	DCR	A
-	STA	SCLN
-	JMP	SFW_LP
-SFW_DN:
-	CALL	CRGRS		; restore full-screen region
-	JMP	SCURS		; address and show the cursor at its new cell
-
-;SCBWD -- the text moved down N rows (SCLN, 1..NEDIT-1), no line wrapped.
-; Clamp the scroll region to the edit rows, Reverse-Index (ESC M) N times at the
-; region top -- the terminal scrolls the region down, opening N blank rows at
-; the top -- then draw rows 0..N-1 from the top line down.
-SCBWD:
-	CALL	CHIDE
-	CALL	SRGN		; scroll region = rows 1..NEDIT
-	LDA	SCLN
-	STA	ROWCT
-SBW_RI:
-	LDA	ROWCT
-	ORA	A
-	JZ	SBW_PT
-	CALL	GOTOP		; region top row
-	LXI	H,SRI		; ESC M (RI) at the top: region scrolls down 1
-	CALL	OUTSTR
-	LDA	ROWCT
-	DCR	A
-	STA	ROWCT
-	JMP	SBW_RI
-SBW_PT:
-	CALL	RDTOP
-	XRA	A
-	STA	PROWN
-	CALL	GOTOP
-SBW_LP:
-	LDA	SCLN
-	MOV	B,A
-	LDA	PROWN
-	CMP	B
-	JNC	SBW_DN
-	CALL	PTROW		; the row, then down to the next one
-	JMP	SBW_LP
-SBW_DN:
-	CALL	CRGRS		; restore full-screen region
-	JMP	SCURS		; address and show the cursor at its new cell
-
-;SCDL -- R_DLIN: a single line was deleted at the cursor's row (dd, not the last
-; line).  Delete that screen row (ESC[M at SROW, region-clamped so the message row
-; is safe) -- the rows below shift up and a blank opens at row NEDIT -- then draw
-; the bottom row and re-address the cursor (which kept
-; its row, now at the BOL of the line that shifted up).
-;SC_JN -- R_JOIN: the line below was joined onto the cursor's.  That row now
-; holds both, and the row under it is gone -- so redraw the cursor's row, then
-; hand the rest to SCDL, which deletes a row and draws the one the shift
-; exposes at the bottom.  With the cursor on the LAST edit row there is no row
-; under it on the screen at all: the join took a line that was never shown, and
-; only the cursor's own row is stale (vim redraws just that row there too).
-SC_JN:
-	LDA	SROW
-	MOV	B,A
-	LDA	NEDIT
-	CMP	B		; CY iff NEDIT < SROW; Z iff the bottom edit row
-	JZ	SC_LNBD
-	JC	SC_LNBD
-	CALL	CHIDE
-	CALL	SRGN		; scroll region = rows 1..NEDIT
-	LDA	SROW		; the joined line, redrawn where it stands
-	CALL	GOROW1
-	CALL	RDBOL
-	CALL	PROW
-	LDA	SROW
-	INR	A		; ... and the row under it goes
-	JMP	SCDL2
-
-SCDL:
-	CALL	CHIDE
-	CALL	SRGN		; scroll region = rows 1..NEDIT
-	LDA	SROW		; delete the cursor's row
-SCDL2:
-	MOV	B,A
-	MVI	C,1
-	CALL	GOTOXY
-	LXI	H,SDL		; ESC[M (DL): rows below shift up, blank at NEDIT
-	CALL	OUTSTR
-	CALL	RDTOP
-	LDA	NEDIT
-	DCR	A
-	STA	PROWN		; the bottom row
-	CALL	RDSKIP
-	LDA	NEDIT
-	CALL	GOROW1		; bottom edit row, cleared
-	CALL	PAINTR
-	CALL	CRGRS		; restore full-screen region
-	JMP	SCURS
-
-;SC_IL -- R_ILIN: one line was opened at the cursor's row.  Open a row there
-; (ESC[L, region-clamped so the message row is safe) -- the rows below shift
-; down and the bottom one falls out of the region -- then draw the cursor's row
-; and the one above it: a <CR> (and 'r<CR>') split that one, 'o' and 'O' leave
-; it as it was.  Everything else on the screen is already right where it is.
-;SC_ILQ -- which of the two forms this is.  A line that opened ON the screen
-; leaves the text where it stands (SCRLN = 0); one opened on the bottom row
-; has nowhere to put itself, so the screen scrolls up a row to make room
-; (SCRLN = 1) -- vim does the same, and it is what every <CR> does once you
-; are typing at the end of a file.  Both then draw the same two rows.
-SC_ILQ:
-	LHLD	SCRLN
+;SHFT -- B = a row (from 0), L = the rows that were there, H = the rows that
+; are: open rows under those that were (IL), or delete under those that stay
+; (DL), so that everything below is where it belongs.  In a scroll region.
+SHFT:
 	MOV	A,H
-	ORA	L
-	JZ	SC_IL		; the text stood still
-	DCX	H
-	MOV	A,H
-	ORA	L
-	JNZ	SCFULL		; moved by more than a row: not ours
-	LDA	ILN		; and only ONE line can open into one scroll --
-	CPI	1		;   a put of several at the bottom needs as many
-	JNZ	SCFULL		;   scrolls as it has lines, which is a repaint
-	CALL	CHIDE
-	CALL	SRGN		; scroll region = rows 1..NEDIT
-	CALL	GOTOP
-	LXI	H,SDL		; ESC[M at the top: the region scrolls up one,
-	CALL	OUTSTR		;   opening the bottom row for the new line
-	JMP	SC_ILT
-
-SC_IL:
-	CALL	CHIDE
-	CALL	SRGN		; scroll region = rows 1..NEDIT
-	LDA	SROW
-	MOV	B,A
-	MVI	C,1
-	CALL	GOTOXY
-	LXI	H,SCSI		; ESC[<ILN>L (IL): ILN blank rows here, the rest
-	CALL	OUTSTR		;   shift down, and what falls past the region's
-	LDA	ILN		;   bottom row has scrolled off, which is right
-	CALL	EMITB
-	MVI	A,'L'
-	CALL	OUTCH
-SC_ILT:
-	;--- the first row to draw.  IL opened ILN rows AT the cursor's row and
-	;    everything above it stands, so the cursor's own row (0-based SROW-1)
-	;    is where the drawing starts -- 'o', 'O' and a put leave the line
-	;    above untouched.  ILABOV says the edit took text off that line (a
-	;    mid-line <CR>, 'r<CR>'), and then it is drawn too. ---
-	LDA	SROW
-	DCR	A		; B = the cursor's own row, the first opened one
-	MOV	B,A
-	LDA	ILABOV
-	ORA	A
-	MOV	A,B
-	JZ	SC_IL0
-	DCR	A		; the row above the cursor's, when it is stale
-SC_IL0:
-	ORA	A		; ... clamped: the cursor may be on the top row
-	JP	SC_IL1
-	XRA	A
-SC_IL1:
-	STA	PROWN
-	MOV	A,B		; the last row to draw: the opened ones start at
-	LXI	H,ILN		;   the cursor's row and there are ILN of them
-	ADD	M
-	DCR	A
-	MOV	B,A
-	LDA	NEDIT
-	DCR	A		; ... but never past the bottom edit row, which
-	CMP	B		;   is as far as the opened rows can be seen
-	JC	SC_IL2
-	MOV	A,B
-SC_IL2:
-	STA	ILLAST
-	CALL	RDTOP
-	LDA	PROWN
-	CALL	RDSKIP		; the reader at that row's line
-SC_ILL:
-	CALL	SC_ILR
-	LDA	ILLAST
-	LXI	H,PROWN
-	CMP	M
-	JZ	SC_ILD
-	INR	M
-	JMP	SC_ILL
-SC_ILD:
-	CALL	CRGRS		; restore full-screen region
-	JMP	SCURS		; the cursor back on the text, and shown
-
-;SC_ILR -- draw screen row PROWN from where the reader stands, cleared first.
-SC_ILR:
-	LDA	PROWN
-	INR	A
-	CALL	GOROW1
-	JMP	PAINTR
-
-;SCRNOK -- HL = candidate scroll count N.  Return A=N with CY=0 if N is in
-; 1..NEDIT-1 (there is on-screen overlap worth preserving); else CY=1 so the
-; caller full-repaints.  Clobbers A,B.
-SCRNOK:
-	MOV	A,H
-	ORA	A
-	JNZ	SRN_NO		; N >= 256
+	SUB	L
+	RZ
+	MVI	E,'L'
+	MOV	D,A
 	MOV	A,L
-	ORA	A
-	JZ	SRN_NO		; N == 0
-	MOV	B,A		; B = N
+	JNC	SH_1
+	MOV	A,L
+	SUB	H
+	MOV	D,A
+	MVI	E,'M'
+	MOV	A,H
+SH_1:
+	ADD	B
+	LXI	H,NEDIT
+	CMP	M
+	RNC			; (under the last edit row: nothing there to move)
+	INR	A
+	MOV	B,A
+	MVI	C,1
+	CALL	GOTOXY
+	LXI	H,SCSI
+	CALL	OUTSTR
+	MOV	A,D
+	CALL	EMITB
+	MOV	A,E
+	JMP	OUTCH
+
+;HTTOP -- HL -> the row table's entry for the top line, A = which it is.
+HTTOP:
+	LDA	HTCUR
+	LXI	H,WINROW
+	SUB	M
+	JMP	HTE
+
+;SUMT -- A = a count of lines from the top one: A = the rows they take.
+;SUMX -- the same for the B lines from the table's entry A.
+; CY if the table has not so many, or they are a screenful and more.
+SUMT:
+	MOV	B,A
+	CALL	HTTOP
+SUMX:
+	MOV	C,A
+	ADD	B
+	MOV	E,A
+	LDA	HTN
+	CMP	E
+	RC
+	MOV	A,C
+	CALL	HTE
+	XRA	A
+	INR	B
+SM_LP:
+	DCR	B
+	JZ	SM_DN
+	ADD	M
+	RC
+	INX	H
+	JMP	SM_LP
+SM_DN:
+	MOV	B,A
 	LDA	NEDIT
-	CMP	B		; CY iff NEDIT < N ; Z iff NEDIT == N
-	JC	SRN_NO		; N > NEDIT
-	JZ	SRN_NO		; N == NEDIT -> no overlap
-	MOV	A,B		; A = N, CY=0 (from CMP: NEDIT > N)
+	DCR	A
+	CMP	B
+	MOV	A,B
 	RET
-SRN_NO:
-	STC
+
+;TEV -- HL = a frame's TXEND and FILCH: A = the row its good rows end at.
+; Rows of '~' are as good as text (they stay '~' wherever they move); rows of
+; '@' are not.
+TEV:
+	MOV	A,H
+	CPI	'@'
+	MOV	A,L
+	RZ
+	LDA	NEDIT
 	RET
 
 ;SRGN -- set the scroll region to rows 1..NEDIT (ESC[1;<NEDIT>r) so a native
@@ -883,19 +978,6 @@ DV_LP:
 	ADD	L
 	RET
 
-;SCABRT -- RPOLL abort: a key arrived mid-repaint.  Leave the cursor hidden (the
-; SHIDE at SCFULL's head still holds) and return WITHOUT positioning/showing it,
-; so no cursor flash during a type-ahead burst.  The pending key is dispatched
-; next, then SCDRAW runs again and (when the ring finally drains) paints in full
-; and shows the cursor -- the aborted frame is simply superseded.
-; FORCEF is latched so the next SCDRAW repaints in FULL even if the pending key
-; is a pure motion (RENDER.md: an aborted frame stays dirty -- the fast path must
-; not be taken over a half-painted screen).
-SCABRT:
-	MVI	A,1
-	STA	FORCEF
-	RET
-
 ;============================================================
 ; LAYOUT -- where the cursor's line sits on the screen and what the screen
 ; holds.  Emits nothing.
@@ -904,7 +986,7 @@ SCABRT:
 ;        up), TOPLEN (bytes from the top line's start to the cursor), CBOL
 ;        (bytes from the cursor line's start), CURDCL, LYABV (rows above the
 ;        cursor's line), SKIPR, TXEND and FILCH (the rows with no text, and
-;        what they show), SCBOT, SCEOF, SCBOF, WRAPF, TALLF; the row table
+;        what they show), SCBOT, SCEOF, SCBOF, NXTR, TALLF; the row table
 ;        (HTAB) of the lines measured; WRLIM raised past the top (WM 3784);
 ;        LNDLT and PLACE cleared.
 ; The lines are measured once, into the row table (HTBLD): as many above the
@@ -1060,25 +1142,20 @@ LY_WE:
 LY_END:
 	MOV	A,C
 	STA	TXEND		; the first row with no text on it
+	XRA	A		; NXTR = the rows of the line under the cursor's,
+	ORA	D		;   if it shows
+	JZ	LY_NX
+	PUSH	D
+	LDA	HTCUR
+	INR	A
+	CALL	HTE
+	POP	D
+	MOV	A,M
+LY_NX:
+	STA	NXTR
 	LDA	LYROW		; SCBOT = the last line shown, counted as WINROW is
 	ADD	D
 	STA	SCBOT
-	;--- WRAPF: more rows of text than lines, or a line cut off ---
-	INR	A
-	LXI	H,TXEND
-	SUB	M
-	LXI	H,FILCH
-	JNZ	LY_W1
-	MOV	A,M
-	CPI	'~'
-	MVI	A,0
-	JZ	LY_W2
-LY_W1:
-	MVI	A,1
-LY_W2:
-	LXI	H,LYXE
-	ORA	M
-	STA	WRAPF
 	LDA	LYROW		; WINROW = row
 	MOV	L,A
 	MVI	H,0
@@ -1450,7 +1527,7 @@ LF_DN:
 ;        that line, then the ones under it until they come to as many, or the
 ;        text ends (HTEOF)
 ;   out: HTCUR = the cursor line's place in the table; CBOL, CURDCL; SKIPR,
-;        TALLF, LYTSH, LYXE (below); WRLIM past what was measured
+;        TALLF, LYTSH, LYXE, CSRAW (below); WRLIM past what was measured
 ; A line taller than the screen counts as a screenful, and ends the table.
 ; Lines above that memory will not hold all at once are simply not in it: the
 ; table then starts lower, at a line's start, with HTBOF clear.
@@ -1584,6 +1661,7 @@ HB_SS:
 	MOV	L,C
 	CALL	SUBHD		; HL = the cursor's row of what is shown of it
 	MOV	A,L
+	STA	CSRAW
 	POP	D
 	MOV	D,A
 	CALL	RGET0
@@ -1617,7 +1695,7 @@ HB_E2:
 	JNZ	HB_E3
 	ORA	D
 	JZ	HB_E3		; (its first row: an empty line)
-	MVI	A,WR_EOL+1
+	MVI	A,1
 	STA	LYXE
 HB_E3:
 	MOV	A,D
@@ -1909,11 +1987,11 @@ PCELL:
 	MOV	A,B
 	JMP	OUTCH
 ;PWRAP -- on to the next row, cleared (CR,LF: the terminal's own wrap is not
-; relied on).  From the last edit row there is nowhere to go: the rest of the
-; line is not shown, and PROW returns to its caller from here.
+; relied on).  From the last row to paint (PEND) there is nowhere to go: the
+; rest of the line is not shown, and PROW returns to its caller from here.
 PWRAP:
 	MVI	M,0
-	LDA	NEDIT
+	LDA	PEND
 	DCR	A
 	LXI	H,PROWN
 	CMP	M
@@ -1988,9 +2066,7 @@ SCDONE:
 SPROBE: DB	ESC,'[','9','9','9',';','9','9','9','H'
 	DB	ESC,'[','6','n',0
 SEK:	DB	ESC,'[','K',0
-SDL:	DB	ESC,'[','M',0		; DL -- delete line (scroll region up 1)
 SCSI:	DB	ESC,'[',0		; CSI -- the prefix a counted ESC[<n>X needs
-SRI:	DB	ESC,'M',0		; RI -- reverse index (scroll region down 1)
 SICH:	DB	ESC,'[','1','@',0	; ICH -- insert one cell at the cursor
 SRGP:	DB	ESC,'[','1',';',0	; region prefix "ESC[1;" (EMITB + 'r' follow)
 SHIDE:	DB	ESC,'[','?','2','5','l',0
@@ -2008,22 +2084,42 @@ NROWS:	DB	24		; runtime rows    (default; DSR may enlarge)
 NCOLS:	DB	80		; runtime columns
 NEDIT:	DB	23		; edit rows = NROWS-1 (messages take the last)
 
+;--- a frame's facts, and (SCPRE) the same of the frame before, in one order
 WINROW: DW	0		; lines on the screen above the cursor's (WM WINROW)
-OLDWR:	DW	0		; WINROW as displayed before this frame
-WRAPF:	DB	0		; this frame: 0, 1 = a line wraps, WR_EOL and up =
-				;   ... and the cursor has a row to itself
-OLDWF:	DB	0		; WRAPF as displayed before this frame
 SKIPR:	DW	0		; rows of the top line that are off the top (a
 				;   line taller than the screen; vim's w_skipcol)
-OLDSK:	DW	0		; SKIPR as displayed before this frame
-TALLF:	DB	0		; 1 = the top line is taller than the screen
-SCRLN:	DW	0		; lines the text moved up this frame (signed)
-FORCEF: DB	0		; 1 = an aborted frame is pending -> force full repaint
-OEDMOD: DB	EM_CMD		; the mode the bottom row last showed (0FFH: unknown)
-
-SCBOT:	DB	0		; WINROW of the last line shown
+SROW:	DB	0		; computed cursor screen row
+SCOL:	DB	0		; computed cursor screen column
 TXEND:	DB	1		; the first row with no text on it
 FILCH:	DB	'~'		; what such a row shows: '~', or '@' for a line cut
+SCBOT:	DB	0		; WINROW of the last line shown
+LYABV:	DW	0		; rows the lines above the cursor's take
+CSRAW:	DB	0		; the row of its line (as shown) the cursor is on
+LYTSH:	DB	0		; HTBLD: the rows of the cursor's line that show
+NXTR:	DB	0		; ... and of the line under it (0: not shown)
+FRMLEN	EQU	$-WINROW
+OLDWR:	DW	0
+OLDSK:	DW	0
+OLDSC:	DW	0
+OLDTX:	DW	0		; (TXEND, and FILCH)
+OLDBOT:	DB	0
+OLDAB:	DW	0
+OLDCS:	DB	0
+OLDCR:	DB	0
+OLDNR:	DB	0
+
+OPN:	DB	0		; SCDRAW: rows the screen gave up at the top
+OPM:	DB	0		; ... or gained there
+EDA:	DB	0		; the edit: the rows it had
+EDB:	DB	0		; ... and has
+EDR:	DB	0		; ... its first row
+EDP:	DB	0		; ... the first of them to draw
+PEND:	DB	0		; PRNG: the row to stop before
+TALLF:	DB	0		; 1 = the top line is taller than the screen
+SCRLN:	DW	0		; lines the text moved up this frame (signed)
+FORCEF: DB	0		; 1 = a full frame is not finished -> repaint in full
+OEDMOD: DB	EM_CMD		; the mode the bottom row last showed (0FFH: unknown)
+
 SCEOF:	DB	0		; 1 = the end of the file is on the screen
 SCBOF:	DB	0		; 1 = the top row is the file's first line
 PLACE:	DB	0		; the command's request of the next layout (VI.INC
@@ -2033,10 +2129,8 @@ CSUB:	DB	0		; the row of its line the cursor is on (0 = first)
 TOPLEN: DW	0		; bytes from the top line's start to the cursor
 CBOL:	DW	0		; bytes from the cursor line's start to the cursor
 CURDCL: DW	0		; cursor display column (0-based, tabs expanded)
-LYABV:	DW	0		; rows the lines above the cursor's take
 LYDLT:	DW	0		; LAYOUT: LNDLT taken for this frame
 LYROW:	DB	0		; LAYOUT: working row
-LYTSH:	DB	0		; HTBLD: the rows of the cursor's line that show
 LYIB:	DW	0		; LYMID: -> the entry of the next line below
 LYVB:	DB	0		; LAYOUT: the column its current row starts at (low
 				;   byte: TAB stops)
@@ -2048,7 +2142,7 @@ LYND:	DB	0		; LYMID: lines under the last one shown (LYFAR)
 LYPRF:	DB	0		; LYMID: 1 = a line above first when rows are even
 LYSVR:	DB	0		; LAYOUT: LYROW as CURRW gave it
 HTLIM:	DB	0		; HTBLD: rows still to gather
-LYXE:	DB	0		; HTBLD: WR_EOL+1 when the cursor has its own row
+LYXE:	DB	0		; HTBLD: 1 when the cursor has a row to itself
 LYLAST: DB	0		; LAYOUT: last byte read forward
 SVCNT:	DW	0		; LAYOUT: saved CMDCNT
 SVAUX:	DW	0		; LAYOUT: saved AUXCNT
@@ -2061,15 +2155,10 @@ RDBC:	DW	0		; reader: RGET count
 RDSEG:	DB	0		; reader: 1 once reading after the gap
 SKPN:	DB	0		; RDSKIP line count
 PROWN:	DB	0		; screen row being painted (0-based)
-SCLN:	DB	0		; region-scroll line count (N, 1..NEDIT-1)
 PSKN:	DW	0		; PROW: rows of the line to pass over first
 DCOL:	DB	0		; column in the line while painting (low byte)
 XC:	DB	0		; cells used in the row being painted
-ROWCT:	DB	0		; RI count (SCBWD)
-ILLAST: DB	0		; ... and the last screen row it draws
 
-SROW:	DB	0		; computed cursor screen row
-SCOL:	DB	0		; computed cursor screen column
 TMPR:	DW	0		; DSR parse: rows
 TMPC:	DW	0		; DSR parse: cols
 
