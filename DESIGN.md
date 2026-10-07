@@ -386,7 +386,7 @@ Detail is in `RENDER.md`. The design decisions:
   the file the cursor is. WordMaster's output model assumed a fixed 80×24
   terminal with only clear, address and erase-to-end-of-line. VI probes the
   geometry at startup (24–200 rows, 80–132 columns, 24×80 fallback) and uses the
-  scroll region, IL/DL, RI and ICH.
+  scroll region, IL/DL and ICH/DCH.
 - **Render intents, no shadow buffer.** Each command sets `RINTENT` to say what it
   changed. `SCDRAW` picks the cheapest paint that is correct.
 - **The default is `R_FULL`, set before every key.** A command lowers it only when
@@ -400,8 +400,19 @@ Detail is in `RENDER.md`. The design decisions:
 - **Long lines wrap, as vi's do.** A line wider than the screen goes on down
   the rows under it; one the bottom of the screen has no room for is `@` rows.
   `WINROW` counts the lines above the cursor's, and the layout measures them
-  into rows. (Issue #25 is this change, in steps; `RENDER.md` is rewritten at
-  its last.)
+  into rows.
+- **One cheap paint, counted in rows.** A frame is two changes of the form
+  "this many rows were here, that many are": one at the top row (the text
+  scrolled) and one at the cursor (the edit). The terminal moves the rows that
+  stand (IL/DL in a scroll region), the rows that are new are sent, and the
+  bottom is put right. Scrolls, in-line edits, joins, deleted and opened lines
+  are all that one routine with different numbers, so a wrapped line is not a
+  special case, and the full repaint is the same row painter asked for every
+  row. Two cell operations sit on top for the commonest keys, used only when
+  nothing moves and the line's last row alone is dirty: ICH for a typed char
+  and DCH for `x`. There is deliberately no row-by-row ripple down a long
+  wrapped line: an edit above its last row redraws from the cursor's row to
+  the line's end. The target is lines of 80 columns or less.
 - **The screen is one table.** The lines about the cursor are measured once a
   frame (`HTBLD`) into the row table, a byte a line saying how many rows it
   takes. Everything else is arithmetic on that: which line is the top one (as

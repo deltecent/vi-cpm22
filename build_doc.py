@@ -119,6 +119,12 @@ The bottom row is a message line, blank until something is said on it.
 It is not a permanent status line -- use ^G when you want to know where
 you are.
 
+A line wider than the screen wraps onto the rows under it, as in vi.  A
+line the bottom of the screen has no room for is not shown in part: the
+rows it would start on show @.  A line taller than the whole screen is
+shown about the cursor, with <<< at the top left when its start is off
+the screen.
+
 
 EDITING --------------------------------------------------------------------
 
@@ -347,7 +353,7 @@ def figures():
                         "Pattern not found: zzzz")):
         if cell(name, 2) != said:
             missing.append(f"{name} (which no longer says {said!r})")
-    for name in ("u after 100dd", "2800dd (22 K)", "2800yy (22 K)",
+    for name in ("u after 100dd", "2500dd (20 K)", "2500yy (20 K)",
                  "yG (54 K)"):
         if cell(name, 2):
             missing.append(f"{name} (which now says {cell(name, 2)!r})")
@@ -443,7 +449,7 @@ Big deletes and yanks, at line 6000:
 
 {cut('500dd', '4 K', '500dd (4 K)')}          {cut('500yy', '4 K', '500yy (4 K)').strip()}
 {cut('2000dd', '16 K', '2000dd (16 K)')}
-{cut('2800dd', '22 K', '2800dd (22 K)')}          {cut('2800yy', '22 K', '2800yy (22 K)').strip()}
+{cut('2500dd', '20 K', '2500dd (20 K)')}          {cut('2500yy', '20 K', '2500yy (20 K)').strip()}
 {cut('d6500G', '4 K', 'd6500G (4 K)')}
 {cut('d9000G', '24 K', 'd9000G (24 K)')}
 {cut('dG', '54 K', 'dG (54 K)')}
@@ -471,8 +477,8 @@ What to do instead:
   * To MOVE or COPY a big block, write it to a file and read it back in
     (see YANK AND PUT).  :6000,9000w T.TXT is {t(':6000,9000w T.TXT (24 K)')} for 24 K and
     :r T.TXT is {t(':r T.TXT of 24 K, at line 3000')}.  That is any size, with the block still on the
-    disk afterwards.  To move a block that fits the register, 2800dd
-    and P are quicker ({t('2800dd (22 K)')} and {t('P after 2800dd')}); to copy one, 2800yy is not.
+    disk afterwards.  To move a block that fits the register, 2500dd
+    and P are quicker ({t('2500dd (20 K)')} and {t('P after 2500dd')}); to copy one, 2500yy is not.
   * Type :w before a change that cannot be undone.  The file on the disk
     is not touched until the next :w, so :e! then throws the change away,
     and each :w leaves the version before it in NAME.BAK.

@@ -11,7 +11,7 @@ script measures.
 
 It is a GUARD as much as a report.  Every case carries the budget its paint
 should fit in; a change that silently drops a command back to the full repaint
-(by not lowering RINTENT, or by tripping one of SC_ED's gates) blows the budget
+(by not lowering RINTENT, or by failing one of SCDRAW's tests) blows the budget
 by an order of magnitude and this exits non-zero.  The budgets are loose --
 several times the measured cost -- because the point is to catch a 1500, not to
 freeze a 98 at 98.

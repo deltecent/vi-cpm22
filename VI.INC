@@ -49,7 +49,7 @@ TABWID	EQU	8		; tab stop interval (display only)
 ; per key; SCRN.MAC reads it.  The default is the conservative R_FULL (full
 ; repaint = the proven Stage-3a behavior); pure cursor motions lower it to
 ; R_MOVE so the renderer repositions the cursor without redrawing; an in-line
-; edit lowers it to R_LINE so only the current row is redrawn.  A mistag can
+; edit lowers it to R_LINE so only the cursor's line is redrawn.  A mistag can
 ; therefore only cost an unnecessary full repaint, never leave stale text.
 ;------------------------------------------------------------
 ; PLACE -- what a command asks of the next layout (SCRN.MAC), cleared by it.
@@ -60,11 +60,11 @@ PL_MID	EQU	2		; mid-screen, as the rows fall
 
 R_FULL	EQU	0		; edit area may be stale -> full repaint (SCDRAW)
 R_MOVE	EQU	1		; cursor moved only -> reposition (if viewport stable)
-R_LINE	EQU	2		; current line changed only -> redraw that one row
-R_DLIN	EQU	3		; one line deleted at the cursor row -> DL + redraw bottom
-R_ICH	EQU	4		; one printable char inserted mid-line -> ICH (no tail redraw)
-R_ILIN	EQU	5		; one line opened at the cursor row -> IL + redraw that row and the one above
-R_JOIN	EQU	6		; the line below joined onto the cursor's -> redraw that row + DL the one under it
+R_LINE	EQU	2		; the cursor's line changed only -> redraw it from the cursor's row
+R_DLIN	EQU	3		; the cursor's line deleted -> DL its rows + redraw the bottom
+R_ICH	EQU	4		; one printable char inserted, no TAB after it -> ICH
+R_ILIN	EQU	5		; ILN lines opened at the cursor -> IL + their rows (ILABOV: the line above)
+R_JOIN	EQU	6		; the line below joined onto the cursor's -> redraw it + DL the rows saved
 R_DCH	EQU	7		; chars deleted at the cursor, none after it a TAB -> DCH
 
 ;------------------------------------------------------------
