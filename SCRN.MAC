@@ -257,6 +257,14 @@ PG_H:
 PG_K:
 	DAD	B
 	SHLD	PSKN
+	LXI	H,WINROW	; at the cursor's line or under it: read on from
+	CMP	M		;   that line, not down the screen to it
+	JC	PG_S
+	SUB	M
+	PUSH	PSW
+	CALL	RDBOL
+	POP	PSW
+PG_S:
 	CALL	RDSKIP		; the reader at that line (A lines down)
 PG_GO:
 	LDA	PROWN
@@ -2163,6 +2171,31 @@ RDSKIP:
 	ORA	A
 	RZ
 	STA	SKPN
+	LHLD	RDN		; what lies before the gap is passed over where
+	MOV	B,H		;   it lies
+	MOV	C,L
+	LHLD	RDP
+RSK_F:
+	MOV	A,B
+	ORA	C
+	JZ	RSK_S
+	MOV	A,M
+	INX	H
+	DCX	B
+	CPI	LF
+	JNZ	RSK_F
+	LDA	SKPN
+	DCR	A
+	STA	SKPN
+	JNZ	RSK_F
+RSK_S:
+	SHLD	RDP
+	MOV	H,B
+	MOV	L,C
+	SHLD	RDN
+	LDA	SKPN
+	ORA	A
+	RZ
 RSK_LP:
 	CALL	RDCH
 	RC

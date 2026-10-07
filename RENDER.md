@@ -122,7 +122,9 @@ around itself.
 So a frame costs one screenful of text however deep the cursor is. The paints read it
 straight from the gap buffer (`RDTOP`/`RDBOL`/`RDCH`): before the gap by pointer, taken from
 `GAPBEG` when the read starts; after it by `RGET`. After `LAYOUT` all of it is resident, so a
-paint never pages.
+paint never pages. A paint that starts at the cursor's line or under it starts the read
+at that line (`RDBOL`), and lines passed over before the gap are passed over where they lie
+(`RDSKIP`), so painting the bottom row does not read the screen down to it.
 
 ## Escape-sequence vocabulary
 

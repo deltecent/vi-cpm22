@@ -1,6 +1,6 @@
 # What a command costs on a 100 K file
 
-Written by `python3 timecost.py --write`; do not edit. Measured on a `VI.COM` of 20864 bytes, one fresh editor per row, on a file of 12800 lines of 8 bytes.
+Written by `python3 timecost.py --write`; do not edit. Measured on a `VI.COM` of 20992 bytes, one fresh editor per row, on a file of 12800 lines of 8 bytes.
 
 The seconds are the simulator's emulated clock (2 MHz 8080, 9600-baud console, the BIOS's disk loops). The simulated drive has no seek time and no rotation, so **these are a floor**: a real drive adds to every row that pages and to none that does not. The message is what the bottom row said afterwards.
 
@@ -19,12 +19,12 @@ The seconds are the simulator's emulated clock (2 MHz 8080, 9600-baud console, t
 | `5900G` from line 6000 | 1.0 | 356 |  |
 | `100G` from line 12000 | 36.5 | 343 |  |
 | `G` again, after `G` `gg` | 41.0 | 304 |  |
-| `gg` from the end, after `x` there | 55.6 | 315 |  |
+| `gg` from the end, after `x` there | 54.6 | 315 |  |
 | `'a` to line 100 from line 6000 | 15.9 | 304 |  |
 | `^G` at the end | 0.7 | 63 | "TEST.TXT" line 12800 col 1 |
-| `G` from the top, ESC 10 s into it | 19.8 | 58 | Interrupted |
+| `G` from the top, ESC 10 s into it | 19.9 | 58 | Interrupted |
 | `/zzzz` from line 6000, never found | 118.1 | 61 | Pattern not found: zzzz |
-| `/zzzz` from line 6000, ESC 10 s into it | 17.5 | 74 | Interrupted |
+| `/zzzz` from line 6000, ESC 10 s into it | 17.4 | 74 | Interrupted |
 | `/012000` from the top | 44.3 | 321 |  |
 | `/000100` from line 6000 (wraps) | 61.7 | 321 |  |
 | `?000100` from line 6000 | 15.2 | 321 |  |
@@ -87,7 +87,7 @@ The seconds are the simulator's emulated clock (2 MHz 8080, 9600-baud console, t
 | | |
 |---|---|
 | BDOS entry, the word at 0006H | B606H |
-| arena, from the top of the program to the BDOS | 24444 bytes (5689H-B605H) |
+| arena, from the top of the program to the BDOS | 24387 bytes (56C2H-B605H) |
 | text in memory when the file is opened | 2048 bytes |
 | undo region, taken out of the arena | 1024 bytes |
 | text in memory after `6000G` `G` `6000G` `gg` `G` | 12288, 20736, 22784, 22528, 8192 bytes |
