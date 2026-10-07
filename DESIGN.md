@@ -48,8 +48,9 @@ When two of these pull against each other, the higher one wins.
    full screen of ordinary lines and fails when one takes longer than its
    budget, in a 3 K file and a 116 K one alike. A key joins that group when it
    meets objective 2. The cursor keys, a typed char, `x`, `r` and insert's BS
-   are in it, mid-line and in front of a TAB; the one-line scroll, `dd`, `o` and `J` are not yet, and are the
-   work in hand.
+   are in it, mid-line and in front of a TAB, and so is the one-line scroll
+   (`j` off the bottom row, `k` off the top); `dd`, `o` and `J` are not yet,
+   and are the work in hand.
 
 ---
 
@@ -204,10 +205,10 @@ move would break:
               pointer row, text + gap, Q-buffer (the yank register), undo region
     BUFEND  = BDOS base - 1   (B605H with a 56 K CP/M; see section 1)
 
-In this build the `.COM` file is 20992 bytes (164 records). **The size that
+In this build the `.COM` file is 21376 bytes (167 records). **The size that
 matters is a 4 K BLOCK BOUNDARY**, because that is what the 8 MB disk
 allocates in: 20480 bytes occupy five blocks and one byte more occupies six.
-This build is past that line by 512 bytes, by decision (objective 6: the
+This build is past that line by 896 bytes, by decision (objective 6: the
 bytes went on keys that answer at once), and the next boundary is **24576
 bytes**, so everything between here and there costs the same 24 K on disk.
 What each byte does cost is arena: the yank register and the room to edit in.
@@ -485,6 +486,12 @@ Detail is in `RENDER.md`. The design decisions:
   same path reads the cursor's line whole and, if it still takes the rows
   the table has for it, stops there; a line that gained or lost a row gets
   the full layout. A typed char went from 0.25 s to 0.05 s by it.
+- **A step past the screen's edge measures one line.** `j` on the bottom
+  line and `k` on the top one bring one new line onto the screen; the rest
+  are in the row table already. The table is kept, the new line is measured
+  and added to it, and the layout's arithmetic runs on that. `j` off the
+  bottom went from 0.7 to 0.9 s to 0.13 to 0.21 s, of which 0.06 to 0.13 s is
+  the row being sent at 9600 baud.
 - **Where vim counts screen rows, so does this.** Once lines differ in height
   vim's `^F ^B ^D ^U`, its `M`, and its choice between scrolling up to a line
   below the screen and centring it are all sums of rows, and they are

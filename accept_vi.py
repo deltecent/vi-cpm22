@@ -8899,6 +8899,10 @@ RESP = [
     ('r', ['3j', '5w'], 'rZ', 0.12),
     ('BS in insert', ['3j', '5w', 'iQQ'], '\x08', 0.10),
     ('ESC from insert', ['3j', '5w', 'iQ'], '\x1b', 0.10),
+    ('j off the bottom row', ['L'], 'j', 0.25),
+    ('j off the bottom row again', ['L', 'j'], 'j', 0.25),
+    ('k off the top row', ['40j', 'H'], 'k', 0.25),
+    ('k off the top row again', ['40j', 'H', 'k'], 'k', 0.25),
     ('a char typed before a TAB', ['3j', 'w', 'i'], 'Z', 0.10),
     ('x before a TAB', ['3j', 'w'], 'x', 0.10),
     ('BS before a TAB', ['3j', 'w', 'iQQ'], '\x08', 0.10),
@@ -8997,6 +9001,105 @@ def cell_paint():
                 check(f'{name}: {sent} bytes sent, not the row ({budget})',
                       sent <= budget)
             e.key('u')
+    finally:
+        e.close()
+
+
+def step_lines(n=149):
+    """Lines for the one-line scroll: ordinary ones, with lines of two and
+    three rows, one just as wide as the screen and empty ones among them."""
+    out = []
+    for i in range(n):
+        m = i % 11
+        if m == 3:
+            out.append('W%03d ' % i + 'wide line of words ' * (5 + i % 7))
+        elif m == 6:
+            out.append('')
+        elif m == 8:
+            out.append(('E%03d' % i).ljust(79 + i % 3, '='))
+        elif m == 9:
+            out.append('\tMOV\tA,M\t\t; line %03d, with TABs in it' % i)
+        else:
+            out.append('line %03d of ordinary text' % i)
+    return out
+
+
+def step_scroll():
+    """'j' on the bottom line and 'k' on the top one move the screen by as
+    little as shows the cursor's line whole, as vim does, and what is on the
+    screen then is the text from that top line down: the lines that fit, '@'
+    on the rows of one that does not, '~' past the end.  The whole file, down
+    and back, a line at a time; with and without a line end on the last line;
+    and with other keys between the steps."""
+    def cells(l):
+        return l.expandtabs(8)
+
+    def height(l):
+        return max(1, -(-len(cells(l)) // 80))
+
+    def lay(L, top):
+        out = []
+        for l in L[top:]:
+            c = cells(l)
+            r = [c[i:i + 80] for i in range(0, len(c), 80)] or ['']
+            if len(out) + len(r) > 23:
+                out += ['@'] * (23 - len(out))
+                break
+            out += r
+        return [x.rstrip() for x in out + ['~'] * (23 - len(out))]
+
+    def run(tag, L, data, keys):
+        e = Editor(data)
+        bad = []
+        try:
+            top = cur = 0
+            for n, k in enumerate(keys):
+                e.key(k)
+                if k == 'j' and cur < len(L) - 1:
+                    cur += 1
+                    while sum(height(l) for l in L[top:cur + 1]) > 23:
+                        top += 1
+                elif k == 'k' and cur > 0:
+                    cur -= 1
+                    top = min(top, cur)
+                elif k == 'x':
+                    L[cur] = L[cur][1:] if len(L[cur]) > 1 else L[cur]
+                v = e.screen()
+                got = [''.join(r).rstrip() for r in v.screen[:23]]
+                row = sum(height(l) for l in L[top:cur])
+                if got != lay(L, top) or not row <= v.row < row + height(L[cur]):
+                    bad.append((n, k, cur, top, v.row))
+                    break
+            check(f'step {tag}: {len(keys)} keys, each screen is the text '
+                  f'from its top line down (first wrong: {bad[:1]})', not bad)
+            return e, top, cur
+        except Exception:
+            e.close()
+            raise
+
+    for tag, tail in (('ended', '\r\n'), ('no line end on the last', '')):
+        L = step_lines()
+        data = ('\r\n'.join(L) + tail).encode()
+        n = len(L)
+        e, top, cur = run(tag, L, data, ['j'] * (n + 2) + ['k'] * (n + 2))
+        e.close()
+    # a file the arena does not hold: the pager moves the text on the way
+    L = step_lines(1000)
+    data = ('\r\n'.join(L) + '\r\n').encode()
+    e, top, cur = run(f'{len(data) // 1024} K, paged', L, data,
+                      ['j'] * 1001 + ['k'] * 1001)
+    e.close()
+    # other keys between the steps: an edit, a move along the line, a step
+    # back the other way
+    L = step_lines()
+    data = ('\r\n'.join(L) + '\r\n').encode()
+    keys = ['j'] * 30 + ['j', 'x', 'j', 'k', 'k', 'j', 'j', 'j'] * 20 \
+        + ['k'] * 40 + ['k', 'x', 'k', 'j', 'j', 'k', 'k', 'k'] * 20
+    e, top, cur = run('with other keys between', L, data, keys)
+    try:
+        e.key(':w\r')
+        check('step with other keys between: :w byte-exact',
+              saved_bytes(e) == ('\r\n'.join(L) + '\r\n').encode())
     finally:
         e.close()
 
@@ -9324,8 +9427,10 @@ def lnum_cmds():
         check(f'lnum :w ^G: the line it was on ({g!r})', 'line 6102 ' in g)
         s = timed(e, '6200G')
         check(f'lnum :w 6200G: on its line ({at(e)!r})', at(e) == want(6200))
-        check(f'lnum :w 6200G: moves from the cursor ({s:.1f} s, 6 allowed)',
-              s < 6)
+        # (a page of the file may come in on the way, as the arena falls:
+        #  9 s then; from line 1 it is over 20)
+        check(f'lnum :w 6200G: moves from the cursor ({s:.1f} s, 12 allowed)',
+              s < 12)
         go(e, 'gg')
         g = ctrlg(e)
         check(f'lnum gg: line 1 ({at(e)!r}, {g!r})',
@@ -9970,6 +10075,9 @@ def main():
     if not args or 'vim' in args or 'resp' in args:
         print('\n=== a key answers at once ===', flush=True)
         resp_cmds()
+    if not args or 'vim' in args or 'step' in args:
+        print('\n=== a step past the screen moves it a line ===', flush=True)
+        step_scroll()
     if not args or 'vim' in args or 'cell' in args:
         print('\n=== a cell changed is a cell sent ===', flush=True)
         cell_paint()

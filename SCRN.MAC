@@ -1174,7 +1174,8 @@ LY_B1:
 	LDA	LYROW
 	MOV	B,A
 LY_BLD:
-	CALL	HTBLD
+	CALL	LYSTP		; a step past the screen's edge: the table stands
+	CNC	HTBLD
 	;--- a line taller than the screen whose end is on it: the lines under
 	;    that end, as far as the rows go ---
 	LDA	TALLF
@@ -1215,7 +1216,7 @@ LY_FD:
 	;--- the top line: LYROW lines above the cursor's (WM MEASLO) ---
 	LDA	LYROW
 	MOV	L,A		; (H is 0 still)
-	CALL	LINPSB		; HL = that line's start
+	CALL	LYTP		; HL = that line's start
 	XCHG
 	LHLD	GAPBEG
 	CALL	SUBHD		; HL = GAPBEG - top
@@ -1270,6 +1271,19 @@ LY_CUT:
 LY_WE:
 	LDA	HTEOF		; the table ended: with the text, or with the rows
 	STA	SCEOF
+	ORA	A
+	JNZ	LY_END
+	LDA	LYOK		; ... or, when it was kept (LYSTP), short of both:
+	ORA	A		;   there are rows to fill and nothing measured
+	JZ	LY_END		;   to fill them.  Then it is built after all
+	LDA	NEDIT
+	CMP	C
+	JZ	LY_END
+	XRA	A
+	STA	LYOK
+	LDA	LYSVR
+	STA	LYROW
+	JMP	LY_SAM
 LY_END:
 	MOV	A,C
 	STA	TXEND		; the first row with no text on it
@@ -1356,19 +1370,7 @@ LYQK:
 	CPI	R_DCH
 	JNZ	LQK_N
 LQK_G:
-	LHLD	SKIPR
-	LDA	PLACE
-	ORA	H
-	ORA	L
-	LXI	H,LYXE
-	ORA	M
-	LXI	H,TALLF
-	ORA	M
-	JNZ	LQK_N
-	LHLD	PGTOPM		; (and the text in memory starts where it did:
-	XCHG			;   the pager has not moved the window since)
-	LHLD	LYPG
-	CALL	CMP16
+	CALL	LQGD
 	JNZ	LQK_N
 	LHLD	WINROW
 	XCHG
@@ -1397,21 +1399,7 @@ LQK_G:
 	SHLD	TOPLEN
 	INR	H
 	SHLD	WRLIM
-	LXI	H,0		; the cursor's line, as far as the cursor
-	CALL	LINPSB
-	PUSH	H
-	CALL	G2P
-	SHLD	CBOL
-	MOV	B,H
-	MOV	C,L
-	POP	H
-	CALL	LNW
-	XCHG
-	SHLD	CURDCL
-	CALL	DIVN
-	STA	LQKC		; (the cells before it on that row)
-	MOV	A,C
-	STA	CSRAW		; the row of its line the cursor is on
+	CALL	LQCU
 	LDA	WINROW
 	CALL	SUMT
 	MOV	L,A
@@ -1466,6 +1454,250 @@ LQK_2:
 LQK_N:
 	XRA	A
 	RET
+
+;LYTP -- L = the lines to be above the cursor's (H = 0): HL = the start of
+; the top line.  WM's line move finds it (LINPSB), walking back over all of
+; them.  With a table that was kept (LYSTP) there is less to do: no lines
+; above, and it is the cursor's line; else the top line is the old one, or
+; some lines down from it, and the old one is where LYTOP says while the
+; pager has left the text alone.
+LYTP:
+	LDA	LYOK
+	ORA	A
+	JZ	LINPSB
+	ORA	L
+	DCR	A		; (LYOK is 1)
+	JNZ	LT_1
+	LHLD	CBOL
+	JMP	G2P
+LT_1:
+	PUSH	H
+	LHLD	PGTOPM
+	XCHG
+	LHLD	LYPG
+	CALL	CMP16
+	POP	H
+	JNZ	LINPSB
+	MOV	B,L
+	LHLD	WINROW
+	XCHG
+	LHLD	LYDLT
+	DAD	D		; HL = the lines over it, from the old top line
+	MOV	A,H
+	ORA	A
+	JNZ	LT_NO
+	MOV	A,L
+	SUB	B
+	JC	LT_NO
+	MOV	C,A		; C = the lines the top goes down
+	LHLD	GAPBEG
+	XCHG
+	PUSH	D
+	LHLD	TXTBEG
+	XCHG
+	LHLD	LYTOP
+	DAD	D
+	POP	D		; HL = the old top line, DE = the gap
+	INR	C
+LT_2:
+	DCR	C
+	RZ
+LT_3:
+	MOV	A,L
+	CMP	E
+	JNZ	LT_4
+	MOV	A,H
+	CMP	D
+	JZ	LT_NO		; (the gap: not as it should be)
+LT_4:
+	MOV	A,M
+	INX	H
+	CPI	LF
+	JNZ	LT_3
+	JMP	LT_2
+LT_NO:
+	MOV	L,B
+	MVI	H,0
+	JMP	LINPSB
+
+;LQGD -- Z iff the table and the text are as the last frame left them, with
+; nothing about that frame out of the ordinary: no line placed by the command,
+; none taller than the screen or cut at the top, the pager's window where it
+; was.
+LQGD:
+	LHLD	SKIPR
+	LDA	PLACE
+	ORA	H
+	ORA	L
+	LXI	H,LYXE
+	ORA	M
+	LXI	H,TALLF
+	ORA	M
+	RNZ
+	LHLD	PGTOPM		; (and the text in memory starts where it did:
+	XCHG			;   the pager has not moved the window since)
+	LHLD	LYPG
+	JMP	CMP16
+
+;LQCU -- the cursor's line, as far as the cursor: CBOL, CURDCL, the row of
+; the line it is on (CSRAW, and A) and the cells before it there (LQKC).
+LQCU:
+	LXI	H,0
+	CALL	LINPSB
+	PUSH	H
+	CALL	G2P
+	SHLD	CBOL
+	MOV	B,H
+	MOV	C,L
+	POP	H
+	CALL	LNW
+	XCHG
+	SHLD	CURDCL
+	CALL	DIVN
+	STA	LQKC
+	MOV	A,C
+	STA	CSRAW
+	RET
+
+;LYSTP -- a move, in command mode, to a line the row table holds or the one
+; next past either end of it -- 'j' on the bottom line, 'k' on the top one.
+; The lines the table has are not read again: the cursor's line is found in
+; it, or measured (that line alone) and put on the end it belongs at.  What
+; HTBLD leaves for the cursor's line is left the same: HTCUR, CBOL, CURDCL,
+; CSRAW, LYTSH, and the table's ends (HTBOF, HTEOF).  LAYOUT then places the
+; screen by the table as it would have.
+;   out: CY when that is done; NC (BC kept) when HTBLD must: the table is not
+;        the screen's, the line is farther off, taller than the screen, or
+;        any of what LQGD looks for.
+LYSTP:
+	PUSH	B
+	CALL	LS_GO
+	POP	B
+	RET
+LS_GO:
+	LDA	LYOK
+	ORA	A
+	RZ
+	CALL	LQMV
+	JNZ	LQK_N
+	CALL	LQGD
+	JNZ	LQK_N
+	LDA	LYND
+	ORA	A
+	JNZ	LQK_N
+	LHLD	LYDLT
+	LDA	HTCUR
+	MOV	E,A
+	MVI	D,0
+	DAD	D		; HL = its place in the table
+	MOV	A,H
+	ANA	L
+	INR	A
+	JZ	LS_C		; -1: the line over the table's first
+	MOV	A,H
+	ORA	A
+	JNZ	LQK_N
+	LDA	HTN
+	CMP	L
+	JC	LQK_N
+LS_C:
+	MOV	A,L
+	STA	HTCUR
+	CALL	LQCU
+	LDA	HTCUR
+	INR	A
+	JZ	LS_M
+	DCR	A
+	LXI	H,HTN
+	CMP	M
+	JZ	LS_M		; the line under its last
+	CALL	HTE
+	MOV	A,M
+	LXI	H,NEDIT
+	CMP	M
+	JNC	LQK_N		; (a screenful: it may be taller)
+	STA	LYTSH
+	CALL	RGET0		; the char under the cursor in memory (TABCUR)
+	CALL	RDGET
+	STC
+	RET
+	;--- not in the table: the rest of the line, as HTBLD reads it ---
+LS_M:
+	LDA	HTN
+	INR	A
+	JZ	LQK_N		; (no room for it)
+	LDA	LQKC
+	MOV	E,A
+	LDA	CURDCL
+	SUB	E
+	STA	LYVB
+	LDA	CSRAW
+	MOV	D,A
+	CALL	RGET0
+	CALL	LM_FL		; D = its last row
+	PUSH	PSW
+	CPI	1
+	JZ	LS_F		; more rows than the screen has
+	MOV	A,E
+	ORA	A
+	JNZ	LS_1
+	ORA	D
+	JNZ	LS_F		; the cursor has a row to itself (LYXE)
+LS_1:
+	MOV	A,D
+	INR	A
+	STA	LYTSH
+	LDA	HTCUR
+	INR	A
+	JNZ	LS_AP
+	POP	PSW
+	LDA	HTN		; over the first: the rest move down one
+	MOV	B,A
+	CALL	HTE
+LS_S:
+	MOV	A,B
+	ORA	A
+	JZ	LS_S1
+	DCX	H
+	MOV	A,M
+	INX	H
+	MOV	M,A
+	DCX	H
+	DCR	B
+	JMP	LS_S
+LS_S1:
+	LDA	LYTSH
+	MOV	M,A
+	LXI	H,HTN
+	INR	M
+	XRA	A
+	STA	HTCUR
+	STA	HTBOF
+	LHLD	CBOL
+	CALL	G2P
+	CALL	ISBOF
+	STC
+	RNZ
+	MVI	A,1
+	STA	HTBOF
+	STC
+	RET
+LS_AP:
+	LDA	LYTSH
+	CALL	HTPUT
+	POP	PSW
+	JM	LS_E		; the text ends with it
+	CALL	HB_PK		; ... or right after it
+	STC
+	RET
+LS_E:
+	MVI	A,1
+	STA	HTEOF
+	STC
+	RET
+LS_F:
+	POP	PSW
+	JMP	LQK_N
 
 ;LQMV -- Z iff the key only moved the cursor, in command mode.  Keeps BC, DE.
 LQMV:

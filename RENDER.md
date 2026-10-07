@@ -116,6 +116,26 @@ to itself (`LYXE`), that is the layout. If not (the char typed wrapped the line,
 `LYQK` gives up and the full layout runs. Any other key takes the full layout, which makes
 the table the screen's again.
 
+**A step past the screen's edge keeps the table (`LYSTP`).** `j` on the bottom line and
+`k` on the top one move the cursor to a line the screen does not show, so `LYQK` cannot
+answer; but every line the screen will show after the step, bar that one, is in the table
+already. `LAYOUT` asks `LYSTP` before it would call `HTBLD`. For a move in command mode,
+with the same guards as `LYQK` (`LQGD`) and no placement asked (`PLACE`, `LYND`), `LYSTP`
+finds the cursor's line in the table, or measures that one line and puts it on the end it
+belongs at (moving the rest down one for a line above the first), and leaves what `HTBLD`
+leaves: `HTCUR`, `CBOL`, `CURDCL`, `CSRAW`, `LYTSH`, `HTBOF`, `HTEOF`. The rest of `LAYOUT`
+runs unchanged, on the table. Two things follow from the table not having been built for
+this cursor:
+
+- The top line is found without walking back over the lines above (`LYTP`): it is the
+  cursor's line, or the old top line (`LYTOP`) or some line ends down from it.
+- The table may end short of the rows the screen has to fill, with the text not ended (a
+  two-row line left the top and a one-row line came on at the bottom). `LAYOUT` sees that
+  where it walks down the table (`LY_WE`), and builds the table after all.
+
+A line taller than the screen, a table that is full, or the pager having moved the text
+all send the step to `HTBLD` as before.
+
 `LINPSB` runs WM's `SETCNT`, so `LAYOUT` saves and restores `CMDCNT`, `AUXCNT` and `DIRFLG`
 around itself.
 
