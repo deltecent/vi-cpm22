@@ -4235,19 +4235,28 @@ OPSPNL:
 	JMP	SUBHD
 
 ;OPDSPN -- delete the logical span [OPLO,OPHI) (charwise).
+; No break in it: 'dw' 'cw' 'D' changed one row, and only that row is stale.
+; And from where the cursor was on (OPSTA: 'dw', not 'db'), the terminal may
+; close the cells up.
 OPDSPN:
 	CALL	SPNBRK		; asked BEFORE the delete, while the text is there
 	PUSH	PSW
+	LHLD	OPSTA
+	XCHG
 	LHLD	OPLO
+	SHLD	WKI
+	CALL	CMP16
+	PUSH	PSW		; Z: the span starts under the screen's cursor
 	CALL	GOTO
 	CALL	OPSPNL		; HL = hi - lo
+	CALL	SETLIN
+	POP	PSW
+	CZ	DCHQ
 	CALL	DELFWD
 	CALL	MARKMOD
 	POP	PSW
-	JC	SETFUL		; a break went: every row below it moved up
-	JMP	SETLIN		; no break: 'dw' 'cw' 'D' changed one row, and
-				;   only that row is stale -- 1.6 s of repaint
-				;   for a word was the whole cost of these
+	RNC
+	JMP	SETFUL		; a break went: every row below it moved up
 
 ;UNDFNB -- ONE whole line is going: 'u' brings it back with the cursor on its
 ; first non-blank, or where it is now if that is further left (vim).  Go
@@ -4371,6 +4380,7 @@ VCB_D:
 VCB_CD:
 	CALL	CNTOFF		; the count is spent; HL = the cursor
 	SHLD	OPLO
+	SHLD	OPSTA
 	CALL	CUROFF
 	CALL	CEND		; to the line's content end, the CR,LF left
 	SHLD	OPHI
@@ -4408,24 +4418,33 @@ VC_X:
 VX_USEA:
 	XCHG			; HL = available
 VX_DEL:
-	;--- plain chars, and plain chars after them: the terminal can close
-	;    the cells up itself (R_DCH).  A TAB there would change width. ---
+	CALL	DCHQ
+	CALL	DELFWD		; HL = del bytes, forward-delete from cursor
+	CALL	MARKMOD
+	JMP	CLAMPE		; pull the cursor back to the line's content end
+
+;DCHQ -- HL bytes are about to go from under the cursor, none of them a line
+; end, and WKI is the cursor's offset.  Plain chars, and plain chars after
+; them: the terminal can close the cells up itself (R_DCH).  A TAB there would
+; change width.  Keeps HL.
+DCHQ:
 	PUSH	H
 	CALL	TAILTAB
 	POP	H
 	MOV	B,A
 	MOV	A,H		; (more of them than a byte counts)
 	ORA	A
-	JNZ	VX_D1
-	MOV	A,L
+	RNZ
+	ORA	L
+	RZ			; (or none at all)
 	STA	DCHN
 	MOV	A,B
 	ADD	A
 	STA	DCHBS		; 2: a TAB follows, to take the cells up
-	JZ	VX_D0
+	JZ	DQ_0
 	MOV	A,L		; ... if it is past what goes, and can
 	CPI	8
-	JNC	VX_D1
+	RNC
 	PUSH	H
 	LHLD	WKI
 	XCHG
@@ -4434,14 +4453,11 @@ VX_DEL:
 	XCHG			; DE = the chars before it
 	POP	H
 	CALL	CMP16
-	JC	VX_D1
-VX_D0:
+	RC
+DQ_0:
 	MVI	A,R_DCH
 	STA	RINTENT
-VX_D1:
-	CALL	DELFWD		; HL = del bytes, forward-delete from cursor
-	CALL	MARKMOD
-	JMP	CLAMPE		; pull the cursor back to the line's content end
+	RET
 
 ;CEND -- HL(off) -> HL = the line's CONTENT end: its terminator offset (EOLNL,
 ; which is LOGLEN on a last line with no line end), less a CR that immediately

@@ -8922,6 +8922,10 @@ RESP = [
     ('u of an x', ['3j', '5w', 'x'], 'u', 0.25),
     ('u again (the redo)', ['3j', '5w', 'x', 'u'], 'u', 0.25),
     ('u of a word changed', ['3j', '5w', 'cwNEW\x1b'], 'u', 0.30),
+    # a span out of the line: the terminal closes the cells up
+    ('dw', ['3j', '5w'], 'dw', 0.20),
+    ('D', ['3j', '5w'], 'D', 0.15),
+    ('cw', ['3j', '5w'], 'cw', 0.25),
 ]
 
 
@@ -8980,6 +8984,14 @@ def cell_paint():
                       (ln, tag, at, 'RZY\x08\x08\x1b', None),
                       (ln, tag, at, 'iZY\x08\x1b', None),
                       (ln, tag, at, 'aZY\x08\x08\x1b', None)]
+            # a span taken out of the line: the terminal closes the cells up
+            # (from the line's last char '2dw' and 'de' take the break too;
+            # 'cw' pays for the mode word coming and going, as 'i' does)
+            inl = 32 if at in ('0', '0w') else None
+            cases += [(ln, tag, at, 'dw', 32), (ln, tag, at, 'D', 32),
+                      (ln, tag, at, '2dw', inl), (ln, tag, at, 'de', inl),
+                      (ln, tag, at, 'd3l', 48), (ln, tag, at, 'db', None),
+                      (ln, tag, at, 'd0', None), (ln, tag, at, 'cwQ\x1b', 96)]
     # a char typed or deleted in front of a TAB: the TAB takes up the
     # difference, or (at a tab stop) cannot
     for ln, tag in ((10, 'tabs'), (13, 'TAB 1 wide'), (14, 'TAB 8 wide'),
