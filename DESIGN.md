@@ -204,10 +204,10 @@ move would break:
               pointer row, text + gap, Q-buffer (the yank register), undo region
     BUFEND  = BDOS base - 1   (B605H with a 56 K CP/M; see section 1)
 
-In this build the `.COM` file is 20608 bytes (161 records). **The size that
+In this build the `.COM` file is 20736 bytes (162 records). **The size that
 matters is a 4 K BLOCK BOUNDARY**, because that is what the 8 MB disk
 allocates in: 20480 bytes occupy five blocks and one byte more occupies six.
-This build is past that line by 128 bytes, by decision (objective 6: the
+This build is past that line by 256 bytes, by decision (objective 6: the
 bytes went on keys that answer at once), and the next boundary is **24576
 bytes**, so everything between here and there costs the same 24 K on disk.
 What each byte does cost is arena: the yank register and the room to edit in.

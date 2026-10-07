@@ -7112,6 +7112,8 @@ def ndd(label, n):
     e = Editor(make(n))
     try:
         cnt = min(2900, register_lines(e))      # (as many as will fit)
+        if cnt % 16 == 0:                       # a whole number of records
+            cnt -= 1                            #   left is issue #27's
         e.key('G'); e.key('3000k'); e.key('%ddd' % cnt)
         cur = n - 3000
         want = make(n)[:(cur - 1) * 8] + make(n)[(cur + cnt - 1) * 8:]
@@ -7120,6 +7122,21 @@ def ndd(label, n):
               rows(e)[v.row] == txt(cur + cnt))
         e.key(':w\r')
         check(f'{label}: {cnt}dd :w byte-exact', saved_bytes(e) == want)
+    finally:
+        e.close()
+
+    # Issue #27: back from the end, a delete that leaves a whole number of
+    # records, and the save keeps old records after them.
+    if n != 5120:
+        return
+    e = Editor(make(n))
+    try:
+        e.key('G'); e.key('3000k'); e.key('1600dd')
+        cur = n - 3000
+        want = make(n)[:(cur - 1) * 8] + make(n)[(cur + 1600 - 1) * 8:]
+        e.key(':w\r')
+        still_open(27, f'{label}: G 3000k 1600dd :w byte-exact',
+                   saved_bytes(e) == want)
     finally:
         e.close()
 
@@ -8836,7 +8853,7 @@ def run_for(e, seconds):
 
 def resp_lines(n):
     """*n* lines of the kind this editor is for: assembler source, TABs in
-    it, 5 to 75 columns wide.  A screen of these is about 1,100 bytes."""
+    it, 5 to 79 columns wide.  A screen of these is about 1,100 bytes."""
     out = []
     for i in range(n):
         m = i % 6
@@ -8847,11 +8864,10 @@ def resp_lines(n):
             out.append('LBL%05d:\tLXI\tH,BUFFER+%d\t; point at the next '
                        'record in the table' % (i, i % 200))
         elif m == 2:
-            out.append('\tMOV\tA,M\t\t; fetch the byte and test it against '
-                       'the limit value')
+            out.append('\tMOV\tA,M\t\t; fetch the byte and test it')
         elif m == 3:
-            out.append('\tCPI\t%d\t\t; is it the end marker for this pass of '
-                       'the loop?' % (i % 250))
+            out.append('\tCPI\t%d\t\t; is it the end marker for this pass?'
+                       % (i % 250))
         elif m == 4:
             out.append('\tJNZ\tLBL%05d\t; no -- go round again until the '
                        'count runs out' % (i - 3))
@@ -8866,23 +8882,23 @@ def resp_lines(n):
 # reads about 0.06 s for a key that does nothing at all, so a budget of 0.10
 # is 0.04 s of the editor's own time.  (setup keys, the key, the budget)
 RESP = [
-    ('j', ['5j'], 'j', 0.10),
-    ('k', ['5j'], 'k', 0.10),
-    ('l', ['5j'], 'l', 0.10),
-    ('h', ['5j', '$'], 'h', 0.10),
-    ('w', ['5j'], 'w', 0.10),
-    ('b', ['5j', '$'], 'b', 0.10),
-    ('$', ['5j'], '$', 0.10),
-    ('0', ['5j', '$'], '0', 0.10),
+    ('j', ['3j'], 'j', 0.10),
+    ('k', ['3j'], 'k', 0.10),
+    ('l', ['3j', '5w'], 'l', 0.10),
+    ('h', ['3j', '$'], 'h', 0.10),
+    ('w', ['3j', '5w'], 'w', 0.10),
+    ('b', ['3j', '$'], 'b', 0.10),
+    ('$', ['3j'], '$', 0.10),
+    ('0', ['3j', '$'], '0', 0.10),
     ('j, eight lines down the screen', ['12j'], 'j', 0.10),
     ('k, on the bottom row', ['L'], 'k', 0.10),
-    ('a char typed mid-line', ['5j', 'w', 'i'], 'Z', 0.10),
-    ('a char typed at the line end', ['5j', 'A'], 'Z', 0.10),
-    ('a second char typed', ['5j', 'w', 'iQ'], 'Z', 0.10),
-    ('x', ['5j', 'w'], 'x', 0.10),
-    ('r', ['5j', 'w'], 'rZ', 0.12),
-    ('BS in insert', ['5j', 'w', 'iQQ'], '\x08', 0.10),
-    ('ESC from insert', ['5j', 'w', 'iQ'], '\x1b', 0.10),
+    ('a char typed mid-line', ['3j', '5w', 'i'], 'Z', 0.10),
+    ('a char typed at the line end', ['3j', 'A'], 'Z', 0.10),
+    ('a second char typed', ['3j', '5w', 'iQ'], 'Z', 0.10),
+    ('x', ['3j', '5w'], 'x', 0.10),
+    ('r', ['3j', '5w'], 'rZ', 0.12),
+    ('BS in insert', ['3j', '5w', 'iQQ'], '\x08', 0.10),
+    ('ESC from insert', ['3j', '5w', 'iQ'], '\x1b', 0.10),
 ]
 
 
@@ -8891,7 +8907,7 @@ def resp_cmds():
     to read the screen over again, and not longer in a big file.  The moves
     leave the text and the window where they were; the edits change one line
     and none of its rows."""
-    for label, data in (('3 K', resp_lines(60)), ('116 K', resp_lines(2100))):
+    for label, data in (('3 K', resp_lines(60)), ('116 K', resp_lines(2350))):
         for name, setup, key, budget in RESP:
             e = Editor(data)
             try:

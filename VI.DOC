@@ -208,7 +208,7 @@ stops a move or a search before then (see below).
 The limits:
 
     Memory      The text in memory, the yank register and the undo share
-                24739 bytes (about 24 K, with a 56 K CP/M).  About 2 K of
+                24646 bytes (about 24 K, with a 56 K CP/M).  About 2 K of
                 the file is read when it is opened, and up to 22 K is in
                 memory at once.
     Register    One, of whole lines, about 21 K.  What it holds is taken
@@ -226,7 +226,7 @@ Quick, wherever you are in the file:
 
     ^F  ^B                    under a second
     200j                       1.6 s
-    x                          0.1 s
+    x                          0.0 s
     dd                         0.5 s       u after it      0.5 s
     60yy                       0.4 s
     ^G                         0.7 s
@@ -240,9 +240,9 @@ Slow, because the file has to go through the window:
     6000G from line 1           22 s       100G from line 12000    36 s
     /text, 94 K further on      44 s       ?text, 46 K back        15 s
     /text, wrapping round       62 s       'a, 46 K back           16 s
-    :w                          51 s   all of it, however little changed
+    :w                          52 s   all of it, however little changed
     :e! at line 6000            27 s   3.1 s at line 1
-    :%s/0/1/                   267 s   every line; over 100 lines, 2.7 s
+    :%s/0/1/                   232 s   every line; over 100 lines, 2.4 s
 
 ESC stops a move or a search -- G, gg, {n}G, 'a, `a, / ? n and N.  Within
 a second or two the bottom row says "Interrupting...", and when the
@@ -260,14 +260,14 @@ A command that changes the text is not stopped: dG, :s, a put and :w run
 to the end, and the ESC is taken afterwards as a key that does nothing.
 
 Going BACK costs more once something has been changed: gg from the last
-line is 56 s after an x there, because the text passed over
+line is 55 s after an x there, because the text passed over
 is then written to VIBACKUP.$$$.
 
 Big deletes and yanks, at line 6000:
 
     500dd      4 K   4.0 s          500yy      4 K   3.9 s
     2000dd    16 K    10 s
-    2500dd    20 K    12 s          2500yy    20 K    37 s
+    2500dd    20 K    12 s          2500yy    20 K    35 s
     d6500G     4 K   3.1 s
     d9000G    24 K    18 s
     dG        54 K    48 s
@@ -276,7 +276,7 @@ Big deletes and yanks, at line 6000:
 What is refused:
 
   * A dd or yy of more than the register holds says "Too large to yank"
-    and changes nothing -- but 3000dd (24 K) takes 24 s to say so,
+    and changes nothing -- but 3000dd (24 K) takes 30 s to say so,
     because the lines are taken and then put back.
   * A yank, or a delete of part of a line, between two places that are
     not both in memory rings the bell and does nothing.  yG at line 6000
@@ -294,13 +294,13 @@ What to do instead:
     no size is refused -- and nothing but :e! brings the lines back.
   * To MOVE or COPY a big block, write it to a file and read it back in
     (see YANK AND PUT).  :6000,9000w T.TXT is 31 s for 24 K and
-    :r T.TXT is 31 s.  That is any size, with the block still on the
+    :r T.TXT is 30 s.  That is any size, with the block still on the
     disk afterwards.  To move a block that fits the register, 2500dd
-    and P are quicker (12 s and 27 s); to copy one, 2500yy is not.
+    and P are quicker (12 s and 26 s); to copy one, 2500yy is not.
   * Type :w before a change that cannot be undone.  The file on the disk
     is not touched until the next :w, so :e! then throws the change away,
     and each :w leaves the version before it in NAME.BAK.
-  * A :w is 51 s even with nothing changed.  :x and ZZ write only
+  * A :w is 52 s even with nothing changed.  :x and ZZ write only
     a changed text, so use them to leave.
   * Work from the top of the file down, and go by line number when you
     know it: ^G says where you are, and a line close by costs a second.

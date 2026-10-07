@@ -1259,41 +1259,111 @@ CW_0:
 ;============================================================
 
 ;BOL -- HL(off) -> HL = start-of-line offset (just past the previous LF, or 0).
+; The text is read where it lies, either side of the gap; keeps BC.
 BOL:
-BOL_LP:
-	MOV	A,H
-	ORA	L
-	RZ			; at 0
-	DCX	H		; look at off-1
+	PUSH	B
 	PUSH	H
-	CALL	CHARAT
-	POP	H		; HL = off-1
+	CALL	CUROFF
+	POP	D		; DE = off, HL = the bytes before the gap
+	CALL	CMP16
+	JC	BOL_B
+	JZ	BOL_B
+	PUSH	D
+	XCHG
+	CALL	SUBHD
+	MOV	B,H
+	MOV	C,L		; BC = how far past the gap it is
+	LHLD	GAPEND
+	DAD	B
+	POP	D
+BOL_A:
+	MOV	A,B
+	ORA	C
+	JZ	BOL_B		; back at the gap: the rest is before it
+	DCX	H
+	MOV	A,M
 	CPI	LF
-	JZ	BOL_DN
-	JMP	BOL_LP
-BOL_DN:
-	INX	H		; line starts just after the LF
+	JZ	BOL_X
+	DCX	D
+	DCX	B
+	JMP	BOL_A
+BOL_B:
+	LHLD	TXTBEG
+	DAD	D
+BOL_C:
+	MOV	A,D
+	ORA	E
+	JZ	BOL_X		; at 0
+	DCX	H
+	MOV	A,M
+	CPI	LF
+	JZ	BOL_X
+	DCX	D
+	JMP	BOL_C
+BOL_X:
+	XCHG
+	POP	B
 	RET
 
 ;EOLNL -- HL(off) -> HL = offset of the LF ending this line, or LOGLEN if none.
+; Read the same way; keeps BC.
 EOLNL:
+	PUSH	B
 	PUSH	H
-	CALL	LOGLEN
-	SHLD	WKN
-	POP	H
-ENL_LP:
-	XCHG			; DE = i
-	LHLD	WKN
-	CALL	CMP16		; DE=i vs HL=n: CY iff i < n
-	XCHG			; HL = i, DE = n
-	RNC			; i >= n: no LF on this line
-	PUSH	H
-	CALL	CHARAT
-	POP	H
+	CALL	CUROFF
+	POP	D		; DE = off, HL = the bytes before the gap
+	CALL	CMP16
+	JNC	ENL_A
+	LHLD	GAPBEG
+	MOV	B,H
+	MOV	C,L
+	LHLD	TXTBEG
+	DAD	D
+ENL_B:
+	MOV	A,L
+	SUB	C
+	MOV	A,H
+	SBB	B
+	JNC	ENL_G		; at the gap: on from its far side
+	MOV	A,M
 	CPI	LF
-	RZ			; the LF: HL is its offset
+	JZ	ENL_X
 	INX	H
-	JMP	ENL_LP
+	INX	D
+	JMP	ENL_B
+ENL_A:
+	PUSH	D
+	XCHG
+	CALL	SUBHD
+	XCHG			; DE = how far past the gap it is
+	LHLD	GAPEND
+	DAD	D
+	POP	D
+	JMP	ENL_S
+ENL_G:
+	LHLD	GAPEND
+ENL_S:
+	PUSH	H
+	LHLD	TXTEND
+	MOV	B,H
+	MOV	C,L
+	POP	H
+ENL_C:
+	MOV	A,L
+	SUB	C
+	MOV	A,H
+	SBB	B
+	JNC	ENL_X		; the end of the text
+	MOV	A,M
+	CPI	LF
+	JZ	ENL_X
+	INX	H
+	INX	D
+	JMP	ENL_C
+ENL_X:
+	XCHG
+	POP	B
+	RET
 
 ;NLSTART -- HL(off) -> HL = start of next line (EOLNL+1), or LOGLEN if last.
 NLSTART:
@@ -1618,19 +1688,24 @@ SETFUL:
 
 ;TAILTAB -- A = 1 if a TAB (or any control char) occurs from the cursor to the
 ; end of its line, else 0.
-; Scans forward from the cursor via CHARAT until LF or end of text (no gap move).
+; The tail is read where it lies, after the gap.  Keeps BC.
 ; Gates the ICH insert fast path: a tab after the cursor would re-expand.
 TAILTAB:
+	PUSH	B
 	CALL	CUROFF
-	SHLD	TTI
+	PUSH	H
+	LHLD	TXTEND
+	MOV	B,H
+	MOV	C,L
+	LHLD	GAPEND
+	POP	D		; DE = the offset of the byte at HL
 TT_LP:
-	LHLD	TTI
-	XCHG			; DE = TTI
-	CALL	LOGLEN		; HL = LOGLEN
-	CALL	CMP16		; CY iff TTI < LOGLEN
+	MOV	A,L
+	SUB	C
+	MOV	A,H
+	SBB	B
 	JNC	TT_NO		; reached end of text -> no tab
-	LHLD	TTI
-	CALL	CHARAT
+	MOV	A,M
 	CPI	LF
 	JZ	TT_NO		; end of line -> no tab
 	CPI	CR
@@ -1638,14 +1713,15 @@ TT_LP:
 	CPI	' '
 	JC	TT_YES
 TT_NX:
-	LHLD	TTI
 	INX	H
-	SHLD	TTI
+	INX	D
 	JMP	TT_LP
 TT_YES:
+	POP	B
 	MVI	A,1
 	RET
 TT_NO:
+	POP	B
 	XRA	A
 	RET
 
@@ -7728,9 +7804,7 @@ OPLO:	DW	0		; operator: low offset of the delete range
 OPHI:	DW	0		; operator: high offset of the delete range
 
 CNTV:	DW	0		; motion repeat counter
-TTI:	DW	0		; TAILTAB scan index
 WKI:	DW	0		; scan index
-WKN:	DW	0		; cached LOGLEN
 WKTERM: DW	0		; line terminator offset
 WKBOL:	DW	0		; EOLC scratch: line BOL
 WKCLS:	DB	0		; word motion: class of the current run
