@@ -2252,13 +2252,21 @@ URG_1:
 ;step does the same, with whole lines -- it starts at a line's start and the
 ;bytes end in a line end -- and at the place the first one did (UNDLL0 =
 ;LNDLT there); UNDLC counts the lines.  Anything else and UNDLK is 0FFH.
+;Two more ways of taking a whole line out are known for what they are: steps
+;at one line's start that end with a line only when the last has gone (UNDLK
+;is 3 until then), and one step from a line's END that takes its line end and
+;the next line's text -- the line under it, so UNDLL0 is that line's.
 ;CMD.MAC opens the rows for lines put back, or closes them up, by these.
 URLNQ:
 	MOV	B,A
 	LDA	UNDLK
 	ORA	A
 	JZ	URL_1
-	CMP	B
+	ORI	1		; (2 and 3 are both lines going)
+	MOV	C,A
+	MOV	A,B
+	ORI	1
+	CMP	C
 	JNZ	URL_NO
 	LHLD	UNDLL0
 	XCHG
@@ -2278,7 +2286,44 @@ URL_2:
 	DCX	H
 	MOV	A,M
 	CPI	LF
+	JZ	URL_3
+	;--- not at a line's start.  One step that takes out a line end and
+	;    what follows it as far as the next ('o' and what was typed) is
+	;    the line under that one going, all the same: UNDLL0 as for it ---
+	MOV	A,B
+	CPI	2
 	JNZ	URL_NO
+	LDA	UNDLK
+	ORA	A
+	JNZ	URL_NO
+	LHLD	UNDBO
+	XCHG
+	LHLD	UBEG
+	DAD	D
+	MOV	A,M
+	CPI	CR
+	JZ	URL_B0
+	CPI	LF
+	JNZ	URL_NO
+URL_B0:
+	LHLD	UNDLN
+	XCHG
+	LHLD	GAPEND
+	DAD	D
+	XCHG			; DE = the text after what goes
+	LHLD	TXTEND
+	CALL	CMP16
+	JNC	URL_B1		; (the end of the text)
+	LDAX	D
+	CPI	CR
+	JZ	URL_B1
+	CPI	LF
+	JNZ	URL_NO
+URL_B1:
+	LHLD	UNDLL0
+	INX	H
+	SHLD	UNDLL0
+	JMP	URL_4
 URL_3:
 	LHLD	UNDLN
 	MOV	A,H
@@ -2293,8 +2338,19 @@ URL_3:
 	DCX	H
 	MOV	A,M
 	CPI	LF
-	JNZ	URL_NO
-	INX	H
+	JZ	URL_4
+	MOV	A,B		; steps that take text out at one place take
+	CPI	2		;   what is there each time, so it is the last
+	JNZ	URL_NO		;   of them that has to end with a line: 3
+	INR	B		;   until it does ('O': the text typed goes,
+URL_4:				;   then the line end before it)
+	LHLD	UNDLN
+	XCHG
+	LHLD	UNDBO
+	DAD	D
+	XCHG
+	LHLD	UBEG
+	DAD	D
 	PUSH	H
 	LHLD	UNDBO
 	XCHG

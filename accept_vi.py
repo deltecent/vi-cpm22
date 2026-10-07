@@ -8925,6 +8925,8 @@ RESP = [
     # whole lines put back or taken again: rows open or close, as for 'P'
     ('u of a dd', ['G', 'gg', '3j', 'dd'], 'u', 0.50),
     ('u again (the dd redone)', ['G', 'gg', '3j', 'dd', 'u'], 'u', 0.35),
+    ('u of a p', ['G', 'gg', '3j', 'yyp'], 'u', 0.40),
+    ('u of an o and its text', ['G', 'gg', '3j', 'onew\x1b'], 'u', 0.40),
     # a span out of the line: the terminal closes the cells up
     ('dw', ['3j', '5w'], 'dw', 0.20),
     ('D', ['3j', '5w'], 'D', 0.15),
@@ -9061,7 +9063,7 @@ def undo_paint():
     cases = []
     for ln, tag, ats in ((2, 'plain', ('0w', '$')), (5, 'wrapped', ('0w', '$')),
                          (6, 'tabs', ('0w',)), (8, 'one char', ('0',)),
-                         (9, 'empty', ('0',))):
+                         (9, 'empty', ('0',)), (39, 'last', ('0w',))):
         for at in ats:
             for ch in changes:
                 cases.append((ln, tag, at, ch, ''))
@@ -9101,7 +9103,9 @@ def undo_paint():
                 lim = {('dd', 'undo'): 200, ('dd', 'redo'): 200,
                        ('yyP', 'undo'): 200, ('yyP', 'redo'): 200,
                        ('2dd', 'undo'): 300, ('3dd', 'undo'): 400,
-                       ('yy2P', 'redo'): 300}.get((ch, what))
+                       ('yy2P', 'redo'): 300, ('yyp', 'undo'): 200,
+                       ('otext\x1b', 'undo'): 200,
+                       ('Onew\x1b', 'undo'): 200}.get((ch, what))
                 if tag == 'plain' and between == '' and lim:
                     check(f'{name}: {sent} bytes sent, the lines and not '
                           f'the screen ({lim})', sent <= lim)

@@ -1135,19 +1135,18 @@ VC_UNDO:
 ;VU_LNS -- more than a line changed.  Whole lines put back, the cursor on the
 ; first of them, are rows opened there as a put opens them (R_ILIN; SCDRAW
 ; wants them at the line the cursor was on or right under it).  One whole
-; line taken from under the cursor, a line coming up into its place, is 'dd'
-; (R_DLIN).  Anything else is the screen.
+; line taken from under the cursor is 'dd' (R_DLIN), whether the next comes
+; up into its place or the cursor goes to the line over it.  Anything else
+; is the screen.
 VU_LNS:
 	CALL	SETFUL
-	LHLD	UNDLL0
-	XCHG
-	LHLD	LNDLT
-	CALL	CMP16
-	RNZ
 	LDA	UNDLC
 	ORA	A
 	RZ
 	MOV	B,A
+	LHLD	UNDLL0
+	XCHG
+	LHLD	LNDLT		; DE = where the lines start, HL = the cursor
 	LDA	UNDLK
 	CPI	1
 	JZ	VU_IN
@@ -1155,13 +1154,23 @@ VU_LNS:
 	RNZ
 	DCR	B
 	RNZ
+	MOV	A,D
+	ORA	E
+	RNZ			; (not the line the cursor was on)
 	MOV	A,H
 	ORA	L
+	JZ	VU_DL
+	INX	H		; ... or the cursor went onto the line over it:
+	MOV	A,H		;   a line put under the cursor's, or opened
+	ORA	L		;   there, and taken back
 	RNZ
+VU_DL:
 	MVI	A,R_DLIN
 	STA	RINTENT
 	RET
 VU_IN:
+	CALL	CMP16
+	RNZ
 	CALL	SETILN
 	MOV	A,B
 	STA	ILN

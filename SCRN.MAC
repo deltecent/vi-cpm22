@@ -590,7 +590,21 @@ SI_2:
 	;--- a move to another line: the text scrolled SCRLN lines ---
 SD_OL:
 	CPI	R_MOVE
+	JZ	SD_OM
+	CPI	R_DLIN		; the line went, and the cursor is on the one
+	JNZ	SCFULL		;   over it ('u' of a 'p'): the edit starts
+	LHLD	LYDLT		;   under that line's rows
+	INX	H
+	MOV	A,H
+	ORA	L
 	JNZ	SCFULL
+	MOV	A,B
+	ADD	D
+	MOV	B,A
+	MOV	C,A
+	MVI	D,0
+	JMP	SD_AN
+SD_OM:
 	LHLD	SCRLN
 	MOV	A,H
 	ORA	L
