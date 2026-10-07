@@ -48,7 +48,7 @@ When two of these pull against each other, the higher one wins.
    full screen of ordinary lines and fails when one takes longer than its
    budget, in a 3 K file and a 116 K one alike. A key joins that group when it
    meets objective 2. The cursor keys, a typed char, `x`, `r` and insert's BS
-   are in it; the one-line scroll, `dd`, `o` and `J` are not yet, and are the
+   are in it, mid-line and in front of a TAB; the one-line scroll, `dd`, `o` and `J` are not yet, and are the
    work in hand.
 
 ---
@@ -204,10 +204,10 @@ move would break:
               pointer row, text + gap, Q-buffer (the yank register), undo region
     BUFEND  = BDOS base - 1   (B605H with a 56 K CP/M; see section 1)
 
-In this build the `.COM` file is 20736 bytes (162 records). **The size that
+In this build the `.COM` file is 20864 bytes (163 records). **The size that
 matters is a 4 K BLOCK BOUNDARY**, because that is what the 8 MB disk
 allocates in: 20480 bytes occupy five blocks and one byte more occupies six.
-This build is past that line by 256 bytes, by decision (objective 6: the
+This build is past that line by 384 bytes, by decision (objective 6: the
 bytes went on keys that answer at once), and the next boundary is **24576
 bytes**, so everything between here and there costs the same 24 K on disk.
 What each byte does cost is arena: the yank register and the room to edit in.

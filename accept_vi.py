@@ -8899,6 +8899,9 @@ RESP = [
     ('r', ['3j', '5w'], 'rZ', 0.12),
     ('BS in insert', ['3j', '5w', 'iQQ'], '\x08', 0.10),
     ('ESC from insert', ['3j', '5w', 'iQ'], '\x1b', 0.10),
+    ('a char typed before a TAB', ['3j', 'w', 'i'], 'Z', 0.10),
+    ('x before a TAB', ['3j', 'w'], 'x', 0.10),
+    ('BS before a TAB', ['3j', 'w', 'iQQ'], '\x08', 0.10),
 ]
 
 
@@ -8936,7 +8939,11 @@ def cell_paint():
     lines = (['plain line %02d of ordinary text, nothing special about it' % i
               for i in range(4)]
              + ['E' * 78, 'F' * 79, 'G' * 80, 'H' * 81, 'W' * 200,
-                '\tMOV\tA,M\t\t; a comment after two tabs', 'x', '']
+                '\tMOV\tA,M\t\t; a comment after two tabs', 'x', '',
+                'ABCDEFG\tX\tthe TAB is one cell wide',
+                'ABCDEFGH\tX\tthe TAB is eight wide',
+                '\tJNZ\tLBL00001\t; no -- go round again until it is done',
+                'LBL1:\tLXI\tH,BUFFER+1\t; point at it']
              + ['tail %02d' % i for i in range(30)])
     data = ''.join(l + '\r\n' for l in lines).encode()
 
@@ -8953,6 +8960,18 @@ def cell_paint():
                       (ln, tag, at, 'RZY\x08\x08\x1b', None),
                       (ln, tag, at, 'iZY\x08\x1b', None),
                       (ln, tag, at, 'aZY\x08\x08\x1b', None)]
+    # a char typed or deleted in front of a TAB: the TAB takes up the
+    # difference, or (at a tab stop) cannot
+    for ln, tag in ((10, 'tabs'), (13, 'TAB 1 wide'), (14, 'TAB 8 wide'),
+                    (15, 'asm'), (16, 'label')):
+        for at in ('0', '0l', '03l', '0w', '0ww', '$'):
+            cases += [(ln, tag, at, 'x', 40 if at == '0w' else None),
+                      (ln, tag, at, '3x', None),
+                      (ln, tag, at, '9x', None),
+                      (ln, tag, at, 'iZ\x1b', 112 if at == '0w' else None),
+                      (ln, tag, at, 'iZY\x08\x1b', None),
+                      (ln, tag, at, 'iZYXWVUTS\x1b', None),
+                      (ln, tag, at, 'aZ\x08\x08\x1b', None)]
     e = Editor(data)
     try:
         for ln, tag, at, keys, budget in cases:
@@ -8974,7 +8993,7 @@ def cell_paint():
             check(f'{name}: the screen is what a full repaint draws '
                   f'(cursor {v1.row},{v1.col}, ^L {v2.row},{v2.col})',
                   rows(v2) == s1 and (v2.row, v2.col) == (v1.row, v1.col))
-            if budget and tag == 'plain':
+            if budget and tag in ('plain', 'asm'):
                 check(f'{name}: {sent} bytes sent, not the row ({budget})',
                       sent <= budget)
             e.key('u')

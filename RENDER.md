@@ -158,7 +158,7 @@ dispatch, so a handler that says nothing gets a full repaint.
 | `R_MOVE` | `SETMOV`, `GP_ONS`, `EXERR`, `^G` | the cursor moved; nothing was edited |
 | `R_LINE` | `SETLIN` | only the cursor's line changed |
 | `R_ICH` | insert of a printable char (+ `ICHAPP`); `r`, replace mode (`SETCEL`) | one char went in at the cursor, or took one cell's place |
-| `R_DCH` | `x`, insert BS (+ `DCHN` = cells, `DCHBS`) | chars went at the cursor (BS: left of it); no TAB or control char after it |
+| `R_DCH` | `x`, insert BS (+ `DCHN` = cells, `DCHBS`) | chars went at the cursor (BS: left of it); `DCHBS` bit 1: a TAB follows them |
 | `R_DLIN` | single `dd` | the cursor's line was deleted |
 | `R_ILIN` | `SETILN` (+ `ILN` = lines, `ILABOV`) | lines opened at the cursor |
 | `R_JOIN` | `SETJON` | the line below joined onto the cursor's |
@@ -250,6 +250,8 @@ there is no row-by-row ripple, and no special path for long lines (the target is
 | … landing off the screen | `R_FULL` (`GP_SET`) | full — the window may have paged |
 | Count digits, `m`, a pending `d`/`c`/`y`, a key that is no command, `^G`, an ex error | `R_MOVE` | cursor only |
 | `x`, no TAB or control char after the cursor, on the line's last row | `R_DCH` | DCH |
+| `x`, insert BS or a typed char with a TAB after the cursor, and the TAB still ends at the same stop | `R_DCH` / `R_ICH` (`ICHAPP` 3) | the chars as far as the TAB, blanks for the TAB, the cursor address (`SEGQ`, `SEGO`) |
+| … and the TAB does not end there (it was one cell wide, or closes onto the stop before) | the same | the row |
 | Insert BS over a printable char, no TAB or control char after the cursor | `R_DCH` + `DCHBS` | BS + DCH |
 | `r{c}`, `R` typing, a printable char for a printable one (or at the line's end) | `R_ICH` + `ICHAPP` | the char (`r`: + the cursor address) |
 | `x`, `r{c}`, `R` typing, insert BS otherwise; `~` | `R_LINE` | the line, from the cursor's row down |

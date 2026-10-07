@@ -1687,7 +1687,7 @@ SETFUL:
 	RET
 
 ;TAILTAB -- A = 1 if a TAB (or any control char) occurs from the cursor to the
-; end of its line, else 0.
+; end of its line, else 0; TTI = its offset when there is one.
 ; The tail is read where it lies, after the gap.  Keeps BC.
 ; Gates the ICH insert fast path: a tab after the cursor would re-expand.
 TAILTAB:
@@ -1717,6 +1717,8 @@ TT_NX:
 	INX	D
 	JMP	TT_LP
 TT_YES:
+	XCHG
+	SHLD	TTI
 	POP	B
 	MVI	A,1
 	RET
@@ -4399,12 +4401,29 @@ VX_DEL:
 	PUSH	H
 	CALL	TAILTAB
 	POP	H
-	ORA	H		; (or more of them than a byte counts)
+	MOV	B,A
+	MOV	A,H		; (more of them than a byte counts)
+	ORA	A
 	JNZ	VX_D1
 	MOV	A,L
 	STA	DCHN
-	XRA	A
-	STA	DCHBS
+	MOV	A,B
+	ADD	A
+	STA	DCHBS		; 2: a TAB follows, to take the cells up
+	JZ	VX_D0
+	MOV	A,L		; ... if it is past what goes, and can
+	CPI	8
+	JNC	VX_D1
+	PUSH	H
+	LHLD	WKI
+	XCHG
+	LHLD	TTI
+	CALL	SUBHD
+	XCHG			; DE = the chars before it
+	POP	H
+	CALL	CMP16
+	JC	VX_D1
+VX_D0:
 	MVI	A,R_DCH
 	STA	RINTENT
 VX_D1:
@@ -5521,19 +5540,21 @@ VIINS:
 	CALL	PUTGAP		; insert the byte at the cursor
 	CALL	MARKMOD
 	CALL	SETLIN		; base: this row changed -> whole-line redraw
-	;--- can the cheaper ICH be used?  Only a plain printable char whose line
-	;    has no TAB after the cursor (a following tab's expansion would shift,
-	;    so a one-cell ICH would be wrong); else keep the whole-line R_LINE. ---
+	;--- can the cheaper ICH be used?  Only for a plain printable char.  With
+	;    a TAB after the cursor nothing past the TAB moves, so long as the
+	;    TAB can give the cell up: the chars as far as it are the paint. ---
 	MOV	A,C
 	CPI	' '
 	RC			; control char -> keep R_LINE
 	CPI	DEL
 	RNC			; DEL / high bytes -> keep R_LINE
 	CALL	TAILTAB		; A = 1 if a TAB is in the tail
-	ORA	A
-	RNZ			; tab after cursor -> keep R_LINE
+	MOV	B,A
 	MVI	A,R_ICH
 	STA	RINTENT
+	MVI	A,3		; a TAB there: it takes the cell up if it can
+	DCR	B		;   (SCRN.MAC knows where it stands)
+	JZ	VI_ICH
 	;--- and does the row need a cell opened at all?  ICH (ESC[1@) exists to
 	;    shift the rest of the row right, out of the way; with nothing after
 	;    the cursor there is nothing to shift, and the char typed into the
@@ -5577,11 +5598,11 @@ VI_BS:
 	CALL	PLAINQ		; ... or, when it is one cell and no TAB follows
 	JNC	VI_BSJ		;   to be drawn up short, let the terminal close
 	CALL	TAILTAB		;   the cell up (R_DCH, from the left of the
-	ORA	A		;   cursor)
-	JNZ	VI_BSJ
+	ADD	A		;   cursor) -- or the TAB that follows take it
 	INR	A
+	STA	DCHBS		; 1, and 2 with it for the TAB
+	MVI	A,1
 	STA	DCHN
-	STA	DCHBS
 	MVI	A,R_DCH
 	STA	RINTENT
 VI_BSJ:
@@ -7804,6 +7825,7 @@ OPLO:	DW	0		; operator: low offset of the delete range
 OPHI:	DW	0		; operator: high offset of the delete range
 
 CNTV:	DW	0		; motion repeat counter
+TTI:	DW	0		; TAILTAB scan index
 WKI:	DW	0		; scan index
 WKTERM: DW	0		; line terminator offset
 WKBOL:	DW	0		; EOLC scratch: line BOL

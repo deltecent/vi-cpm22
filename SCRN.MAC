@@ -747,6 +747,17 @@ SB_3:
 ; is under it still, so it is sent and the cursor put back on it.
 SC_ICH:
 	LDA	ICHAPP
+	CPI	3
+	JNZ	SC_IC0
+	MVI	D,0FFH		; a TAB follows, and went right one
+	LDA	SCOL
+	CALL	SEGQ
+	LHLD	GAPBEG
+	DCX	H
+	MOV	A,M
+	CALL	OUTCH
+	JMP	SEGO
+SC_IC0:
 	CPI	2
 	JNZ	SC_IC1
 	LHLD	GAPEND
@@ -772,6 +783,24 @@ SC_ICC:
 ; steps back onto it first, and is then where it belongs.
 SC_DCH:
 	LDA	DCHBS
+	ANI	2
+	JZ	SC_DC1
+	LDA	DCHN		; a TAB follows, and came left that many
+	MOV	D,A
+	LDA	DCHBS
+	RAR
+	LDA	OLDSC+1
+	JNC	SC_DC0
+	DCR	A
+SC_DC0:
+	CALL	SEGQ
+	LDA	DCHBS
+	RAR
+	MVI	A,BS
+	CC	OUTCH
+	JMP	SEGO
+SC_DC1:
+	LDA	DCHBS
 	ORA	A
 	MVI	A,BS
 	CNZ	OUTCH
@@ -789,6 +818,78 @@ SC_DCH:
 	LHLD	SROW
 	CALL	CMP16
 	RZ
+	JMP	SCURS
+
+;SEGQ -- a TAB follows the edit, and nothing past it has moved if it ends
+; where it did.  A = the screen column of the first char after the edit, D =
+; the cells the TAB came left (0FFH: it went right one).  If it ends there
+; still, B = the chars before it and C = the cells it takes now: all there is
+; to paint.  If not -- or the chars before it are not plain ones, or it runs
+; past the row -- the row is painted, and the return is not taken.
+SEGQ:
+	MOV	C,A
+	LDA	NCOLS
+	SUB	C
+	INR	A
+	MOV	B,A		; B = the cells from there to the row's end
+	LXI	H,SCOL
+	LDA	CURDCL
+	SUB	M
+	ADD	C
+	MOV	E,A		; E = its column in the line (the low bits)
+	LHLD	GAPEND
+	MVI	C,0
+SQ_1:
+	MOV	A,M
+	CPI	TAB
+	JZ	SQ_2
+	CPI	' '
+	JC	SQ_NO
+	CPI	DEL
+	JNC	SQ_NO
+	INX	H
+	INR	E
+	INR	C
+	JNZ	SQ_1
+SQ_NO:
+	POP	H
+	JMP	SD_PT
+SQ_2:
+	MOV	A,E
+	ANI	7
+	MOV	E,A
+	ADD	D		; where it was: under the same stop?
+	CPI	8
+	JNC	SQ_NO
+	MVI	A,8
+	SUB	E
+	MOV	E,A		; E = the TAB's cells
+	ADD	C
+	DCR	A
+	CMP	B
+	JNC	SQ_NO
+	MOV	B,C
+	MOV	C,E
+	RET
+
+;SEGO -- send them: the B chars after the cursor and C blanks, and the cursor
+; back where it belongs.
+SEGO:
+	LHLD	GAPEND
+SE_1:
+	MOV	A,B
+	ORA	A
+	JZ	SE_2
+	MOV	A,M
+	CALL	OUTCH
+	INX	H
+	DCR	B
+	JMP	SE_1
+SE_2:
+	MVI	A,' '
+	CALL	OUTCH
+	DCR	C
+	JNZ	SE_2
 	JMP	SCURS
 
 ;SCFULL -- paint edit rows 1..NEDIT in place, each cleared with ESC[K; a line
