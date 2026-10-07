@@ -62,6 +62,7 @@
 	EXTRN	LINPSB, RGET0, RDGET	; BUF.MAC -- WM LINPOSB / RGET0, RGET + EOF check
 	EXTRN	LNDLT			; BUF.MAC -- lines the cursor moved since the last frame
 	EXTRN	WRLIM, OUTPOS		; PAGE.MAC -- spill limit / records before TXTBEG
+	EXTRN	PGTOPM			; PAGE.MAC -- times the pager moved the text
 	EXTRN	AUXCNT, DIRFLG		; PAGE.MAC -- line-move state LINPSB writes
 	EXTRN	CMDCNT, CURRW		; CMD.MAC -- vi count (LINPSB writes it) / clamped row
 	EXTRN	EDMODE			; CMD.MAC -- command / insert mode (tab cursor)
@@ -1004,6 +1005,8 @@ LAYOUT:
 	SHLD	SVAUX
 	LDA	DIRFLG
 	STA	SVDIR
+	CALL	LYQK		; a move about a screen that stands: no more to do
+	JC	LY_TC
 	CALL	CURRW		; A = WINROW + LNDLT, clamped to the edit rows
 	STA	LYROW
 	STA	LYSVR
@@ -1167,6 +1170,17 @@ LY_NX:
 	LHLD	OLDWR
 	DAD	D
 	SHLD	SCRLN
+	MVI	A,1		; the table is the screen's own, and LYQK may go
+	STA	LYOK		;   by it while the text stays where it is
+	CALL	LYTOPP
+	XCHG
+	LHLD	TXTBEG
+	XCHG
+	CALL	SUBHD		; (kept from TXTBEG: the text is moved about)
+	SHLD	LYTOP
+	LHLD	PGTOPM
+	SHLD	LYPG
+LY_TC:
 	CALL	TABCUR
 	LHLD	SVCNT
 	SHLD	CMDCNT
@@ -1174,6 +1188,110 @@ LY_NX:
 	SHLD	AUXCNT
 	LDA	SVDIR
 	STA	DIRFLG
+	RET
+
+;LYQK -- the layout of a key that only moved the cursor, in command mode, to
+; a line the screen shows whole already: the text on every row is what it
+; was, so the row table is too, and none of it is read again.  What moves
+; with the cursor is found from the cursor: the lines above it (WINROW), the
+; table's entry for its line (HTCUR), the rows over it (LYABV), where the top
+; line is from here (TOPLEN, WRLIM), and its column, for which its own line is
+; measured as far as the cursor and no farther.
+;   out: CY when that was the layout; NC, and nothing changed, when the screen
+;        has to be measured: the table is not the screen's (LYOK), the pager
+;        moved the text (PGTOPM), the key did more than move (RINTENT), the command placed the line (PLACE), the
+;        cursor's line is off the screen or cut, or the top line is taller
+;        than the screen.
+LYQK:
+	LDA	LYOK
+	ORA	A
+	RZ
+	LDA	RINTENT
+	CPI	R_MOVE
+	JNZ	LQK_N
+	LDA	EDMODE
+	CPI	EM_CMD
+	JNZ	LQK_N
+	LHLD	SKIPR
+	LDA	PLACE
+	ORA	H
+	ORA	L
+	LXI	H,LYXE
+	ORA	M
+	LXI	H,TALLF
+	ORA	M
+	JNZ	LQK_N
+	LHLD	PGTOPM		; (and the text in memory starts where it did:
+	XCHG			;   the pager has not moved the window since)
+	LHLD	LYPG
+	CALL	CMP16
+	JNZ	LQK_N
+	LHLD	WINROW
+	XCHG
+	LHLD	LNDLT
+	DAD	D		; HL = the lines that would be above it
+	MOV	A,H
+	ORA	A
+	JNZ	LQK_N		; over the top line, or far under the last
+	LDA	SCBOT
+	CMP	L		; CY iff it is under the last line shown
+	JC	LQK_N
+	SHLD	WINROW
+	LHLD	LNDLT
+	SHLD	LYDLT
+	LDA	HTCUR
+	ADD	L
+	STA	HTCUR
+	LXI	H,0
+	SHLD	LNDLT
+	SHLD	SCRLN
+	LHLD	TXTBEG		; the top line is as far into the text in
+	XCHG			;   memory as it was
+	LHLD	LYTOP
+	DAD	D
+	CALL	G2P
+	SHLD	TOPLEN
+	INR	H
+	SHLD	WRLIM
+	LXI	H,0		; the cursor's line, as far as the cursor
+	CALL	LINPSB
+	PUSH	H
+	CALL	G2P
+	SHLD	CBOL
+	MOV	B,H
+	MOV	C,L
+	POP	H
+	CALL	LNW
+	XCHG
+	SHLD	CURDCL
+	CALL	DIVN
+	MOV	A,C
+	STA	CSRAW		; the row of its line the cursor is on
+	LDA	WINROW
+	CALL	SUMT
+	MOV	L,A
+	MVI	H,0
+	SHLD	LYABV
+	LDA	HTCUR
+	CALL	HTE
+	MOV	A,M
+	STA	LYTSH
+	INX	H
+	MOV	B,M
+	LDA	WINROW
+	LXI	H,SCBOT
+	CMP	M		; CY iff a line shows under it
+	MVI	A,0
+	JNC	LQK_1
+	MOV	A,B
+LQK_1:
+	STA	NXTR
+	CALL	RGET0		; the char under the cursor in memory (TABCUR)
+	CALL	RDGET
+	STC
+	RET
+LQK_N:
+	XRA	A
 	RET
 
 ;LYMQ -- Z iff the cursor's line is to be placed afresh: mid-screen (PLACE =
@@ -1546,6 +1664,7 @@ HTBLD:
 	STA	HTLIM
 	XRA	A
 	STA	HTN
+	STA	LYOK		; (not the screen's until LAYOUT says so)
 	STA	HTEOF
 	STA	HTBOF
 	STA	LYXE
@@ -2117,6 +2236,9 @@ EDP:	DB	0		; ... the first of them to draw
 PEND:	DB	0		; PRNG: the row to stop before
 TALLF:	DB	0		; 1 = the top line is taller than the screen
 SCRLN:	DW	0		; lines the text moved up this frame (signed)
+LYOK:	DB	0		; 1 = the row table is the screen's, as it stands
+LYTOP:	DW	0		; ... the bytes in memory before the top line then
+LYPG:	DW	0		; ... and PGTOPM
 FORCEF: DB	0		; 1 = a full frame is not finished -> repaint in full
 OEDMOD: DB	EM_CMD		; the mode the bottom row last showed (0FFH: unknown)
 

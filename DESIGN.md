@@ -20,6 +20,39 @@ detailed documents instead of repeating them:
 
 ---
 
+## 0. Objectives, in order
+
+When two of these pull against each other, the higher one wins.
+
+1. **The text is never damaged.** Edits are right anywhere in a file of up to
+   about 100 K, across paging, and `:w` writes exactly what the screen shows.
+2. **A key answers at once.** On a 2 MHz 8080 at 9600 baud, with lines that
+   fit the width of the screen (80 to 132 columns), moving the cursor and
+   typing must feel instant. A key costs in proportion to what it changes:
+   not to how much text is on the screen, and not to the size of the file.
+   Only a command that has to travel through the file (`G`, a far search,
+   `:w`) may take time.
+3. **It behaves like vi.** A supported command does what vim does, and the
+   screen is vim's.
+4. **Few mechanisms, shared.** One path for each kind of change to the text
+   or the screen, not a special case a command. WordMaster's engine underneath
+   is kept as it is.
+5. **Lines that wrap work, and may be slower.** A line wider than the screen
+   is shown, edited and written correctly however long it is. Nothing is built
+   only to make such lines quick.
+6. **Size comes after those.** Every byte of program is a byte less of arena,
+   so it still matters, and 20 K on disk is preferred; a responsive editor
+   that needs the next 4 K is the better editor.
+7. **Proven on the assembled editor**, on files of 0 to 100 K, test first.
+   That includes time: `accept_vi.py` group `resp` runs each everyday key on a
+   full screen of ordinary lines and fails when one takes longer than its
+   budget, in a 3 K file and a 116 K one alike. A key joins that group when it
+   meets objective 2. The cursor keys are in it; a typed char, `x`, the
+   one-line scroll and the single-line edits are not yet, and are the work in
+   hand.
+
+---
+
 ## 1. The constraints everything follows from
 
 These are facts about the machine, not preferences. Most decisions below trace
@@ -437,6 +470,16 @@ Detail is in `RENDER.md`. The design decisions:
   rule lives in `HTBLD`, where the cursor's line is read, and the layout gives
   the number up in one place: when the cursor changed line or the command
   placed it.
+- **A key that only moves the cursor measures nothing.** While the text and
+  the window stand, the row table is still the screen's, so a move in command
+  mode to a line the screen already shows whole (`LYQK`) reads the cursor's own
+  line as far as the cursor, for its column, and no other text. It used to
+  cost a reading of every line on the screen: 0.25 s a key on a full screen
+  of 80-column lines, now 0.05 s by the same clock, of which the cursor
+  address on the wire and the harness are most. The table is the screen's
+  from the end of one full layout (`LYOK`) until anything else measures into
+  it; the top line is kept as its distance from the start of the text in
+  memory, which holds until the pager moves the window (`PGTOPM`).
 - **Where vim counts screen rows, so does this.** Once lines differ in height
   vim's `^F ^B ^D ^U`, its `M`, and its choice between scrolling up to a line
   below the screen and centring it are all sums of rows, and they are

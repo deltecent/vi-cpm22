@@ -92,6 +92,23 @@ build a wider one with the same routine.
   `TALLF`; and the window facts the screen motions use — `SCBOT` (the last line shown,
   counted as `WINROW` is), `SCEOF`/`SCBOF` (the file's end / start is on the screen).
 
+**A move measures nothing (`LYQK`).** All of the above reads every line on the screen,
+which on a full screen is most of a quarter of a second. A key that only moved the cursor
+does not need it: the text on every row is what it was, so the row table is too. `LAYOUT`
+therefore asks `LYQK` first, and when
+
+- the table is the screen's own (`LYOK`: set at the end of a full layout, cleared when
+  anything else measures into it) and the pager has not moved the window since (`PGTOPM`),
+- the key's intent is `R_MOVE`, in command mode, with no `PLACE` request,
+- the cursor's line is one the screen shows whole (`0 <= WINROW + LNDLT <= SCBOT`),
+- and no line taller than the screen is involved (`SKIPR`, `TALLF`, `LYXE` all clear),
+
+the layout is arithmetic: `WINROW` and `HTCUR` move by `LNDLT`, `LYABV` is a sum down the
+table, the top line is as far into the text in memory as it was (`LYTOP`), and the one
+thing read is the cursor's own line from its start to the cursor, for `CBOL` and `CURDCL`.
+`SCRLN` is 0, so `SCDRAW` sends the cursor and nothing else. Any other key takes the full
+layout, which makes the table the screen's again.
+
 `LINPSB` runs WM's `SETCNT`, so `LAYOUT` saves and restores `CMDCNT`, `AUXCNT` and `DIRFLG`
 around itself.
 

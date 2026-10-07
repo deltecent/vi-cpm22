@@ -8834,6 +8834,76 @@ def run_for(e, seconds):
         e.s._run(timeout_ms=100)
 
 
+def resp_lines(n):
+    """*n* lines of the kind this editor is for: assembler source, TABs in
+    it, 5 to 75 columns wide.  A screen of these is about 1,100 bytes."""
+    out = []
+    for i in range(n):
+        m = i % 6
+        if m == 0:
+            out.append(';----- routine %05d: move the block and count what '
+                       'is left ----------' % i)
+        elif m == 1:
+            out.append('LBL%05d:\tLXI\tH,BUFFER+%d\t; point at the next '
+                       'record in the table' % (i, i % 200))
+        elif m == 2:
+            out.append('\tMOV\tA,M\t\t; fetch the byte and test it against '
+                       'the limit value')
+        elif m == 3:
+            out.append('\tCPI\t%d\t\t; is it the end marker for this pass of '
+                       'the loop?' % (i % 250))
+        elif m == 4:
+            out.append('\tJNZ\tLBL%05d\t; no -- go round again until the '
+                       'count runs out' % (i - 3))
+        else:
+            out.append('\tRET')
+    return ''.join(l + '\r\n' for l in out).encode()
+
+
+# What a key may take, in emulated seconds on the 2 MHz 8080 at 9600 baud,
+# with a full screen of ordinary lines (resp_lines).  The clock runs from the
+# key to the editor asking for the next one, as the harness sees it: that
+# reads about 0.06 s for a key that does nothing at all, so a budget of 0.10
+# is 0.04 s of the editor's own time.  (setup keys, the key, the budget)
+RESP = [
+    ('j', ['5j'], 'j', 0.10),
+    ('k', ['5j'], 'k', 0.10),
+    ('l', ['5j'], 'l', 0.10),
+    ('h', ['5j', '$'], 'h', 0.10),
+    ('w', ['5j'], 'w', 0.10),
+    ('b', ['5j', '$'], 'b', 0.10),
+    ('$', ['5j'], '$', 0.10),
+    ('0', ['5j', '$'], '0', 0.10),
+    ('j, eight lines down the screen', ['12j'], 'j', 0.10),
+    ('k, on the bottom row', ['L'], 'k', 0.10),
+]
+
+
+def resp_cmds():
+    """A key answers in the time its own work takes -- not the time it takes
+    to read the screen over again, and not longer in a big file.  Every key
+    here leaves the text and the window where they were."""
+    for label, data in (('3 K', resp_lines(60)), ('116 K', resp_lines(2100))):
+        for name, setup, key, budget in RESP:
+            e = Editor(data)
+            try:
+                for k in setup:
+                    e.s.send(k)
+                    idle(e)
+                took = 0
+                for ch in key:
+                    t0 = tstates(e)
+                    e.s._run(input=ch)
+                    took += tstates(e) - t0
+                idle(e)
+                took /= 2e6
+                print(f'  {label:>6} {name!r:36} {took:.3f} s', flush=True)
+                check(f'resp {label}: {name!r} answers in {budget:.2f} s '
+                      f'(took {took:.3f})', took <= budget)
+            finally:
+                e.close()
+
+
 def brk_cmds():
     """ESC abandons a search or a long move: the cursor and the screen go back
     to where the command started, the bottom row says so, and whatever was
@@ -9800,6 +9870,9 @@ def main():
     if not args or 'vim' in args or 'brk' in args:
         print('\n=== ESC abandons a search or a long move ===', flush=True)
         brk_cmds()
+    if not args or 'vim' in args or 'resp' in args:
+        print('\n=== a key answers at once ===', flush=True)
+        resp_cmds()
     if not args or 'vim' in args or 'wrap' in args:
         print('\n=== long lines wrap ===', flush=True)
         wrap_like_vim()
