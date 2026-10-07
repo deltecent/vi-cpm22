@@ -8910,6 +8910,15 @@ RESP = [
     ('a char typed before a TAB', ['3j', 'w', 'i'], 'Z', 0.10),
     ('x before a TAB', ['3j', 'w'], 'x', 0.10),
     ('BS before a TAB', ['3j', 'w', 'iQQ'], '\x08', 0.10),
+    # a line comes or goes: the rows under it move, one is new.  ('G' 'gg'
+    # first, so that the file's end is not read for the first time here.)
+    ('dd', ['G', 'gg', '3j'], 'dd', 0.55),
+    ('dd, low on the screen', ['G', 'gg', '18j'], 'dd', 0.55),
+    ('o', ['G', 'gg', '3j'], 'o', 0.40),
+    ('O', ['G', 'gg', '3j'], 'O', 0.40),
+    ('<CR> typed mid-line', ['G', 'gg', '3j', '5w', 'i'], '\r', 0.40),
+    ('J', ['G', 'gg', '3j'], 'J', 0.45),
+    ('p of a line', ['G', 'gg', '3j', 'yy'], 'p', 0.45),
 ]
 
 

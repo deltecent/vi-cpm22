@@ -308,11 +308,11 @@
                                 ;--- the four things every paint does, each written once ------------------
                                 ;CHIDE -- hide the cursor (a paint brackets itself in CHIDE .. SCURS).
   0080'                         CHIDE:
-  0080'   21 0F4D'              	LXI	H,SHIDE
+  0080'   21 0FC4'              	LXI	H,SHIDE
   0083'   C3 0025'              	JMP	OUTSTR
                                 ;CRGRS -- put the scroll region back to the whole screen.
   0086'                         CRGRS:
-  0086'   21 0F5B'              	LXI	H,SREGRS
+  0086'   21 0FD2'              	LXI	H,SREGRS
   0089'   C3 0025'              	JMP	OUTSTR
                                 ;GOROW1 -- A = a 1-based row: address its column 1 and clear it.  Falls
                                 ; through to CEKL, which is that clear on its own.
@@ -322,7 +322,7 @@
   008F'   CD 0064'              	CALL	GOTOXY
                                 ;CEKL -- clear from the cursor to the end of its row (ESC[K).
   0092'                         CEKL:
-  0092'   21 0F3C'              	LXI	H,SEK
+  0092'   21 0FB3'              	LXI	H,SEK
   0095'   C3 0025'              	JMP	OUTSTR
                                 ;PRNG -- paint the edit rows from B up to (not including) C, counted from 0:
                                 ; each cleared (ESC[K), the text on as many rows as its lines take, the fill
@@ -336,15 +336,15 @@
   0098'   78                    	MOV	A,B
   0099'   B9                    	CMP	C
   009A'   D0                    	RNC
-  009B'   32 0FDA'              	STA	PROWN
+  009B'   32 1053'              	STA	PROWN
   009E'   79                    	MOV	A,C
-  009F'   32 0FA4'              	STA	PEND
-  00A2'   3A 0F88'              	LDA	TXEND
+  009F'   32 101B'              	STA	PEND
+  00A2'   3A 0FFF'              	LDA	TXEND
   00A5'   3D                    	DCR	A
   00A6'   B8                    	CMP	B		; CY iff row B is past the text
   00A7'   DA 00E8'              	JC	PG_GO
   00AA'   C5                    	PUSH	B
-  00AB'   CD 0D7D'              	CALL	RDTOP
+  00AB'   CD 0DCD'              	CALL	RDTOP
   00AE'   CD 0560'              	CALL	HTTOP		; HL -> the top line's entry
   00B1'   C1                    	POP	B
   00B2'   11 0000               	LXI	D,0		; D = the rows above the line, E = the lines
@@ -371,27 +371,27 @@
   00CA'   21 0000               	LXI	H,0
   00CD'   B7                    	ORA	A
   00CE'   C2 00D4'              	JNZ	PG_K
-  00D1'   2A 0F84'              	LHLD	SKIPR		; ... and, for the top line, those off the top
+  00D1'   2A 0FFB'              	LHLD	SKIPR		; ... and, for the top line, those off the top
   00D4'                         PG_K:
   00D4'   09                    	DAD	B
-  00D5'   22 0FDB'              	SHLD	PSKN
-  00D8'   21 0F82'              	LXI	H,WINROW	; at the cursor's line or under it: read on from
+  00D5'   22 1054'              	SHLD	PSKN
+  00D8'   21 0FF9'              	LXI	H,WINROW	; at the cursor's line or under it: read on from
   00DB'   BE                    	CMP	M		;   that line, not down the screen to it
   00DC'   DA 00E5'              	JC	PG_S
   00DF'   96                    	SUB	M
   00E0'   F5                    	PUSH	PSW
-  00E1'   CD 0D83'              	CALL	RDBOL
+  00E1'   CD 0DD3'              	CALL	RDBOL
   00E4'   F1                    	POP	PSW
   00E5'                         PG_S:
-  00E5'   CD 0DDB'              	CALL	RDSKIP		; the reader at that line (A lines down)
+  00E5'   CD 0E2B'              	CALL	RDSKIP		; the reader at that line (A lines down)
   00E8'                         PG_GO:
-  00E8'   3A 0FDA'              	LDA	PROWN
+  00E8'   3A 1053'              	LDA	PROWN
   00EB'   3C                    	INR	A
   00EC'   47                    	MOV	B,A
   00ED'   0E 01                 	MVI	C,1
   00EF'   CD 0064'              	CALL	GOTOXY
   00F2'                         PG_LP:
-  00F2'   3A 0FAE'              	LDA	FORCEF
+  00F2'   3A 1027'              	LDA	FORCEF
   00F5'   B7                    	ORA	A
   00F6'   CA 0102'              	JZ	PG_P
   00F9'   CD 0000*              	CALL	KBRDY		; RPOLL: a key is waiting -> abandon the repaint
@@ -401,13 +401,13 @@
   0101'   C9                    	RET
   0102'                         PG_P:
   0102'   CD 0092'              	CALL	CEKL
-  0105'   CD 0E67'              	CALL	PAINTR
-  0108'   3A 0FC9'              	LDA	LYXE
+  0105'   CD 0EDE'              	CALL	PAINTR
+  0108'   3A 1042'              	LDA	LYXE
   010B'   B7                    	ORA	A
   010C'   CA 0121'              	JZ	PG_1
-  010F'   3A 0F86'              	LDA	SROW		; was that the row over the cursor's own?
+  010F'   3A 0FFD'              	LDA	SROW		; was that the row over the cursor's own?
   0112'   D6 02                 	SUI	2
-  0114'   21 0FDA'              	LXI	H,PROWN
+  0114'   21 1053'              	LXI	H,PROWN
   0117'   BE                    	CMP	M
   0118'   C2 0121'              	JNZ	PG_1
   011B'   CD 0131'              	CALL	PT_NL
@@ -416,9 +416,9 @@
 
   011E'   CD 0092'              	CALL	CEKL
   0121'                         PG_1:
-  0121'   3A 0FA4'              	LDA	PEND
+  0121'   3A 101B'              	LDA	PEND
   0124'   3D                    	DCR	A
-  0125'   21 0FDA'              	LXI	H,PROWN
+  0125'   21 1053'              	LXI	H,PROWN
   0128'   BE                    	CMP	M
   0129'   C8                    	RZ
   012A'   D8                    	RC
@@ -430,7 +430,7 @@
   0133'   CD 0018'              	CALL	OUTCH
   0136'   3E 0A                 	MVI	A,LF
   0138'   CD 0018'              	CALL	OUTCH
-  013B'   21 0FDA'              	LXI	H,PROWN
+  013B'   21 1053'              	LXI	H,PROWN
   013E'   34                    	INR	M
   013F'   C9                    	RET
                                 
@@ -448,13 +448,13 @@
                                 ;============================================================
   0147'                         SCINIT:
   0147'   21 0000               	LXI	H,0
-  014A'   22 0F82'              	SHLD	WINROW
-  014D'   21 0F2D'              	LXI	H,SPROBE
+  014A'   22 0FF9'              	SHLD	WINROW
+  014D'   21 0FA4'              	LXI	H,SPROBE
   0150'   CD 0025'              	CALL	OUTSTR
   0153'   CD 019E'              	CALL	RDNUMS		; sets NROWS/NCOLS on a clean reply; else no-op
-  0156'   3A 0F7F'              	LDA	NROWS		; NEDIT = NROWS - 1 (message row is the last)
+  0156'   3A 0FF6'              	LDA	NROWS		; NEDIT = NROWS - 1 (message row is the last)
   0159'   3D                    	DCR	A
-  015A'   32 0F81'              	STA	NEDIT
+  015A'   32 0FF8'              	STA	NEDIT
   015D'   C9                    	RET
                                 
                                 ;RDB -- read one console byte with a bounded poll.  CY=1 on timeout; else CY=0,
@@ -532,23 +532,23 @@
 	MACRO-80 3.44	09-Dec-81	PAGE	1-9
 
 
-  01B4'   22 0FDF'              	SHLD	TMPR
+  01B4'   22 1058'              	SHLD	TMPR
   01B7'   CD 0177'              	CALL	RDNUM		; DE = cols
   01BA'   D8                    	RC
   01BB'   FE 52                 	CPI	'R'
   01BD'   C0                    	RNZ			; not what a DSR reply looks like
   01BE'   EB                    	XCHG
-  01BF'   22 0FE1'              	SHLD	TMPC
-  01C2'   2A 0FDF'              	LHLD	TMPR		; rows -> clamp [24,200]
+  01BF'   22 105A'              	SHLD	TMPC
+  01C2'   2A 1058'              	LHLD	TMPR		; rows -> clamp [24,200]
   01C5'   06 18                 	MVI	B,24
   01C7'   0E C8                 	MVI	C,200
   01C9'   CD 01DD'              	CALL	CLAMP
-  01CC'   32 0F7F'              	STA	NROWS
-  01CF'   2A 0FE1'              	LHLD	TMPC		; cols -> clamp [80,132]
+  01CC'   32 0FF6'              	STA	NROWS
+  01CF'   2A 105A'              	LHLD	TMPC		; cols -> clamp [80,132]
   01D2'   06 50                 	MVI	B,80
   01D4'   0E 84                 	MVI	C,132
   01D6'   CD 01DD'              	CALL	CLAMP
-  01D9'   32 0F80'              	STA	NCOLS
+  01D9'   32 0FF7'              	STA	NCOLS
   01DC'                         RS_BAD:
   01DC'   C9                    	RET
                                 
@@ -580,8 +580,8 @@
                                 ; copied to the OLD ones.  The main loop calls this after reading a key and
                                 ; before dispatch, so SCDRAW can tell what the key changed.
   01F2'                         SCPRE:
-  01F2'   21 0F82'              	LXI	H,WINROW
-  01F5'   11 0F90'              	LXI	D,OLDWR
+  01F2'   21 0FF9'              	LXI	H,WINROW
+  01F5'   11 1007'              	LXI	D,OLDWR
   01F8'   06 0E                 	MVI	B,FRMLEN
   01FA'                         SP_LP:
   01FA'   7E                    	MOV	A,M
@@ -606,29 +606,29 @@
   0203'                         SCDRAW:
   0203'   CD 05EF'              	CALL	LAYOUT		; (no output)
   0206'   CD 05A8'              	CALL	CURSC		; SROW/SCOL
-  0209'   3A 0FAE'              	LDA	FORCEF		; a prior repaint aborted -> must repaint in full
+  0209'   3A 1027'              	LDA	FORCEF		; a prior repaint aborted -> must repaint in full
   020C'   B7                    	ORA	A
   020D'   C2 04DB'              	JNZ	SCFULL
-  0210'   2A 0F92'              	LHLD	OLDSK		; the top line starts on another of its rows:
+  0210'   2A 1009'              	LHLD	OLDSK		; the top line starts on another of its rows:
   0213'   EB                    	XCHG			;   every row on the screen is a different one
-  0214'   2A 0F84'              	LHLD	SKIPR
+  0214'   2A 0FFB'              	LHLD	SKIPR
   0217'   CD 0000*              	CALL	CMP16
   021A'   C2 04DB'              	JNZ	SCFULL
   021D'   21 0000               	LXI	H,0
-  0220'   22 0F9E'              	SHLD	OPN		; (and OPM)
-  0223'   3A 0F8B'              	LDA	LYABV
+  0220'   22 1015'              	SHLD	OPN		; (and OPM)
+  0223'   3A 1002'              	LDA	LYABV
   0226'   47                    	MOV	B,A		; B = the edit's first row: the cursor line's
-  0227'   3A 0F9B'              	LDA	OLDCS		; C = the first row of it that can have changed:
-  022A'   21 0F8D'              	LXI	H,CSRAW		;   the one the cursor was on, or the one it is
+  0227'   3A 1012'              	LDA	OLDCS		; C = the first row of it that can have changed:
+  022A'   21 1004'              	LXI	H,CSRAW		;   the one the cursor was on, or the one it is
   022D'   BE                    	CMP	M
   022E'   DA 0232'              	JC	SD_1
   0231'   7E                    	MOV	A,M
   0232'                         SD_1:
   0232'   80                    	ADD	B
   0233'   4F                    	MOV	C,A
-  0234'   2A 0F9C'              	LHLD	OLDCR		; E = the rows the line had (H: the line's under)
+  0234'   2A 1013'              	LHLD	OLDCR		; E = the rows the line had (H: the line's under)
   0237'   5D                    	MOV	E,L
-  0238'   3A 0F8E'              	LDA	LYTSH
+  0238'   3A 1005'              	LDA	LYTSH
   023B'   57                    	MOV	D,A		; D = the rows it has
   023C'   3A 0000*              	LDA	RINTENT
   023F'   B7                    	ORA	A
@@ -636,7 +636,7 @@
   0243'   FE 05                 	CPI	R_ILIN
   0245'   CA 0278'              	JZ	SD_IL
   0248'   E5                    	PUSH	H
-  0249'   2A 0FBA'              	LHLD	LYDLT
+  0249'   2A 1033'              	LHLD	LYDLT
   024C'   7C                    	MOV	A,H
   024D'   B5                    	ORA	L
   024E'   E1                    	POP	H
@@ -659,15 +659,15 @@
   0269'   84                    	ADD	H
   026A'   5F                    	MOV	E,A
   026B'                         SD_AN:
-  026B'   3A 0F99'              	LDA	OLDAB		; where the edit starts was that much lower: the
+  026B'   3A 1010'              	LDA	OLDAB		; where the edit starts was that much lower: the
   026E'   90                    	SUB	B		;   rows the screen gave up at the top.  Higher,
   026F'   DA 04DB'              	JC	SCFULL		;   and it is no paint of these
-  0272'   32 0F9E'              	STA	OPN
+  0272'   32 1015'              	STA	OPN
   0275'   C3 030A'              	JMP	SD_GO
                                 
                                 	;--- R_ILIN: ILN lines opened at the cursor ---
   0278'                         SD_IL:
-  0278'   2A 0FBA'              	LHLD	LYDLT
+  0278'   2A 1033'              	LHLD	LYDLT
   027B'   7C                    	MOV	A,H
   027C'   B7                    	ORA	A
   027D'   C2 04DB'              	JNZ	SCFULL
@@ -678,22 +678,22 @@
   0284'   CA 02AD'              	JZ	SI_2		; opened where the cursor's line was: 'O', 'P'
   0287'   3D                    	DCR	A
   0288'   C2 04DB'              	JNZ	SCFULL
-  028B'   3A 0F82'              	LDA	WINROW		; opened under it: it is the line above now, and
+  028B'   3A 0FF9'              	LDA	WINROW		; opened under it: it is the line above now, and
   028E'   B7                    	ORA	A		;   has to be on the screen
   028F'   CA 04DB'              	JZ	SCFULL
   0292'   3A 0000*              	LDA	HTCUR
   0295'   3D                    	DCR	A
-  0296'   CD 0B19'              	CALL	HTE
+  0296'   CD 0B31'              	CALL	HTE
   0299'   56                    	MOV	D,M		; D = that line's rows now
   029A'   78                    	MOV	A,B
   029B'   92                    	SUB	D
   029C'   47                    	MOV	B,A		; the edit starts with it
-  029D'   3A 0F9C'              	LDA	OLDCR
+  029D'   3A 1013'              	LDA	OLDCR
   02A0'   5F                    	MOV	E,A
   02A1'   3A 0000*              	LDA	ILABOV		; text came off it: drawn from the row the
   02A4'   B7                    	ORA	A		;   cursor was on
   02A5'   CA 02AD'              	JZ	SI_2
-  02A8'   3A 0F9B'              	LDA	OLDCS
+  02A8'   3A 1012'              	LDA	OLDCS
   02AB'   80                    	ADD	B
   02AC'   4F                    	MOV	C,A
   02AD'                         SI_2:
@@ -717,10 +717,10 @@
   02C3'                         SD_OL:
   02C3'   FE 01                 	CPI	R_MOVE
   02C5'   C2 04DB'              	JNZ	SCFULL
-  02C8'   2A 0FA6'              	LHLD	SCRLN
+  02C8'   2A 101D'              	LHLD	SCRLN
   02CB'   7C                    	MOV	A,H
   02CC'   B5                    	ORA	L
-  02CD'   CA 0F0D'              	JZ	SCURS		; it stood still: the cursor alone
+  02CD'   CA 0F84'              	JZ	SCURS		; it stood still: the cursor alone
   02D0'   7C                    	MOV	A,H
   02D1'   B7                    	ORA	A
   02D2'   CA 02E9'              	JZ	SO_UP
@@ -730,21 +730,21 @@
   02DA'   CA 04DB'              	JZ	SCFULL
   02DD'   CD 056A'              	CALL	SUMT
   02E0'   DA 04DB'              	JC	SCFULL
-  02E3'   32 0F9F'              	STA	OPM
+  02E3'   32 1016'              	STA	OPM
   02E6'   C3 0305'              	JMP	SO_GO
   02E9'                         SO_UP:
-  02E9'   3A 0F98'              	LDA	OLDBOT		; up: the last line that showed is that many
+  02E9'   3A 100F'              	LDA	OLDBOT		; up: the last line that showed is that many
   02EC'   95                    	SUB	L		;   lines higher.  The row after it was OLDTX,
   02ED'   DA 04DB'              	JC	SCFULL		;   and is the rows down to it now
   02F0'   3C                    	INR	A
   02F1'   CD 056A'              	CALL	SUMT
   02F4'   DA 04DB'              	JC	SCFULL
   02F7'   47                    	MOV	B,A
-  02F8'   3A 0F96'              	LDA	OLDTX
+  02F8'   3A 100D'              	LDA	OLDTX
   02FB'   90                    	SUB	B
   02FC'   DA 04DB'              	JC	SCFULL
   02FF'   CA 04DB'              	JZ	SCFULL
-  0302'   32 0F9E'              	STA	OPN
+  0302'   32 1015'              	STA	OPN
   0305'                         SO_GO:
   0305'   11 0000               	LXI	D,0		; no edit
   0308'   0E FF                 	MVI	C,0FFH
@@ -753,18 +753,18 @@
                                 	;    now, E = its rows before ---
   030A'                         SD_GO:
   030A'   78                    	MOV	A,B
-  030B'   32 0FA2'              	STA	EDR
+  030B'   32 1019'              	STA	EDR
   030E'   82                    	ADD	D
   030F'   47                    	MOV	B,A		; B = the row after its last
-  0310'   3A 0F81'              	LDA	NEDIT
+  0310'   3A 0FF8'              	LDA	NEDIT
   0313'   B8                    	CMP	B
   0314'   DA 04DB'              	JC	SCFULL		; (it runs off the screen)
   0317'   79                    	MOV	A,C
-  0318'   32 0FA3'              	STA	EDP
+  0318'   32 101A'              	STA	EDP
   031B'   EB                    	XCHG
-  031C'   22 0FA0'              	SHLD	EDA		; (and EDB)
+  031C'   22 1017'              	SHLD	EDA		; (and EDB)
   031F'   EB                    	XCHG
-  0320'   2A 0F9E'              	LHLD	OPN
+  0320'   2A 1015'              	LHLD	OPN
 	MACRO-80 3.44	09-Dec-81	PAGE	1-13
 
 
@@ -776,7 +776,7 @@
   032A'   C2 0344'              	JNZ	SD_PT
   032D'   79                    	MOV	A,C		; nothing moves.  Nothing to draw either: the
   032E'   B8                    	CMP	B		;   cursor alone
-  032F'   D2 0F0D'              	JNC	SCURS
+  032F'   D2 0F84'              	JNC	SCURS
   0332'   3C                    	INR	A
   0333'   B8                    	CMP	B
   0334'   C2 0344'              	JNZ	SD_PT
@@ -786,14 +786,14 @@
   033F'   FE 07                 	CPI	R_DCH
   0341'   CA 0425'              	JZ	SC_DCH
   0344'                         SD_PT:
-  0344'   2A 0F84'              	LHLD	SKIPR		; ('<<<' on the top row is not theirs to keep)
+  0344'   2A 0FFB'              	LHLD	SKIPR		; ('<<<' on the top row is not theirs to keep)
   0347'   7C                    	MOV	A,H
   0348'   B5                    	ORA	L
   0349'   C2 04DB'              	JNZ	SCFULL
   034C'   CD 0080'              	CALL	CHIDE
-  034F'   2A 0F9E'              	LHLD	OPN
+  034F'   2A 1015'              	LHLD	OPN
   0352'   EB                    	XCHG
-  0353'   2A 0FA0'              	LHLD	EDA
+  0353'   2A 1017'              	LHLD	EDA
   0356'   7A                    	MOV	A,D
   0357'   B3                    	ORA	E
   0358'   C2 0360'              	JNZ	SD_SH
@@ -802,24 +802,24 @@
   035D'   CA 0378'              	JZ	SD_NS
   0360'                         SD_SH:
   0360'   CD 0597'              	CALL	SRGN		; scroll region = rows 1..NEDIT
-  0363'   2A 0F9E'              	LHLD	OPN
+  0363'   2A 1015'              	LHLD	OPN
   0366'   06 00                 	MVI	B,0
   0368'   CD 0535'              	CALL	SHFT
-  036B'   2A 0FA0'              	LHLD	EDA
-  036E'   3A 0FA2'              	LDA	EDR
+  036B'   2A 1017'              	LHLD	EDA
+  036E'   3A 1019'              	LDA	EDR
   0371'   47                    	MOV	B,A
   0372'   CD 0535'              	CALL	SHFT
   0375'   CD 0086'              	CALL	CRGRS
   0378'                         SD_NS:
   0378'   06 00                 	MVI	B,0
-  037A'   3A 0F9F'              	LDA	OPM
+  037A'   3A 1016'              	LDA	OPM
   037D'   4F                    	MOV	C,A
   037E'   CD 0098'              	CALL	PRNG		; the rows opened at the top
-  0381'   2A 0FA0'              	LHLD	EDA
-  0384'   3A 0FA2'              	LDA	EDR
+  0381'   2A 1017'              	LHLD	EDA
+  0384'   3A 1019'              	LDA	EDR
   0387'   84                    	ADD	H
   0388'   4F                    	MOV	C,A
-  0389'   3A 0FA3'              	LDA	EDP
+  0389'   3A 101A'              	LDA	EDP
   038C'   47                    	MOV	B,A
   038D'   CD 0098'              	CALL	PRNG		; the edit's own
                                 	;--- the bottom.  The rows that were good to the end of the screen
@@ -829,22 +829,22 @@
 
                                 	;    lies between where they end now and where good rows should end is
                                 	;    drawn, and so are the rows a move up left bare ---
-  0390'   2A 0F96'              	LHLD	OLDTX
+  0390'   2A 100D'              	LHLD	OLDTX
   0393'   CD 058E'              	CALL	TEV
   0396'   47                    	MOV	B,A
-  0397'   2A 0F88'              	LHLD	TXEND
+  0397'   2A 0FFF'              	LHLD	TXEND
   039A'   CD 058E'              	CALL	TEV
   039D'   4F                    	MOV	C,A
-  039E'   2A 0F9E'              	LHLD	OPN
+  039E'   2A 1015'              	LHLD	OPN
   03A1'   EB                    	XCHG			; E = OPN, D = OPM
-  03A2'   2A 0FA0'              	LHLD	EDA		; L = EDA, H = EDB
+  03A2'   2A 1017'              	LHLD	EDA		; L = EDA, H = EDB
   03A5'   7A                    	MOV	A,D
   03A6'   84                    	ADD	H
   03A7'   57                    	MOV	D,A		; D = the rows that came
   03A8'   7B                    	MOV	A,E
   03A9'   85                    	ADD	L
   03AA'   92                    	SUB	D		; A = the rows that went, less those
-  03AB'   21 0F81'              	LXI	H,NEDIT
+  03AB'   21 0FF8'              	LXI	H,NEDIT
   03AE'   5E                    	MOV	E,M
   03AF'   DA 03BF'              	JC	SB_DN
   03B2'   57                    	MOV	D,A		; the text under them moved up D rows
@@ -886,10 +886,10 @@
 	MACRO-80 3.44	09-Dec-81	PAGE	1-15
 
 
-  03DF'   3A 0F81'              	LDA	NEDIT
+  03DF'   3A 0FF8'              	LDA	NEDIT
   03E2'   4F                    	MOV	C,A
   03E3'   CD 0098'              	CALL	PRNG
-  03E6'   C3 0F0D'              	JMP	SCURS
+  03E6'   C3 0F84'              	JMP	SCURS
                                 
                                 ;SC_ICH -- R_ICH: a char was typed at the cell the cursor was on, which is
                                 ; where the terminal's cursor still is.  ICH (ESC[1@) opens a cell there and
@@ -903,7 +903,7 @@
   03EC'   FE 03                 	CPI	3
   03EE'   C2 0404'              	JNZ	SC_IC0
   03F1'   16 FF                 	MVI	D,0FFH		; a TAB follows, and went right one
-  03F3'   3A 0F87'              	LDA	SCOL
+  03F3'   3A 0FFE'              	LDA	SCOL
   03F6'   CD 0478'              	CALL	SEGQ
   03F9'   2A 0000*              	LHLD	GAPBEG
   03FC'   2B                    	DCX	H
@@ -916,11 +916,11 @@
   0409'   2A 0000*              	LHLD	GAPEND
   040C'   7E                    	MOV	A,M
   040D'   CD 0018'              	CALL	OUTCH
-  0410'   C3 0F0D'              	JMP	SCURS
+  0410'   C3 0F84'              	JMP	SCURS
   0413'                         SC_IC1:
   0413'   B7                    	ORA	A
   0414'   C2 041D'              	JNZ	SC_ICC
-  0417'   21 0F43'              	LXI	H,SICH		; ESC[1@ -- open one cell, shift the tail right
+  0417'   21 0FBA'              	LXI	H,SICH		; ESC[1@ -- open one cell, shift the tail right
   041A'   CD 0025'              	CALL	OUTSTR
   041D'                         SC_ICC:
   041D'   2A 0000*              	LHLD	GAPBEG		; the byte typed is right before the gap
@@ -945,7 +945,7 @@
 	MACRO-80 3.44	09-Dec-81	PAGE	1-16
 
 
-  0435'   3A 0F95'              	LDA	OLDSC+1
+  0435'   3A 100C'              	LDA	OLDSC+1
   0438'   D2 043C'              	JNC	SC_DC0
   043B'   3D                    	DCR	A
   043C'                         SC_DC0:
@@ -960,7 +960,7 @@
   044E'   B7                    	ORA	A
   044F'   3E 08                 	MVI	A,BS
   0451'   C4 0018'              	CNZ	OUTCH
-  0454'   21 0F40'              	LXI	H,SCSI
+  0454'   21 0FB7'              	LXI	H,SCSI
   0457'   CD 0025'              	CALL	OUTSTR
   045A'   3A 0000*              	LDA	DCHN
   045D'   CD 002F'              	CALL	EMITB
@@ -969,12 +969,12 @@
   0465'   3A 0000*              	LDA	DCHBS
   0468'   B7                    	ORA	A
   0469'   C0                    	RNZ
-  046A'   2A 0F94'              	LHLD	OLDSC
+  046A'   2A 100B'              	LHLD	OLDSC
   046D'   EB                    	XCHG
-  046E'   2A 0F86'              	LHLD	SROW
+  046E'   2A 0FFD'              	LHLD	SROW
   0471'   CD 0000*              	CALL	CMP16
   0474'   C8                    	RZ
-  0475'   C3 0F0D'              	JMP	SCURS
+  0475'   C3 0F84'              	JMP	SCURS
                                 
                                 ;SEGQ -- a TAB follows the edit, and nothing past it has moved if it ends
                                 ; where it did.  A = the screen column of the first char after the edit, D =
@@ -984,12 +984,12 @@
                                 ; past the row -- the row is painted, and the return is not taken.
   0478'                         SEGQ:
   0478'   4F                    	MOV	C,A
-  0479'   3A 0F80'              	LDA	NCOLS
+  0479'   3A 0FF7'              	LDA	NCOLS
   047C'   91                    	SUB	C
   047D'   3C                    	INR	A
   047E'   47                    	MOV	B,A		; B = the cells from there to the row's end
-  047F'   21 0F87'              	LXI	H,SCOL
-  0482'   3A 0FB8'              	LDA	CURDCL
+  047F'   21 0FFE'              	LXI	H,SCOL
+  0482'   3A 1031'              	LDA	CURDCL
   0485'   96                    	SUB	M
   0486'   81                    	ADD	C
   0487'   5F                    	MOV	E,A		; E = its column in the line (the low bits)
@@ -1049,7 +1049,7 @@
   04D1'   CD 0018'              	CALL	OUTCH
   04D4'   0D                    	DCR	C
   04D5'   C2 04CF'              	JNZ	SE_2
-  04D8'   C3 0F0D'              	JMP	SCURS
+  04D8'   C3 0F84'              	JMP	SCURS
                                 
                                 ;SCFULL -- paint edit rows 1..NEDIT in place, each cleared with ESC[K; a line
                                 ; takes as many rows as it is wide, and the rows past the text show '~' (or
@@ -1065,28 +1065,28 @@
 
   04DB'   CD 0080'              	CALL	CHIDE
   04DE'   3E 01                 	MVI	A,1
-  04E0'   32 0FAE'              	STA	FORCEF
+  04E0'   32 1027'              	STA	FORCEF
   04E3'   06 00                 	MVI	B,0
-  04E5'   3A 0F81'              	LDA	NEDIT
+  04E5'   3A 0FF8'              	LDA	NEDIT
   04E8'   4F                    	MOV	C,A
   04E9'   CD 0098'              	CALL	PRNG
   04EC'   CD 0131'              	CALL	PT_NL
                                 	;--- message row (now at NROWS, col 1): vim leaves it blank ---
   04EF'   CD 0092'              	CALL	CEKL
-  04F2'   2A 0F84'              	LHLD	SKIPR		; rows of the top line are off the top: '<<<'
+  04F2'   2A 0FFB'              	LHLD	SKIPR		; rows of the top line are off the top: '<<<'
   04F5'   7C                    	MOV	A,H		;   over its first cells says so, as vim's does
   04F6'   B5                    	ORA	L
   04F7'   CA 0503'              	JZ	ROWS_M
   04FA'   CD 0140'              	CALL	GOTOP
-  04FD'   21 0F7B'              	LXI	H,SSKIP
+  04FD'   21 0FF2'              	LXI	H,SSKIP
   0500'   CD 0025'              	CALL	OUTSTR
   0503'                         ROWS_M:
   0503'   3E FF                 	MVI	A,0FFH		; the row is blank now, so whatever message was
-  0505'   32 0FAF'              	STA	OEDMOD		;   on it is gone: MODEMS must draw its own again
+  0505'   32 1028'              	STA	OEDMOD		;   on it is gone: MODEMS must draw its own again
                                 	;--- address the real cursor (SROW/SCOL precomputed by CURSC) and show ---
-  0508'   CD 0F0D'              	CALL	SCURS
+  0508'   CD 0F84'              	CALL	SCURS
   050B'   AF                    	XRA	A		; a full frame completed -> clear the abort latch
-  050C'   32 0FAE'              	STA	FORCEF
+  050C'   32 1027'              	STA	FORCEF
   050F'   C9                    	RET
                                 
                                 ;EXPRM -- open the ':' / '/' line: bottom row, cleared, the prompt char in A
@@ -1095,8 +1095,8 @@
   0510'                         EXPRM:
   0510'   F5                    	PUSH	PSW
   0511'   3A 0000*              	LDA	EDMODE
-  0514'   32 0FAF'              	STA	OEDMOD
-  0517'   3A 0F7F'              	LDA	NROWS
+  0514'   32 1028'              	STA	OEDMOD
+  0517'   3A 0FF6'              	LDA	NROWS
   051A'   CD 008C'              	CALL	GOROW1
   051D'   F1                    	POP	PSW
   051E'   C3 0018'              	JMP	OUTCH
@@ -1139,14 +1139,14 @@
   0544'   7C                    	MOV	A,H
   0545'                         SH_1:
   0545'   80                    	ADD	B
-  0546'   21 0F81'              	LXI	H,NEDIT
+  0546'   21 0FF8'              	LXI	H,NEDIT
   0549'   BE                    	CMP	M
   054A'   D0                    	RNC			; (under the last edit row: nothing there to move)
   054B'   3C                    	INR	A
   054C'   47                    	MOV	B,A
   054D'   0E 01                 	MVI	C,1
   054F'   CD 0064'              	CALL	GOTOXY
-  0552'   21 0F40'              	LXI	H,SCSI
+  0552'   21 0FB7'              	LXI	H,SCSI
   0555'   CD 0025'              	CALL	OUTSTR
   0558'   7A                    	MOV	A,D
   0559'   CD 002F'              	CALL	EMITB
@@ -1156,9 +1156,9 @@
                                 ;HTTOP -- HL -> the row table's entry for the top line, A = which it is.
   0560'                         HTTOP:
   0560'   3A 0000*              	LDA	HTCUR
-  0563'   21 0F82'              	LXI	H,WINROW
+  0563'   21 0FF9'              	LXI	H,WINROW
   0566'   96                    	SUB	M
-  0567'   C3 0B19'              	JMP	HTE
+  0567'   C3 0B31'              	JMP	HTE
                                 
                                 ;SUMT -- A = a count of lines from the top one: A = the rows they take.
                                 ;SUMX -- the same for the B lines from the table's entry A.
@@ -1174,7 +1174,7 @@
   0574'   BB                    	CMP	E
   0575'   D8                    	RC
   0576'   79                    	MOV	A,C
-  0577'   CD 0B19'              	CALL	HTE
+  0577'   CD 0B31'              	CALL	HTE
   057A'   AF                    	XRA	A
   057B'   04                    	INR	B
   057C'                         SM_LP:
@@ -1189,7 +1189,7 @@
   0583'   C3 057C'              	JMP	SM_LP
   0586'                         SM_DN:
   0586'   47                    	MOV	B,A
-  0587'   3A 0F81'              	LDA	NEDIT
+  0587'   3A 0FF8'              	LDA	NEDIT
   058A'   3D                    	DCR	A
   058B'   B8                    	CMP	B
   058C'   78                    	MOV	A,B
@@ -1203,15 +1203,15 @@
   058F'   FE 40                 	CPI	'@'
   0591'   7D                    	MOV	A,L
   0592'   C8                    	RZ
-  0593'   3A 0F81'              	LDA	NEDIT
+  0593'   3A 0FF8'              	LDA	NEDIT
   0596'   C9                    	RET
                                 
                                 ;SRGN -- set the scroll region to rows 1..NEDIT (ESC[1;<NEDIT>r) so a native
                                 ; scroll/DL/RI leaves the message row (NROWS) untouched.  Reset with SREGRS.
   0597'                         SRGN:
-  0597'   21 0F48'              	LXI	H,SRGP
+  0597'   21 0FBF'              	LXI	H,SRGP
   059A'   CD 0025'              	CALL	OUTSTR
-  059D'   3A 0F81'              	LDA	NEDIT
+  059D'   3A 0FF8'              	LDA	NEDIT
   05A0'   CD 002F'              	CALL	EMITB
   05A3'   3E 72                 	MVI	A,'r'
   05A5'   C3 0018'              	JMP	OUTCH
@@ -1220,21 +1220,21 @@
                                 ; LINE, so it is CURDCL / NCOLS rows into it, under the LYABV rows the lines
                                 ; above take, at column CURDCL mod NCOLS.  Emits nothing.
   05A8'                         CURSC:
-  05A8'   2A 0FB8'              	LHLD	CURDCL
+  05A8'   2A 1031'              	LHLD	CURDCL
   05AB'   CD 05DA'              	CALL	DIVN		; BC = rows into the line, A = the column
   05AE'   3C                    	INR	A
-  05AF'   32 0F87'              	STA	SCOL
+  05AF'   32 0FFE'              	STA	SCOL
   05B2'   79                    	MOV	A,C
-  05B3'   32 0FB3'              	STA	CSUB
-  05B6'   2A 0F84'              	LHLD	SKIPR
+  05B3'   32 102C'              	STA	CSUB
+  05B6'   2A 0FFB'              	LHLD	SKIPR
   05B9'   EB                    	XCHG
-  05BA'   2A 0F8B'              	LHLD	LYABV
+  05BA'   2A 1002'              	LHLD	LYABV
   05BD'   09                    	DAD	B
   05BE'   23                    	INX	H
   05BF'   CD 0000*              	CALL	SUBHD		; (less the rows of it that are off the top)
   05C2'   7C                    	MOV	A,H		; (never past the edit rows)
   05C3'   B7                    	ORA	A
-  05C4'   3A 0F81'              	LDA	NEDIT
+  05C4'   3A 0FF8'              	LDA	NEDIT
   05C7'   C2 05CF'              	JNZ	CS_SET
   05CA'   BD                    	CMP	L		; CY iff NEDIT < the row
 	MACRO-80 3.44	09-Dec-81	PAGE	1-21
@@ -1243,7 +1243,7 @@
   05CB'   DA 05CF'              	JC	CS_SET
   05CE'   7D                    	MOV	A,L
   05CF'                         CS_SET:
-  05CF'   32 0F86'              	STA	SROW
+  05CF'   32 0FFD'              	STA	SROW
   05D2'   C9                    	RET
                                 
                                 ;XTRA -- HL = a line's width in columns: BC = the rows it takes past its first.
@@ -1256,7 +1256,7 @@
   05D9'   2B                    	DCX	H
                                 ;DIVN -- HL / NCOLS: BC = the quotient, A = the remainder.  Clobbers DE, HL.
   05DA'                         DIVN:
-  05DA'   3A 0F80'              	LDA	NCOLS
+  05DA'   3A 0FF7'              	LDA	NCOLS
   05DD'   2F                    	CMA
   05DE'   5F                    	MOV	E,A
   05DF'   16 FF                 	MVI	D,0FFH
@@ -1266,7 +1266,7 @@
   05E5'   03                    	INX	B
   05E6'   19                    	DAD	D		; CY while NCOLS still went into it
   05E7'   DA 05E5'              	JC	DV_LP
-  05EA'   3A 0F80'              	LDA	NCOLS
+  05EA'   3A 0FF7'              	LDA	NCOLS
   05ED'   85                    	ADD	L
   05EE'   C9                    	RET
                                 
@@ -1291,41 +1291,41 @@
                                 ;============================================================
   05EF'                         LAYOUT:
   05EF'   2A 0000*              	LHLD	CMDCNT
-  05F2'   22 0FCB'              	SHLD	SVCNT
+  05F2'   22 1044'              	SHLD	SVCNT
   05F5'   2A 0000*              	LHLD	AUXCNT
-  05F8'   22 0FCD'              	SHLD	SVAUX
+  05F8'   22 1046'              	SHLD	SVAUX
   05FB'   3A 0000*              	LDA	DIRFLG
-  05FE'   32 0FCF'              	STA	SVDIR
+  05FE'   32 1048'              	STA	SVDIR
 	MACRO-80 3.44	09-Dec-81	PAGE	1-22
 
 
   0601'   CD 0783'              	CALL	LYQK		; a move about a screen that stands: no more to do
   0604'   DA 076D'              	JC	LY_TC
   0607'   CD 0000*              	CALL	CURRW		; A = WINROW + LNDLT, clamped to the edit rows
-  060A'   32 0FBC'              	STA	LYROW
-  060D'   32 0FC7'              	STA	LYSVR
+  060A'   32 1035'              	STA	LYROW
+  060D'   32 1040'              	STA	LYSVR
   0610'   AF                    	XRA	A
-  0611'   32 0FC5'              	STA	LYND
-  0614'   32 0FC6'              	STA	LYPRF
-  0617'   3A 0FB2'              	LDA	PLACE		; a line the command placed stays where it was
+  0611'   32 103E'              	STA	LYND
+  0614'   32 103F'              	STA	LYPRF
+  0617'   3A 102B'              	LDA	PLACE		; a line the command placed stays where it was
   061A'   B7                    	ORA	A		;   put; one that only moved is asked about
-  061B'   CC 0B7D'              	CZ	LYFAR
+  061B'   CC 0BC5'              	CZ	LYFAR
   061E'   2A 0000*              	LHLD	LNDLT
-  0621'   22 0FBA'              	SHLD	LYDLT
+  0621'   22 1033'              	SHLD	LYDLT
   0624'   7C                    	MOV	A,H
   0625'   B5                    	ORA	L
   0626'   21 0000               	LXI	H,0
   0629'   22 0000*              	SHLD	LNDLT
   062C'   47                    	MOV	B,A
-  062D'   3A 0FB2'              	LDA	PLACE		; the cursor on another line, or its line put
+  062D'   3A 102B'              	LDA	PLACE		; the cursor on another line, or its line put
   0630'   B0                    	ORA	B		;   somewhere by the command: a line starts with
   0631'   CA 0637'              	JZ	LY_SAM		;   its first row.  (The one place SKIPR is
-  0634'   22 0F84'              	SHLD	SKIPR		;   given up; HTBLD's rule moves it.)
+  0634'   22 0FFB'              	SHLD	SKIPR		;   given up; HTBLD's rule moves it.)
   0637'                         LY_SAM:
                                 	;--- the lines to measure above the cursor's: those it has over it now,
                                 	;    or all a screen could show when it is to be placed afresh (but no
                                 	;    more than leaves the table room for the rows under it) ---
-  0637'   3A 0F81'              	LDA	NEDIT
+  0637'   3A 0FF8'              	LDA	NEDIT
   063A'   4F                    	MOV	C,A		; C = a screenful of rows from the cursor's line on
   063B'   3D                    	DCR	A
   063C'   47                    	MOV	B,A
@@ -1335,98 +1335,98 @@
   0641'   D2 0645'              	JNC	LY_B1
   0644'   47                    	MOV	B,A
   0645'                         LY_B1:
-  0645'   CD 09F0'              	CALL	LYMQ
+  0645'   CD 0A08'              	CALL	LYMQ
   0648'   CA 064F'              	JZ	LY_BLD
-  064B'   3A 0FBC'              	LDA	LYROW
+  064B'   3A 1035'              	LDA	LYROW
   064E'   47                    	MOV	B,A
   064F'                         LY_BLD:
-  064F'   CD 08F6'              	CALL	LYSTP		; a step past the screen's edge: the table stands
-  0652'   D4 0BBA'              	CNC	HTBLD
+  064F'   CD 090E'              	CALL	LYSTP		; a step past the screen's edge: the table stands
+  0652'   D4 0C02'              	CNC	HTBLD
                                 	;--- a line taller than the screen whose end is on it: the lines under
                                 	;    that end, as far as the rows go ---
-  0655'   3A 0FA5'              	LDA	TALLF
+  0655'   3A 101C'              	LDA	TALLF
   0658'   B7                    	ORA	A
   0659'   CA 066E'              	JZ	LY_NT
   065C'   3A 0000*              	LDA	HTEOF
   065F'   B7                    	ORA	A
   0660'   C2 066E'              	JNZ	LY_NT
-  0663'   3A 0F8E'              	LDA	LYTSH
+  0663'   3A 1005'              	LDA	LYTSH
   0666'   47                    	MOV	B,A
-  0667'   3A 0F81'              	LDA	NEDIT
+  0667'   3A 0FF8'              	LDA	NEDIT
   066A'   90                    	SUB	B
-  066B'   CD 0D26'              	CALL	HBMOR
+  066B'   CD 0D76'              	CALL	HBMOR
 	MACRO-80 3.44	09-Dec-81	PAGE	1-23
 
 
   066E'                         LY_NT:
-  066E'   CD 09F0'              	CALL	LYMQ
-  0671'   CC 0A6A'              	CZ	LYMID		; LYROW = the lines that puts above it
+  066E'   CD 0A08'              	CALL	LYMQ
+  0671'   CC 0A82'              	CZ	LYMID		; LYROW = the lines that puts above it
   0674'   AF                    	XRA	A
-  0675'   32 0FB2'              	STA	PLACE
+  0675'   32 102B'              	STA	PLACE
                                 	;--- of the LYROW lines wanted above, as many as leave the cursor's
                                 	;    whole line room (and the table has: the file may start sooner) ---
-  0678'   3A 0FBC'              	LDA	LYROW
+  0678'   3A 1035'              	LDA	LYROW
   067B'   47                    	MOV	B,A
-  067C'   CD 0AB6'              	CALL	LYINI
+  067C'   CD 0ACE'              	CALL	LYINI
   067F'                         LY_FT:
   067F'   78                    	MOV	A,B
   0680'   B7                    	ORA	A
   0681'   CA 068D'              	JZ	LY_FD
   0684'   05                    	DCR	B
   0685'   C5                    	PUSH	B
-  0686'   CD 0AFD'              	CALL	LMABV
+  0686'   CD 0B15'              	CALL	LMABV
   0689'   C1                    	POP	B
   068A'   D2 067F'              	JNC	LY_FT
   068D'                         LY_FD:
-  068D'   3A 0FC3'              	LDA	LYMAB
+  068D'   3A 103C'              	LDA	LYMAB
   0690'   6F                    	MOV	L,A
   0691'   26 00                 	MVI	H,0
-  0693'   22 0F8B'              	SHLD	LYABV
+  0693'   22 1002'              	SHLD	LYABV
                                 	;--- the top line: LYROW lines above the cursor's (WM MEASLO) ---
-  0696'   3A 0FBC'              	LDA	LYROW
+  0696'   3A 1035'              	LDA	LYROW
   0699'   6F                    	MOV	L,A		; (H is 0 still)
   069A'   CD 0859'              	CALL	LYTP		; HL = that line's start
   069D'   EB                    	XCHG
   069E'   2A 0000*              	LHLD	GAPBEG
   06A1'   CD 0000*              	CALL	SUBHD		; HL = GAPBEG - top
-  06A4'   22 0FB4'              	SHLD	TOPLEN
+  06A4'   22 102D'              	SHLD	TOPLEN
   06A7'   24                    	INR	H		; WM 3784-3788: PAGEOUT never spills the screen
   06A8'   22 0000*              	SHLD	WRLIM
                                 	;--- SCBOF: the top line is the file's first (nothing before it on disk) ---
   06AB'   AF                    	XRA	A
-  06AC'   32 0FB1'              	STA	SCBOF
-  06AF'   CD 0B4F'              	CALL	LYTOPP		; HL = top
-  06B2'   CD 0A5C'              	CALL	ISBOF
+  06AC'   32 102A'              	STA	SCBOF
+  06AF'   CD 0B92'              	CALL	LYTOPP		; HL = top
+  06B2'   CD 0A74'              	CALL	ISBOF
   06B5'   C2 06BC'              	JNZ	LY_BW
   06B8'   3C                    	INR	A
-  06B9'   32 0FB1'              	STA	SCBOF
+  06B9'   32 102A'              	STA	SCBOF
   06BC'                         LY_BW:
                                 	;--- down the table from the cursor's line: the lines under it that fit
                                 	;    whole.  C = the rows taken, D = those lines. ---
   06BC'   3E 7E                 	MVI	A,'~'
-  06BE'   32 0F89'              	STA	FILCH
+  06BE'   32 1000'              	STA	FILCH
   06C1'   AF                    	XRA	A
-  06C2'   32 0FB0'              	STA	SCEOF
+  06C2'   32 1029'              	STA	SCEOF
   06C5'   57                    	MOV	D,A
   06C6'   3A 0000*              	LDA	HTCUR
   06C9'   47                    	MOV	B,A
-  06CA'   CD 0B19'              	CALL	HTE		; HL -> the cursor line's entry
+  06CA'   CD 0B31'              	CALL	HTE		; HL -> the cursor line's entry
   06CD'   3A 0000*              	LDA	HTN
   06D0'   90                    	SUB	B
   06D1'   47                    	MOV	B,A		; B = the entries from it on
 	MACRO-80 3.44	09-Dec-81	PAGE	1-24
 
 
-  06D2'   3A 0FC3'              	LDA	LYMAB
+  06D2'   3A 103C'              	LDA	LYMAB
   06D5'   4F                    	MOV	C,A
-  06D6'   3A 0F8E'              	LDA	LYTSH
+  06D6'   3A 1005'              	LDA	LYTSH
   06D9'   81                    	ADD	C
   06DA'   4F                    	MOV	C,A
   06DB'                         LY_WK:
   06DB'   23                    	INX	H
   06DC'   05                    	DCR	B
   06DD'   CA 06FA'              	JZ	LY_WE
-  06E0'   3A 0F81'              	LDA	NEDIT
+  06E0'   3A 0FF8'              	LDA	NEDIT
   06E3'   91                    	SUB	C		; A = the rows left
   06E4'   CA 071F'              	JZ	LY_END		; none: what is under them is not cut off
   06E7'   BE                    	CMP	M		; CY iff the line takes more
@@ -1438,72 +1438,72 @@
   06EF'   C3 06DB'              	JMP	LY_WK
   06F2'                         LY_CUT:
   06F2'   3E 40                 	MVI	A,'@'		; a line that does not fit is not shown, and the
-  06F4'   32 0F89'              	STA	FILCH		;   rows it would have started on say so
+  06F4'   32 1000'              	STA	FILCH		;   rows it would have started on say so
   06F7'   C3 071F'              	JMP	LY_END
   06FA'                         LY_WE:
   06FA'   3A 0000*              	LDA	HTEOF		; the table ended: with the text, or with the rows
-  06FD'   32 0FB0'              	STA	SCEOF
+  06FD'   32 1029'              	STA	SCEOF
   0700'   B7                    	ORA	A
   0701'   C2 071F'              	JNZ	LY_END
-  0704'   3A 0FA8'              	LDA	LYOK		; ... or, when it was kept (LYSTP), short of both:
+  0704'   3A 101F'              	LDA	LYOK		; ... or, when it was kept (LYSTP), short of both:
   0707'   B7                    	ORA	A		;   there are rows to fill and nothing measured
   0708'   CA 071F'              	JZ	LY_END		;   to fill them.  Then it is built after all
-  070B'   3A 0F81'              	LDA	NEDIT
+  070B'   3A 0FF8'              	LDA	NEDIT
   070E'   B9                    	CMP	C
   070F'   CA 071F'              	JZ	LY_END
   0712'   AF                    	XRA	A
-  0713'   32 0FA8'              	STA	LYOK
-  0716'   3A 0FC7'              	LDA	LYSVR
-  0719'   32 0FBC'              	STA	LYROW
+  0713'   32 101F'              	STA	LYOK
+  0716'   3A 1040'              	LDA	LYSVR
+  0719'   32 1035'              	STA	LYROW
   071C'   C3 0637'              	JMP	LY_SAM
   071F'                         LY_END:
   071F'   79                    	MOV	A,C
-  0720'   32 0F88'              	STA	TXEND		; the first row with no text on it
+  0720'   32 0FFF'              	STA	TXEND		; the first row with no text on it
   0723'   AF                    	XRA	A		; NXTR = the rows of the line under the cursor's,
   0724'   B2                    	ORA	D		;   if it shows
   0725'   CA 0732'              	JZ	LY_NX
   0728'   D5                    	PUSH	D
   0729'   3A 0000*              	LDA	HTCUR
   072C'   3C                    	INR	A
-  072D'   CD 0B19'              	CALL	HTE
+  072D'   CD 0B31'              	CALL	HTE
   0730'   D1                    	POP	D
   0731'   7E                    	MOV	A,M
   0732'                         LY_NX:
-  0732'   32 0F8F'              	STA	NXTR
-  0735'   3A 0FBC'              	LDA	LYROW		; SCBOT = the last line shown, counted as WINROW is
+  0732'   32 1006'              	STA	NXTR
+  0735'   3A 1035'              	LDA	LYROW		; SCBOT = the last line shown, counted as WINROW is
   0738'   82                    	ADD	D
-  0739'   32 0F8A'              	STA	SCBOT
+  0739'   32 1001'              	STA	SCBOT
 	MACRO-80 3.44	09-Dec-81	PAGE	1-25
 
 
-  073C'   3A 0FBC'              	LDA	LYROW		; WINROW = row
+  073C'   3A 1035'              	LDA	LYROW		; WINROW = row
   073F'   6F                    	MOV	L,A
   0740'   26 00                 	MVI	H,0
-  0742'   22 0F82'              	SHLD	WINROW
+  0742'   22 0FF9'              	SHLD	WINROW
   0745'   EB                    	XCHG			; SCRLN = LNDLT - (row - OLDWR)
-  0746'   2A 0FBA'              	LHLD	LYDLT
+  0746'   2A 1033'              	LHLD	LYDLT
   0749'   CD 0000*              	CALL	SUBHD
   074C'   EB                    	XCHG
-  074D'   2A 0F90'              	LHLD	OLDWR
+  074D'   2A 1007'              	LHLD	OLDWR
   0750'   19                    	DAD	D
-  0751'   22 0FA6'              	SHLD	SCRLN
+  0751'   22 101D'              	SHLD	SCRLN
   0754'   3E 01                 	MVI	A,1		; the table is the screen's own, and LYQK may go
-  0756'   32 0FA8'              	STA	LYOK		;   by it while the text stays where it is
-  0759'   CD 0B4F'              	CALL	LYTOPP
+  0756'   32 101F'              	STA	LYOK		;   by it while the text stays where it is
+  0759'   CD 0B92'              	CALL	LYTOPP
   075C'   EB                    	XCHG
   075D'   2A 0000*              	LHLD	TXTBEG
   0760'   EB                    	XCHG
   0761'   CD 0000*              	CALL	SUBHD		; (kept from TXTBEG: the text is moved about)
-  0764'   22 0FAA'              	SHLD	LYTOP
+  0764'   22 1021'              	SHLD	LYTOP
   0767'   2A 0000*              	LHLD	PGTOPM
-  076A'   22 0FAC'              	SHLD	LYPG
+  076A'   22 1025'              	SHLD	LYPG
   076D'                         LY_TC:
-  076D'   CD 0D5D'              	CALL	TABCUR
-  0770'   2A 0FCB'              	LHLD	SVCNT
+  076D'   CD 0DAD'              	CALL	TABCUR
+  0770'   2A 1044'              	LHLD	SVCNT
   0773'   22 0000*              	SHLD	CMDCNT
-  0776'   2A 0FCD'              	LHLD	SVAUX
+  0776'   2A 1046'              	LHLD	SVAUX
   0779'   22 0000*              	SHLD	AUXCNT
-  077C'   3A 0FCF'              	LDA	SVDIR
+  077C'   3A 1048'              	LDA	SVDIR
   077F'   32 0000*              	STA	DIRFLG
   0782'   C9                    	RET
                                 
@@ -1526,10 +1526,10 @@
                                 ;        line is taller than the screen, or the line changed takes other rows
                                 ;        than it did.  (What is set by then LAYOUT sets again.)
   0783'                         LYQK:
-  0783'   3A 0FA8'              	LDA	LYOK
+  0783'   3A 101F'              	LDA	LYOK
   0786'   B7                    	ORA	A
   0787'   C8                    	RZ
-  0788'   CD 09E4'              	CALL	LQMV
+  0788'   CD 09FC'              	CALL	LQMV
   078B'   CA 07AD'              	JZ	LQK_G
   078E'   2A 0000*              	LHLD	LNDLT		; an edit: of the line the cursor was on
 	MACRO-80 3.44	09-Dec-81	PAGE	1-26
@@ -1548,49 +1548,49 @@
   07A8'   FE 07                 	CPI	R_DCH
   07AA'   C2 0857'              	JNZ	LQK_N
   07AD'                         LQK_G:
-  07AD'   CD 08B9'              	CALL	LQGD
+  07AD'   CD 08D1'              	CALL	LQGD
   07B0'   C2 0857'              	JNZ	LQK_N
-  07B3'   2A 0F82'              	LHLD	WINROW
+  07B3'   2A 0FF9'              	LHLD	WINROW
   07B6'   EB                    	XCHG
   07B7'   2A 0000*              	LHLD	LNDLT
   07BA'   19                    	DAD	D		; HL = the lines that would be above it
   07BB'   7C                    	MOV	A,H
   07BC'   B7                    	ORA	A
   07BD'   C2 0857'              	JNZ	LQK_N		; over the top line, or far under the last
-  07C0'   3A 0F8A'              	LDA	SCBOT
+  07C0'   3A 1001'              	LDA	SCBOT
   07C3'   BD                    	CMP	L		; CY iff it is under the last line shown
   07C4'   DA 0857'              	JC	LQK_N
-  07C7'   22 0F82'              	SHLD	WINROW
+  07C7'   22 0FF9'              	SHLD	WINROW
   07CA'   2A 0000*              	LHLD	LNDLT
-  07CD'   22 0FBA'              	SHLD	LYDLT
+  07CD'   22 1033'              	SHLD	LYDLT
   07D0'   3A 0000*              	LDA	HTCUR
   07D3'   85                    	ADD	L
   07D4'   32 0000*              	STA	HTCUR
   07D7'   21 0000               	LXI	H,0
   07DA'   22 0000*              	SHLD	LNDLT
-  07DD'   22 0FA6'              	SHLD	SCRLN
+  07DD'   22 101D'              	SHLD	SCRLN
   07E0'   2A 0000*              	LHLD	TXTBEG		; the top line is as far into the text in
   07E3'   EB                    	XCHG			;   memory as it was
-  07E4'   2A 0FAA'              	LHLD	LYTOP
+  07E4'   2A 1021'              	LHLD	LYTOP
   07E7'   19                    	DAD	D
-  07E8'   CD 0B54'              	CALL	G2P
-  07EB'   22 0FB4'              	SHLD	TOPLEN
+  07E8'   CD 0B97'              	CALL	G2P
+  07EB'   22 102D'              	SHLD	TOPLEN
   07EE'   24                    	INR	H
   07EF'   22 0000*              	SHLD	WRLIM
-  07F2'   CD 08D4'              	CALL	LQCU
-  07F5'   3A 0F82'              	LDA	WINROW
+  07F2'   CD 08EC'              	CALL	LQCU
+  07F5'   3A 0FF9'              	LDA	WINROW
   07F8'   CD 056A'              	CALL	SUMT
   07FB'   6F                    	MOV	L,A
   07FC'   26 00                 	MVI	H,0
-  07FE'   22 0F8B'              	SHLD	LYABV
+  07FE'   22 1002'              	SHLD	LYABV
   0801'   3A 0000*              	LDA	HTCUR
-  0804'   CD 0B19'              	CALL	HTE
+  0804'   CD 0B31'              	CALL	HTE
   0807'   7E                    	MOV	A,M
-  0808'   32 0F8E'              	STA	LYTSH
+  0808'   32 1005'              	STA	LYTSH
   080B'   23                    	INX	H
   080C'   46                    	MOV	B,M
-  080D'   3A 0F82'              	LDA	WINROW
-  0810'   21 0F8A'              	LXI	H,SCBOT
+  080D'   3A 0FF9'              	LDA	WINROW
+  0810'   21 1001'              	LXI	H,SCBOT
 	MACRO-80 3.44	09-Dec-81	PAGE	1-27
 
 
@@ -1599,10 +1599,10 @@
   0816'   D2 081A'              	JNC	LQK_1
   0819'   78                    	MOV	A,B
   081A'                         LQK_1:
-  081A'   32 0F8F'              	STA	NXTR
+  081A'   32 1006'              	STA	NXTR
   081D'   CD 0000*              	CALL	RGET0		; the char under the cursor in memory (TABCUR)
   0820'   E5                    	PUSH	H
-  0821'   CD 09E4'              	CALL	LQMV
+  0821'   CD 09FC'              	CALL	LQMV
   0824'   E1                    	POP	H
   0825'   C2 082D'              	JNZ	LQK_E
   0828'   CD 0000*              	CALL	RDGET
@@ -1610,14 +1610,14 @@
   082C'   C9                    	RET
                                 	;--- the line changed: the rest of it, as HTBLD reads it ---
   082D'                         LQK_E:
-  082D'   3A 0FA9'              	LDA	LQKC
+  082D'   3A 1020'              	LDA	LQKC
   0830'   5F                    	MOV	E,A
-  0831'   3A 0FB8'              	LDA	CURDCL
+  0831'   3A 1031'              	LDA	CURDCL
   0834'   93                    	SUB	E
-  0835'   32 0FBF'              	STA	LYVB
-  0838'   3A 0F8D'              	LDA	CSRAW
+  0835'   32 1038'              	STA	LYVB
+  0838'   3A 1004'              	LDA	CSRAW
   083B'   57                    	MOV	D,A
-  083C'   CD 0B42'              	CALL	LM_FL		; D = its last row
+  083C'   CD 0B85'              	CALL	LM_FL		; D = its last row
   083F'   FE 01                 	CPI	1
   0841'   CA 0857'              	JZ	LQK_N		; more rows than the screen has
   0844'   7B                    	MOV	A,E
@@ -1626,7 +1626,7 @@
   0849'   B2                    	ORA	D
   084A'   C2 0857'              	JNZ	LQK_N		; the cursor has a row to itself (LYXE)
   084D'                         LQK_2:
-  084D'   3A 0F8E'              	LDA	LYTSH
+  084D'   3A 1005'              	LDA	LYTSH
   0850'   3D                    	DCR	A
   0851'   BA                    	CMP	D
   0852'   C2 0857'              	JNZ	LQK_N		; other rows than it had
@@ -1637,114 +1637,128 @@
   0858'   C9                    	RET
                                 
                                 ;LYTP -- L = the lines to be above the cursor's (H = 0): HL = the start of
-                                ; the top line.  WM's line move finds it (LINPSB), walking back over all of
-                                ; them.  With a table that was kept (LYSTP) there is less to do: no lines
-                                ; above, and it is the cursor's line; else the top line is the old one, or
-                                ; some lines down from it, and the old one is where LYTOP says while the
-                                ; pager has left the text alone.
+                                ; the top line.  WM's line move (LINPSB) would find it, walking back over all
+                                ; of them; but HTBLD has walked back already, to the table's first line
+                                ; (HTTOPC), and the top line is that one or some lines down from it.  With a
+                                ; table that was kept (LYSTP): no lines above, and it is the cursor's line;
+                                ; else the top line is the old one, or some lines down from it, and the old
+                                ; one is where LYTOP says while the pager has left the text alone.
   0859'                         LYTP:
-  0859'   3A 0FA8'              	LDA	LYOK
+  0859'   3A 101F'              	LDA	LYOK
   085C'   B7                    	ORA	A
-  085D'   CA 0000*              	JZ	LINPSB
-  0860'   B5                    	ORA	L
-  0861'   3D                    	DCR	A		; (LYOK is 1)
-  0862'   C2 086B'              	JNZ	LT_1
-  0865'   2A 0FB6'              	LHLD	CBOL
+  085D'   C2 0878'              	JNZ	LT_0
+  0860'   45                    	MOV	B,L
+  0861'   3A 0000*              	LDA	HTCUR
+  0864'   90                    	SUB	B
 	MACRO-80 3.44	09-Dec-81	PAGE	1-28
 
 
-  0868'   C3 0B54'              	JMP	G2P
-  086B'                         LT_1:
-  086B'   E5                    	PUSH	H
-  086C'   2A 0000*              	LHLD	PGTOPM
+  0865'   DA 08CB'              	JC	LT_NO
+  0868'   4F                    	MOV	C,A		; C = the lines the top is under the table's first
+  0869'   2A 1023'              	LHLD	HTTOPC
+  086C'   CD 0B97'              	CALL	G2P
   086F'   EB                    	XCHG
-  0870'   2A 0FAC'              	LHLD	LYPG
-  0873'   CD 0000*              	CALL	CMP16
-  0876'   E1                    	POP	H
-  0877'   C2 0000*              	JNZ	LINPSB
-  087A'   45                    	MOV	B,L
-  087B'   2A 0F82'              	LHLD	WINROW
-  087E'   EB                    	XCHG
-  087F'   2A 0FBA'              	LHLD	LYDLT
-  0882'   19                    	DAD	D		; HL = the lines over it, from the old top line
-  0883'   7C                    	MOV	A,H
-  0884'   B7                    	ORA	A
-  0885'   C2 08B3'              	JNZ	LT_NO
-  0888'   7D                    	MOV	A,L
-  0889'   90                    	SUB	B
-  088A'   DA 08B3'              	JC	LT_NO
-  088D'   4F                    	MOV	C,A		; C = the lines the top goes down
-  088E'   2A 0000*              	LHLD	GAPBEG
-  0891'   EB                    	XCHG
-  0892'   D5                    	PUSH	D
-  0893'   2A 0000*              	LHLD	TXTBEG
+  0870'   2A 0000*              	LHLD	GAPBEG
+  0873'   EB                    	XCHG			; HL = the table's first line, DE = the gap
+  0874'   0C                    	INR	C
+  0875'   C3 08B5'              	JMP	LT_2
+  0878'                         LT_0:
+  0878'   7D                    	MOV	A,L
+  0879'   B7                    	ORA	A
+  087A'   C2 0883'              	JNZ	LT_1
+  087D'   2A 102F'              	LHLD	CBOL
+  0880'   C3 0B97'              	JMP	G2P
+  0883'                         LT_1:
+  0883'   E5                    	PUSH	H
+  0884'   2A 0000*              	LHLD	PGTOPM
+  0887'   EB                    	XCHG
+  0888'   2A 1025'              	LHLD	LYPG
+  088B'   CD 0000*              	CALL	CMP16
+  088E'   E1                    	POP	H
+  088F'   C2 0000*              	JNZ	LINPSB
+  0892'   45                    	MOV	B,L
+  0893'   2A 0FF9'              	LHLD	WINROW
   0896'   EB                    	XCHG
-  0897'   2A 0FAA'              	LHLD	LYTOP
-  089A'   19                    	DAD	D
-  089B'   D1                    	POP	D		; HL = the old top line, DE = the gap
-  089C'   0C                    	INR	C
-  089D'                         LT_2:
-  089D'   0D                    	DCR	C
-  089E'   C8                    	RZ
-  089F'                         LT_3:
-  089F'   7D                    	MOV	A,L
-  08A0'   BB                    	CMP	E
-  08A1'   C2 08A9'              	JNZ	LT_4
-  08A4'   7C                    	MOV	A,H
-  08A5'   BA                    	CMP	D
-  08A6'   CA 08B3'              	JZ	LT_NO		; (the gap: not as it should be)
-  08A9'                         LT_4:
-  08A9'   7E                    	MOV	A,M
-  08AA'   23                    	INX	H
-  08AB'   FE 0A                 	CPI	LF
-  08AD'   C2 089F'              	JNZ	LT_3
-  08B0'   C3 089D'              	JMP	LT_2
-  08B3'                         LT_NO:
-  08B3'   68                    	MOV	L,B
-  08B4'   26 00                 	MVI	H,0
-  08B6'   C3 0000*              	JMP	LINPSB
+  0897'   2A 1033'              	LHLD	LYDLT
+  089A'   19                    	DAD	D		; HL = the lines over it, from the old top line
+  089B'   7C                    	MOV	A,H
+  089C'   B7                    	ORA	A
+  089D'   C2 08CB'              	JNZ	LT_NO
+  08A0'   7D                    	MOV	A,L
+  08A1'   90                    	SUB	B
+  08A2'   DA 08CB'              	JC	LT_NO
+  08A5'   4F                    	MOV	C,A		; C = the lines the top goes down
+  08A6'   2A 0000*              	LHLD	GAPBEG
+  08A9'   EB                    	XCHG
+  08AA'   D5                    	PUSH	D
+  08AB'   2A 0000*              	LHLD	TXTBEG
+  08AE'   EB                    	XCHG
+  08AF'   2A 1021'              	LHLD	LYTOP
+  08B2'   19                    	DAD	D
+  08B3'   D1                    	POP	D		; HL = the old top line, DE = the gap
+  08B4'   0C                    	INR	C
+  08B5'                         LT_2:
+  08B5'   0D                    	DCR	C
+  08B6'   C8                    	RZ
+  08B7'                         LT_3:
+  08B7'   7D                    	MOV	A,L
+  08B8'   BB                    	CMP	E
+  08B9'   C2 08C1'              	JNZ	LT_4
+  08BC'   7C                    	MOV	A,H
+  08BD'   BA                    	CMP	D
+  08BE'   CA 08CB'              	JZ	LT_NO		; (the gap: not as it should be)
+  08C1'                         LT_4:
+  08C1'   7E                    	MOV	A,M
+	MACRO-80 3.44	09-Dec-81	PAGE	1-29
+
+
+  08C2'   23                    	INX	H
+  08C3'   FE 0A                 	CPI	LF
+  08C5'   C2 08B7'              	JNZ	LT_3
+  08C8'   C3 08B5'              	JMP	LT_2
+  08CB'                         LT_NO:
+  08CB'   68                    	MOV	L,B
+  08CC'   26 00                 	MVI	H,0
+  08CE'   C3 0000*              	JMP	LINPSB
                                 
                                 ;LQGD -- Z iff the table and the text are as the last frame left them, with
                                 ; nothing about that frame out of the ordinary: no line placed by the command,
                                 ; none taller than the screen or cut at the top, the pager's window where it
                                 ; was.
-  08B9'                         LQGD:
-	MACRO-80 3.44	09-Dec-81	PAGE	1-29
-
-
-  08B9'   2A 0F84'              	LHLD	SKIPR
-  08BC'   3A 0FB2'              	LDA	PLACE
-  08BF'   B4                    	ORA	H
-  08C0'   B5                    	ORA	L
-  08C1'   21 0FC9'              	LXI	H,LYXE
-  08C4'   B6                    	ORA	M
-  08C5'   21 0FA5'              	LXI	H,TALLF
-  08C8'   B6                    	ORA	M
-  08C9'   C0                    	RNZ
-  08CA'   2A 0000*              	LHLD	PGTOPM		; (and the text in memory starts where it did:
-  08CD'   EB                    	XCHG			;   the pager has not moved the window since)
-  08CE'   2A 0FAC'              	LHLD	LYPG
-  08D1'   C3 0000*              	JMP	CMP16
+  08D1'                         LQGD:
+  08D1'   2A 0FFB'              	LHLD	SKIPR
+  08D4'   3A 102B'              	LDA	PLACE
+  08D7'   B4                    	ORA	H
+  08D8'   B5                    	ORA	L
+  08D9'   21 1042'              	LXI	H,LYXE
+  08DC'   B6                    	ORA	M
+  08DD'   21 101C'              	LXI	H,TALLF
+  08E0'   B6                    	ORA	M
+  08E1'   C0                    	RNZ
+  08E2'   2A 0000*              	LHLD	PGTOPM		; (and the text in memory starts where it did:
+  08E5'   EB                    	XCHG			;   the pager has not moved the window since)
+  08E6'   2A 1025'              	LHLD	LYPG
+  08E9'   C3 0000*              	JMP	CMP16
                                 
                                 ;LQCU -- the cursor's line, as far as the cursor: CBOL, CURDCL, the row of
                                 ; the line it is on (CSRAW, and A) and the cells before it there (LQKC).
-  08D4'                         LQCU:
-  08D4'   21 0000               	LXI	H,0
-  08D7'   CD 0000*              	CALL	LINPSB
-  08DA'   E5                    	PUSH	H
-  08DB'   CD 0B54'              	CALL	G2P
-  08DE'   22 0FB6'              	SHLD	CBOL
-  08E1'   44                    	MOV	B,H
-  08E2'   4D                    	MOV	C,L
-  08E3'   E1                    	POP	H
-  08E4'   CD 0B5B'              	CALL	LNW
-  08E7'   EB                    	XCHG
-  08E8'   22 0FB8'              	SHLD	CURDCL
-  08EB'   CD 05DA'              	CALL	DIVN
-  08EE'   32 0FA9'              	STA	LQKC
-  08F1'   79                    	MOV	A,C
-  08F2'   32 0F8D'              	STA	CSRAW
-  08F5'   C9                    	RET
+  08EC'                         LQCU:
+  08EC'   21 0000               	LXI	H,0
+  08EF'   CD 0000*              	CALL	LINPSB
+  08F2'   E5                    	PUSH	H
+  08F3'   CD 0B97'              	CALL	G2P
+  08F6'   22 102F'              	SHLD	CBOL
+  08F9'   44                    	MOV	B,H
+  08FA'   4D                    	MOV	C,L
+  08FB'   E1                    	POP	H
+  08FC'   CD 0B9E'              	CALL	LNW
+  08FF'   EB                    	XCHG
+  0900'   22 1031'              	SHLD	CURDCL
+  0903'   CD 05DA'              	CALL	DIVN
+  0906'   32 1020'              	STA	LQKC
+  0909'   79                    	MOV	A,C
+  090A'   32 1004'              	STA	CSRAW
+  090D'   C9                    	RET
                                 
                                 ;LYSTP -- a move, in command mode, to a line the row table holds or the one
                                 ; next past either end of it -- 'j' on the bottom line, 'k' on the top one.
@@ -1754,170 +1768,170 @@
                                 ; CSRAW, LYTSH, and the table's ends (HTBOF, HTEOF).  LAYOUT then places the
                                 ; screen by the table as it would have.
                                 ;   out: CY when that is done; NC (BC kept) when HTBLD must: the table is not
-                                ;        the screen's, the line is farther off, taller than the screen, or
-                                ;        any of what LQGD looks for.
-  08F6'                         LYSTP:
-  08F6'   C5                    	PUSH	B
-  08F7'   CD 08FC'              	CALL	LS_GO
-  08FA'   C1                    	POP	B
-  08FB'   C9                    	RET
-  08FC'                         LS_GO:
-  08FC'   3A 0FA8'              	LDA	LYOK
-  08FF'   B7                    	ORA	A
-  0900'   C8                    	RZ
-  0901'   CD 09E4'              	CALL	LQMV
-  0904'   C2 0857'              	JNZ	LQK_N
-  0907'   CD 08B9'              	CALL	LQGD
 	MACRO-80 3.44	09-Dec-81	PAGE	1-30
 
 
-  090A'   C2 0857'              	JNZ	LQK_N
-  090D'   3A 0FC5'              	LDA	LYND
-  0910'   B7                    	ORA	A
-  0911'   C2 0857'              	JNZ	LQK_N
-  0914'   2A 0FBA'              	LHLD	LYDLT
-  0917'   3A 0000*              	LDA	HTCUR
-  091A'   5F                    	MOV	E,A
-  091B'   16 00                 	MVI	D,0
-  091D'   19                    	DAD	D		; HL = its place in the table
-  091E'   7C                    	MOV	A,H
-  091F'   A5                    	ANA	L
-  0920'   3C                    	INR	A
-  0921'   CA 0930'              	JZ	LS_C		; -1: the line over the table's first
-  0924'   7C                    	MOV	A,H
-  0925'   B7                    	ORA	A
-  0926'   C2 0857'              	JNZ	LQK_N
-  0929'   3A 0000*              	LDA	HTN
-  092C'   BD                    	CMP	L
-  092D'   DA 0857'              	JC	LQK_N
-  0930'                         LS_C:
-  0930'   7D                    	MOV	A,L
-  0931'   32 0000*              	STA	HTCUR
-  0934'   CD 08D4'              	CALL	LQCU
-  0937'   3A 0000*              	LDA	HTCUR
-  093A'   3C                    	INR	A
-  093B'   CA 095C'              	JZ	LS_M
-  093E'   3D                    	DCR	A
-  093F'   21 0000*              	LXI	H,HTN
-  0942'   BE                    	CMP	M
-  0943'   CA 095C'              	JZ	LS_M		; the line under its last
-  0946'   CD 0B19'              	CALL	HTE
-  0949'   7E                    	MOV	A,M
-  094A'   21 0F81'              	LXI	H,NEDIT
-  094D'   BE                    	CMP	M
-  094E'   D2 0857'              	JNC	LQK_N		; (a screenful: it may be taller)
-  0951'   32 0F8E'              	STA	LYTSH
-  0954'   CD 0000*              	CALL	RGET0		; the char under the cursor in memory (TABCUR)
-  0957'   CD 0000*              	CALL	RDGET
-  095A'   37                    	STC
-  095B'   C9                    	RET
+                                ;        the screen's, the line is farther off, taller than the screen, or
+                                ;        any of what LQGD looks for.
+  090E'                         LYSTP:
+  090E'   C5                    	PUSH	B
+  090F'   CD 0914'              	CALL	LS_GO
+  0912'   C1                    	POP	B
+  0913'   C9                    	RET
+  0914'                         LS_GO:
+  0914'   3A 101F'              	LDA	LYOK
+  0917'   B7                    	ORA	A
+  0918'   C8                    	RZ
+  0919'   CD 09FC'              	CALL	LQMV
+  091C'   C2 0857'              	JNZ	LQK_N
+  091F'   CD 08D1'              	CALL	LQGD
+  0922'   C2 0857'              	JNZ	LQK_N
+  0925'   3A 103E'              	LDA	LYND
+  0928'   B7                    	ORA	A
+  0929'   C2 0857'              	JNZ	LQK_N
+  092C'   2A 1033'              	LHLD	LYDLT
+  092F'   3A 0000*              	LDA	HTCUR
+  0932'   5F                    	MOV	E,A
+  0933'   16 00                 	MVI	D,0
+  0935'   19                    	DAD	D		; HL = its place in the table
+  0936'   7C                    	MOV	A,H
+  0937'   A5                    	ANA	L
+  0938'   3C                    	INR	A
+  0939'   CA 0948'              	JZ	LS_C		; -1: the line over the table's first
+  093C'   7C                    	MOV	A,H
+  093D'   B7                    	ORA	A
+  093E'   C2 0857'              	JNZ	LQK_N
+  0941'   3A 0000*              	LDA	HTN
+  0944'   BD                    	CMP	L
+  0945'   DA 0857'              	JC	LQK_N
+  0948'                         LS_C:
+  0948'   7D                    	MOV	A,L
+  0949'   32 0000*              	STA	HTCUR
+  094C'   CD 08EC'              	CALL	LQCU
+  094F'   3A 0000*              	LDA	HTCUR
+  0952'   3C                    	INR	A
+  0953'   CA 0974'              	JZ	LS_M
+  0956'   3D                    	DCR	A
+  0957'   21 0000*              	LXI	H,HTN
+  095A'   BE                    	CMP	M
+  095B'   CA 0974'              	JZ	LS_M		; the line under its last
+  095E'   CD 0B31'              	CALL	HTE
+  0961'   7E                    	MOV	A,M
+  0962'   21 0FF8'              	LXI	H,NEDIT
+  0965'   BE                    	CMP	M
+  0966'   D2 0857'              	JNC	LQK_N		; (a screenful: it may be taller)
+  0969'   32 1005'              	STA	LYTSH
+  096C'   CD 0000*              	CALL	RGET0		; the char under the cursor in memory (TABCUR)
+  096F'   CD 0000*              	CALL	RDGET
+  0972'   37                    	STC
+  0973'   C9                    	RET
                                 	;--- not in the table: the rest of the line, as HTBLD reads it ---
-  095C'                         LS_M:
-  095C'   3A 0000*              	LDA	HTN
-  095F'   3C                    	INR	A
-  0960'   CA 0857'              	JZ	LQK_N		; (no room for it)
-  0963'   3A 0FA9'              	LDA	LQKC
-  0966'   5F                    	MOV	E,A
-  0967'   3A 0FB8'              	LDA	CURDCL
-  096A'   93                    	SUB	E
-  096B'   32 0FBF'              	STA	LYVB
-  096E'   3A 0F8D'              	LDA	CSRAW
-  0971'   57                    	MOV	D,A
-  0972'   CD 0000*              	CALL	RGET0
-  0975'   CD 0B42'              	CALL	LM_FL		; D = its last row
-  0978'   F5                    	PUSH	PSW
-  0979'   FE 01                 	CPI	1
+  0974'                         LS_M:
 	MACRO-80 3.44	09-Dec-81	PAGE	1-31
 
 
-  097B'   CA 09E0'              	JZ	LS_F		; more rows than the screen has
-  097E'   7B                    	MOV	A,E
-  097F'   B7                    	ORA	A
-  0980'   C2 0987'              	JNZ	LS_1
-  0983'   B2                    	ORA	D
-  0984'   C2 09E0'              	JNZ	LS_F		; the cursor has a row to itself (LYXE)
-  0987'                         LS_1:
-  0987'   7A                    	MOV	A,D
-  0988'   3C                    	INR	A
-  0989'   32 0F8E'              	STA	LYTSH
-  098C'   3A 0000*              	LDA	HTCUR
-  098F'   3C                    	INR	A
-  0990'   C2 09CA'              	JNZ	LS_AP
-  0993'   F1                    	POP	PSW
-  0994'   3A 0000*              	LDA	HTN		; over the first: the rest move down one
-  0997'   47                    	MOV	B,A
-  0998'   CD 0B19'              	CALL	HTE
-  099B'                         LS_S:
-  099B'   78                    	MOV	A,B
-  099C'   B7                    	ORA	A
-  099D'   CA 09A9'              	JZ	LS_S1
-  09A0'   2B                    	DCX	H
-  09A1'   7E                    	MOV	A,M
-  09A2'   23                    	INX	H
-  09A3'   77                    	MOV	M,A
-  09A4'   2B                    	DCX	H
-  09A5'   05                    	DCR	B
-  09A6'   C3 099B'              	JMP	LS_S
-  09A9'                         LS_S1:
-  09A9'   3A 0F8E'              	LDA	LYTSH
-  09AC'   77                    	MOV	M,A
-  09AD'   21 0000*              	LXI	H,HTN
-  09B0'   34                    	INR	M
-  09B1'   AF                    	XRA	A
-  09B2'   32 0000*              	STA	HTCUR
-  09B5'   32 0000*              	STA	HTBOF
-  09B8'   2A 0FB6'              	LHLD	CBOL
-  09BB'   CD 0B54'              	CALL	G2P
-  09BE'   CD 0A5C'              	CALL	ISBOF
-  09C1'   37                    	STC
-  09C2'   C0                    	RNZ
-  09C3'   3E 01                 	MVI	A,1
-  09C5'   32 0000*              	STA	HTBOF
-  09C8'   37                    	STC
-  09C9'   C9                    	RET
-  09CA'                         LS_AP:
-  09CA'   3A 0F8E'              	LDA	LYTSH
-  09CD'   CD 0D47'              	CALL	HTPUT
-  09D0'   F1                    	POP	PSW
-  09D1'   FA 09D9'              	JM	LS_E		; the text ends with it
-  09D4'   CD 0D17'              	CALL	HB_PK		; ... or right after it
-  09D7'   37                    	STC
-  09D8'   C9                    	RET
-  09D9'                         LS_E:
-  09D9'   3E 01                 	MVI	A,1
-  09DB'   32 0000*              	STA	HTEOF
+  0974'   3A 0000*              	LDA	HTN
+  0977'   3C                    	INR	A
+  0978'   CA 0857'              	JZ	LQK_N		; (no room for it)
+  097B'   3A 1020'              	LDA	LQKC
+  097E'   5F                    	MOV	E,A
+  097F'   3A 1031'              	LDA	CURDCL
+  0982'   93                    	SUB	E
+  0983'   32 1038'              	STA	LYVB
+  0986'   3A 1004'              	LDA	CSRAW
+  0989'   57                    	MOV	D,A
+  098A'   CD 0000*              	CALL	RGET0
+  098D'   CD 0B85'              	CALL	LM_FL		; D = its last row
+  0990'   F5                    	PUSH	PSW
+  0991'   FE 01                 	CPI	1
+  0993'   CA 09F8'              	JZ	LS_F		; more rows than the screen has
+  0996'   7B                    	MOV	A,E
+  0997'   B7                    	ORA	A
+  0998'   C2 099F'              	JNZ	LS_1
+  099B'   B2                    	ORA	D
+  099C'   C2 09F8'              	JNZ	LS_F		; the cursor has a row to itself (LYXE)
+  099F'                         LS_1:
+  099F'   7A                    	MOV	A,D
+  09A0'   3C                    	INR	A
+  09A1'   32 1005'              	STA	LYTSH
+  09A4'   3A 0000*              	LDA	HTCUR
+  09A7'   3C                    	INR	A
+  09A8'   C2 09E2'              	JNZ	LS_AP
+  09AB'   F1                    	POP	PSW
+  09AC'   3A 0000*              	LDA	HTN		; over the first: the rest move down one
+  09AF'   47                    	MOV	B,A
+  09B0'   CD 0B31'              	CALL	HTE
+  09B3'                         LS_S:
+  09B3'   78                    	MOV	A,B
+  09B4'   B7                    	ORA	A
+  09B5'   CA 09C1'              	JZ	LS_S1
+  09B8'   2B                    	DCX	H
+  09B9'   7E                    	MOV	A,M
+  09BA'   23                    	INX	H
+  09BB'   77                    	MOV	M,A
+  09BC'   2B                    	DCX	H
+  09BD'   05                    	DCR	B
+  09BE'   C3 09B3'              	JMP	LS_S
+  09C1'                         LS_S1:
+  09C1'   3A 1005'              	LDA	LYTSH
+  09C4'   77                    	MOV	M,A
+  09C5'   21 0000*              	LXI	H,HTN
+  09C8'   34                    	INR	M
+  09C9'   AF                    	XRA	A
+  09CA'   32 0000*              	STA	HTCUR
+  09CD'   32 0000*              	STA	HTBOF
+  09D0'   2A 102F'              	LHLD	CBOL
+  09D3'   CD 0B97'              	CALL	G2P
+  09D6'   CD 0A74'              	CALL	ISBOF
+  09D9'   37                    	STC
+  09DA'   C0                    	RNZ
+  09DB'   3E 01                 	MVI	A,1
 	MACRO-80 3.44	09-Dec-81	PAGE	1-32
 
 
-  09DE'   37                    	STC
-  09DF'   C9                    	RET
-  09E0'                         LS_F:
-  09E0'   F1                    	POP	PSW
-  09E1'   C3 0857'              	JMP	LQK_N
+  09DD'   32 0000*              	STA	HTBOF
+  09E0'   37                    	STC
+  09E1'   C9                    	RET
+  09E2'                         LS_AP:
+  09E2'   3A 1005'              	LDA	LYTSH
+  09E5'   CD 0D97'              	CALL	HTPUT
+  09E8'   F1                    	POP	PSW
+  09E9'   FA 09F1'              	JM	LS_E		; the text ends with it
+  09EC'   CD 0D67'              	CALL	HB_PK		; ... or right after it
+  09EF'   37                    	STC
+  09F0'   C9                    	RET
+  09F1'                         LS_E:
+  09F1'   3E 01                 	MVI	A,1
+  09F3'   32 0000*              	STA	HTEOF
+  09F6'   37                    	STC
+  09F7'   C9                    	RET
+  09F8'                         LS_F:
+  09F8'   F1                    	POP	PSW
+  09F9'   C3 0857'              	JMP	LQK_N
                                 
                                 ;LQMV -- Z iff the key only moved the cursor, in command mode.  Keeps BC, DE.
-  09E4'                         LQMV:
-  09E4'   3A 0000*              	LDA	RINTENT
-  09E7'   FE 01                 	CPI	R_MOVE
-  09E9'   C0                    	RNZ
-  09EA'   3A 0000*              	LDA	EDMODE
-  09ED'   FE 00                 	CPI	EM_CMD
-  09EF'   C9                    	RET
+  09FC'                         LQMV:
+  09FC'   3A 0000*              	LDA	RINTENT
+  09FF'   FE 01                 	CPI	R_MOVE
+  0A01'   C0                    	RNZ
+  0A02'   3A 0000*              	LDA	EDMODE
+  0A05'   FE 00                 	CPI	EM_CMD
+  0A07'   C9                    	RET
                                 
                                 ;LYMQ -- Z iff the cursor's line is to be placed afresh: mid-screen (PLACE =
                                 ; PL_MID), or by the rows about it (LYND).  Keeps BC.
-  09F0'                         LYMQ:
-  09F0'   3A 0FB2'              	LDA	PLACE
-  09F3'   FE 02                 	CPI	PL_MID
-  09F5'   C8                    	RZ
-  09F6'   3A 0FC5'              	LDA	LYND
-  09F9'   B7                    	ORA	A
-  09FA'   CA 09FF'              	JZ	LQ_NO
-  09FD'   AF                    	XRA	A
-  09FE'   C9                    	RET
-  09FF'                         LQ_NO:
-  09FF'   3C                    	INR	A
-  0A00'   C9                    	RET
+  0A08'                         LYMQ:
+  0A08'   3A 102B'              	LDA	PLACE
+  0A0B'   FE 02                 	CPI	PL_MID
+  0A0D'   C8                    	RZ
+  0A0E'   3A 103E'              	LDA	LYND
+  0A11'   B7                    	ORA	A
+  0A12'   CA 0A17'              	JZ	LQ_NO
+  0A15'   AF                    	XRA	A
+  0A16'   C9                    	RET
+  0A17'                         LQ_NO:
+  0A17'   3C                    	INR	A
+  0A18'   C9                    	RET
                                 
                                 ;FLINE -- read forward to the end of the line the reader (HL/BC, as RDGET
                                 ; keeps them) is in.  D = the row being filled, E = the cells used in it, LYVB
@@ -1927,86 +1941,86 @@
                                 ;   A = 0    the line ended, its LF read
                                 ;   A = 1    it needs a row the screen has not got (D = NEDIT)
                                 ;   A = 0FFH the text ended
-  0A01'                         FLINE:
-  0A01'   CD 0000*              	CALL	RDGET		; (pages in on demand; keeps DE)
-  0A04'   DA 0A41'              	JC	FL_EOF
-  0A07'   32 0FCA'              	STA	LYLAST
-  0A0A'   FE 0A                 	CPI	LF
-  0A0C'   CA 0A3F'              	JZ	FL_LF
-  0A0F'   FE 0D                 	CPI	CR
-  0A11'   CA 0A01'              	JZ	FLINE		; CR contributes no display column
-  0A14'   FE 09                 	CPI	TAB
-  0A16'   CA 0A22'              	JZ	FL_TAB
-  0A19'   CD 0A44'              	CALL	FL_CEL
-  0A1C'   C2 0A01'              	JNZ	FLINE
-  0A1F'                         FL_OVR:
-  0A1F'   3E 01                 	MVI	A,1
-  0A21'   C9                    	RET
-  0A22'                         FL_TAB:
-  0A22'   3A 0FBF'              	LDA	LYVB		; TAB: the cells to the next multiple of TABWID
-  0A25'   83                    	ADD	E
+  0A19'                         FLINE:
+  0A19'   CD 0000*              	CALL	RDGET		; (pages in on demand; keeps DE)
+  0A1C'   DA 0A59'              	JC	FL_EOF
+  0A1F'   32 1043'              	STA	LYLAST
 	MACRO-80 3.44	09-Dec-81	PAGE	1-33
 
 
-  0A26'   E6 07                 	ANI	TABWID-1
-  0A28'   2F                    	CMA
-  0A29'   C6 09                 	ADI	TABWID+1
-  0A2B'   E5                    	PUSH	H
-  0A2C'   6F                    	MOV	L,A
-  0A2D'                         FT_LP:
-  0A2D'   CD 0A44'              	CALL	FL_CEL
-  0A30'   CA 0A3B'              	JZ	FT_OVR
-  0A33'   2D                    	DCR	L
-  0A34'   C2 0A2D'              	JNZ	FT_LP
-  0A37'   E1                    	POP	H
-  0A38'   C3 0A01'              	JMP	FLINE
-  0A3B'                         FT_OVR:
-  0A3B'   E1                    	POP	H
-  0A3C'   C3 0A1F'              	JMP	FL_OVR
-  0A3F'                         FL_LF:
-  0A3F'   AF                    	XRA	A
-  0A40'   C9                    	RET
-  0A41'                         FL_EOF:
-  0A41'   3E FF                 	MVI	A,0FFH
-  0A43'   C9                    	RET
+  0A22'   FE 0A                 	CPI	LF
+  0A24'   CA 0A57'              	JZ	FL_LF
+  0A27'   FE 0D                 	CPI	CR
+  0A29'   CA 0A19'              	JZ	FLINE		; CR contributes no display column
+  0A2C'   FE 09                 	CPI	TAB
+  0A2E'   CA 0A3A'              	JZ	FL_TAB
+  0A31'   CD 0A5C'              	CALL	FL_CEL
+  0A34'   C2 0A19'              	JNZ	FLINE
+  0A37'                         FL_OVR:
+  0A37'   3E 01                 	MVI	A,1
+  0A39'   C9                    	RET
+  0A3A'                         FL_TAB:
+  0A3A'   3A 1038'              	LDA	LYVB		; TAB: the cells to the next multiple of TABWID
+  0A3D'   83                    	ADD	E
+  0A3E'   E6 07                 	ANI	TABWID-1
+  0A40'   2F                    	CMA
+  0A41'   C6 09                 	ADI	TABWID+1
+  0A43'   E5                    	PUSH	H
+  0A44'   6F                    	MOV	L,A
+  0A45'                         FT_LP:
+  0A45'   CD 0A5C'              	CALL	FL_CEL
+  0A48'   CA 0A53'              	JZ	FT_OVR
+  0A4B'   2D                    	DCR	L
+  0A4C'   C2 0A45'              	JNZ	FT_LP
+  0A4F'   E1                    	POP	H
+  0A50'   C3 0A19'              	JMP	FLINE
+  0A53'                         FT_OVR:
+  0A53'   E1                    	POP	H
+  0A54'   C3 0A37'              	JMP	FL_OVR
+  0A57'                         FL_LF:
+  0A57'   AF                    	XRA	A
+  0A58'   C9                    	RET
+  0A59'                         FL_EOF:
+  0A59'   3E FF                 	MVI	A,0FFH
+  0A5B'   C9                    	RET
                                 ;FL_CEL -- one more cell on the line.  Z if that takes a row the screen has
                                 ; not got.  Keeps HL, BC.
-  0A44'                         FL_CEL:
-  0A44'   3A 0F80'              	LDA	NCOLS
-  0A47'   BB                    	CMP	E
-  0A48'   C2 0A5A'              	JNZ	FC_1
-  0A4B'   1E 00                 	MVI	E,0		; the row is full: the next one, starting NCOLS on
-  0A4D'   14                    	INR	D
-  0A4E'   E5                    	PUSH	H
-  0A4F'   21 0FBF'              	LXI	H,LYVB
-  0A52'   86                    	ADD	M
-  0A53'   77                    	MOV	M,A
-  0A54'   E1                    	POP	H
-  0A55'   3A 0F81'              	LDA	NEDIT
-  0A58'   BA                    	CMP	D
-  0A59'   C8                    	RZ
-  0A5A'                         FC_1:
-  0A5A'   1C                    	INR	E		; (NZ)
-  0A5B'   C9                    	RET
+  0A5C'                         FL_CEL:
+  0A5C'   3A 0FF7'              	LDA	NCOLS
+  0A5F'   BB                    	CMP	E
+  0A60'   C2 0A72'              	JNZ	FC_1
+  0A63'   1E 00                 	MVI	E,0		; the row is full: the next one, starting NCOLS on
+  0A65'   14                    	INR	D
+  0A66'   E5                    	PUSH	H
+  0A67'   21 1038'              	LXI	H,LYVB
+  0A6A'   86                    	ADD	M
+  0A6B'   77                    	MOV	M,A
+  0A6C'   E1                    	POP	H
+  0A6D'   3A 0FF8'              	LDA	NEDIT
+  0A70'   BA                    	CMP	D
+  0A71'   C8                    	RZ
+  0A72'                         FC_1:
+  0A72'   1C                    	INR	E		; (NZ)
+  0A73'   C9                    	RET
                                 
                                 ;ISBOF -- HL = an address in the text: Z (and A = 0) iff the file starts
+	MACRO-80 3.44	09-Dec-81	PAGE	1-34
+
+
                                 ; there -- it is the first byte in memory and no record went out before it.
-  0A5C'                         ISBOF:
-  0A5C'   EB                    	XCHG
-  0A5D'   2A 0000*              	LHLD	TXTBEG
-  0A60'   CD 0000*              	CALL	CMP16
-  0A63'   C0                    	RNZ
-  0A64'   2A 0000*              	LHLD	OUTPOS
-  0A67'   7C                    	MOV	A,H
-  0A68'   B5                    	ORA	L
-  0A69'   C9                    	RET
+  0A74'                         ISBOF:
+  0A74'   EB                    	XCHG
+  0A75'   2A 0000*              	LHLD	TXTBEG
+  0A78'   CD 0000*              	CALL	CMP16
+  0A7B'   C0                    	RNZ
+  0A7C'   2A 0000*              	LHLD	OUTPOS
+  0A7F'   7C                    	MOV	A,H
+  0A80'   B5                    	ORA	L
+  0A81'   C9                    	RET
                                 
                                 ;LYMID -- the cursor's line is to go in the middle of the screen (PLACE =
                                 ; PL_MID): LYROW = the lines that leaves above it.  This is vim's
                                 ; scroll_cursor_halfway, which counts ROWS: starting with the cursor's line,
-	MACRO-80 3.44	09-Dec-81	PAGE	1-34
-
-
                                 ; take a line below while the rows below are no more than those above, else a
                                 ; line above, until a line will not fit.  Past the end of the file a '~' row
                                 ; counts as a row below that costs nothing, so there the screen fills from
@@ -2019,203 +2033,239 @@
                                 ; LAYOUT gives up what lines it must).  If not, it is the middle after all,
                                 ; but taking the line above first when the rows are even (LYPRF: vim's
                                 ; prefer_above), which is not the same place once lines differ in height.
-  0A6A'                         LYMID:
-  0A6A'   CD 0AB6'              	CALL	LYINI
-  0A6D'   3A 0FC5'              	LDA	LYND
-  0A70'   B7                    	ORA	A
-  0A71'   CA 0A99'              	JZ	LM_LP
-  0A74'                         LM_NR:
-  0A74'   CD 0AFD'              	CALL	LMABV		; a line above and a line below, LYND times
-  0A77'   DA 0A8E'              	JC	LM_P
-  0A7A'   CD 0ACF'              	CALL	LMBLW
-  0A7D'   DA 0A8E'              	JC	LM_P
-  0A80'   21 0FC5'              	LXI	H,LYND
-  0A83'   35                    	DCR	M
-  0A84'   C2 0A74'              	JNZ	LM_NR
-  0A87'   3A 0FC7'              	LDA	LYSVR		; the screen holds them: scroll to it
-  0A8A'   32 0FBC'              	STA	LYROW
-  0A8D'   C9                    	RET
-  0A8E'                         LM_P:
-  0A8E'   AF                    	XRA	A		; it does not: the middle, above first
-  0A8F'   32 0FC5'              	STA	LYND
-  0A92'   3C                    	INR	A
-  0A93'   32 0FC6'              	STA	LYPRF
-  0A96'   C3 0A6A'              	JMP	LYMID
-  0A99'                         LM_LP:
-  0A99'   3A 0FC4'              	LDA	LYMBL
-  0A9C'   21 0FC6'              	LXI	H,LYPRF
-  0A9F'   86                    	ADD	M
-  0AA0'   47                    	MOV	B,A
-  0AA1'   3A 0FC3'              	LDA	LYMAB
-  0AA4'   B8                    	CMP	B		; CY iff fewer rows above than below (or as
-  0AA5'   DA 0AAF'              	JC	LM_U		;   many, when above goes first)
-  0AA8'   CD 0ACF'              	CALL	LMBLW
-  0AAB'   D2 0A99'              	JNC	LM_LP
-  0AAE'   C9                    	RET
-  0AAF'                         LM_U:
-  0AAF'   CD 0AFD'              	CALL	LMABV
-  0AB2'   D2 0A99'              	JNC	LM_LP
-  0AB5'   C9                    	RET
-                                
-                                ;LYINI -- the cursor's line alone: no line taken above it (LYROW) or below
-                                ; (LYIB: the next one's entry), LYUSE = its rows.  Keeps BC.
-  0AB6'                         LYINI:
-  0AB6'   AF                    	XRA	A
-  0AB7'   32 0FBC'              	STA	LYROW
-  0ABA'   32 0FC3'              	STA	LYMAB
+  0A82'                         LYMID:
+  0A82'   CD 0ACE'              	CALL	LYINI
+  0A85'   3A 103E'              	LDA	LYND
+  0A88'   B7                    	ORA	A
+  0A89'   CA 0AB1'              	JZ	LM_LP
+  0A8C'                         LM_NR:
+  0A8C'   CD 0B15'              	CALL	LMABV		; a line above and a line below, LYND times
+  0A8F'   DA 0AA6'              	JC	LM_P
+  0A92'   CD 0AE7'              	CALL	LMBLW
+  0A95'   DA 0AA6'              	JC	LM_P
+  0A98'   21 103E'              	LXI	H,LYND
+  0A9B'   35                    	DCR	M
+  0A9C'   C2 0A8C'              	JNZ	LM_NR
+  0A9F'   3A 1040'              	LDA	LYSVR		; the screen holds them: scroll to it
+  0AA2'   32 1035'              	STA	LYROW
+  0AA5'   C9                    	RET
+  0AA6'                         LM_P:
+  0AA6'   AF                    	XRA	A		; it does not: the middle, above first
+  0AA7'   32 103E'              	STA	LYND
+  0AAA'   3C                    	INR	A
+  0AAB'   32 103F'              	STA	LYPRF
+  0AAE'   C3 0A82'              	JMP	LYMID
+  0AB1'                         LM_LP:
+  0AB1'   3A 103D'              	LDA	LYMBL
+  0AB4'   21 103F'              	LXI	H,LYPRF
+  0AB7'   86                    	ADD	M
+  0AB8'   47                    	MOV	B,A
+  0AB9'   3A 103C'              	LDA	LYMAB
+  0ABC'   B8                    	CMP	B		; CY iff fewer rows above than below (or as
+  0ABD'   DA 0AC7'              	JC	LM_U		;   many, when above goes first)
 	MACRO-80 3.44	09-Dec-81	PAGE	1-35
 
 
-  0ABD'   32 0FC4'              	STA	LYMBL
-  0AC0'   3A 0000*              	LDA	HTCUR
-  0AC3'   CD 0B19'              	CALL	HTE
-  0AC6'   7E                    	MOV	A,M
-  0AC7'   32 0FC2'              	STA	LYUSE
-  0ACA'   23                    	INX	H
-  0ACB'   22 0FBD'              	SHLD	LYIB
-  0ACE'   C9                    	RET
+  0AC0'   CD 0AE7'              	CALL	LMBLW
+  0AC3'   D2 0AB1'              	JNC	LM_LP
+  0AC6'   C9                    	RET
+  0AC7'                         LM_U:
+  0AC7'   CD 0B15'              	CALL	LMABV
+  0ACA'   D2 0AB1'              	JNC	LM_LP
+  0ACD'   C9                    	RET
+                                
+                                ;LYINI -- the cursor's line alone: no line taken above it (LYROW) or below
+                                ; (LYIB: the next one's entry), LYUSE = its rows.  Keeps BC.
+  0ACE'                         LYINI:
+  0ACE'   AF                    	XRA	A
+  0ACF'   32 1035'              	STA	LYROW
+  0AD2'   32 103C'              	STA	LYMAB
+  0AD5'   32 103D'              	STA	LYMBL
+  0AD8'   3A 0000*              	LDA	HTCUR
+  0ADB'   CD 0B31'              	CALL	HTE
+  0ADE'   7E                    	MOV	A,M
+  0ADF'   32 103B'              	STA	LYUSE
+  0AE2'   23                    	INX	H
+  0AE3'   22 1036'              	SHLD	LYIB
+  0AE6'   C9                    	RET
                                 
                                 ;LMBLW -- take the next line below the ones taken -- a '~' row, once the
                                 ; text has ended.  CY if the screen has no room for it.
-  0ACF'                         LMBLW:
-  0ACF'   3A 0000*              	LDA	HTN
-  0AD2'   CD 0B19'              	CALL	HTE
-  0AD5'   EB                    	XCHG
-  0AD6'   2A 0FBD'              	LHLD	LYIB
-  0AD9'   CD 0000*              	CALL	CMP16		; Z iff the table has no more
-  0ADC'   C2 0AEB'              	JNZ	LB_1
-  0ADF'   3A 0000*              	LDA	HTEOF		; ... because the rows ran out: no room
-  0AE2'   B7                    	ORA	A
-  0AE3'   37                    	STC
-  0AE4'   C8                    	RZ
-  0AE5'   21 0FC4'              	LXI	H,LYMBL		; ... because the text did: a '~' row
-  0AE8'   34                    	INR	M
-  0AE9'   B7                    	ORA	A
-  0AEA'   C9                    	RET
-  0AEB'                         LB_1:
-  0AEB'   7E                    	MOV	A,M
-  0AEC'   CD 0B21'              	CALL	LM_ADD
-  0AEF'   D8                    	RC
-  0AF0'   21 0FC4'              	LXI	H,LYMBL
-  0AF3'   86                    	ADD	M
-  0AF4'   77                    	MOV	M,A
-  0AF5'   2A 0FBD'              	LHLD	LYIB
-  0AF8'   23                    	INX	H
-  0AF9'   22 0FBD'              	SHLD	LYIB
-  0AFC'   C9                    	RET
+  0AE7'                         LMBLW:
+  0AE7'   3A 0000*              	LDA	HTN
+  0AEA'   CD 0B31'              	CALL	HTE
+  0AED'   EB                    	XCHG
+  0AEE'   2A 1036'              	LHLD	LYIB
+  0AF1'   CD 0000*              	CALL	CMP16		; Z iff the table has no more
+  0AF4'   C2 0B03'              	JNZ	LB_1
+  0AF7'   3A 0000*              	LDA	HTEOF		; ... because the rows ran out: no room
+  0AFA'   B7                    	ORA	A
+  0AFB'   37                    	STC
+  0AFC'   C8                    	RZ
+  0AFD'   21 103D'              	LXI	H,LYMBL		; ... because the text did: a '~' row
+  0B00'   34                    	INR	M
+  0B01'   B7                    	ORA	A
+  0B02'   C9                    	RET
+  0B03'                         LB_1:
+  0B03'   7E                    	MOV	A,M
+  0B04'   CD 0B39'              	CALL	LM_ADD
+  0B07'   D8                    	RC
+  0B08'   21 103D'              	LXI	H,LYMBL
+  0B0B'   86                    	ADD	M
+  0B0C'   77                    	MOV	M,A
+  0B0D'   2A 1036'              	LHLD	LYIB
+  0B10'   23                    	INX	H
+  0B11'   22 1036'              	SHLD	LYIB
+  0B14'   C9                    	RET
                                 
                                 ;LMABV -- take the next line above the ones taken (LYROW counts them).
                                 ; CY if the table has none, or the screen has no room for it.
-  0AFD'                         LMABV:
-  0AFD'   21 0FBC'              	LXI	H,LYROW
-  0B00'   3A 0000*              	LDA	HTCUR
-  0B03'   96                    	SUB	M
-  0B04'   37                    	STC
-  0B05'   C8                    	RZ
-  0B06'   3D                    	DCR	A
-  0B07'   CD 0B19'              	CALL	HTE
-  0B0A'   7E                    	MOV	A,M
-  0B0B'   CD 0B21'              	CALL	LM_ADD
-  0B0E'   D8                    	RC
-  0B0F'   21 0FC3'              	LXI	H,LYMAB
-  0B12'   86                    	ADD	M
-  0B13'   77                    	MOV	M,A
-  0B14'   21 0FBC'              	LXI	H,LYROW
-  0B17'   34                    	INR	M
+  0B15'                         LMABV:
+  0B15'   21 1035'              	LXI	H,LYROW
 	MACRO-80 3.44	09-Dec-81	PAGE	1-36
 
 
-  0B18'   C9                    	RET
+  0B18'   3A 0000*              	LDA	HTCUR
+  0B1B'   96                    	SUB	M
+  0B1C'   37                    	STC
+  0B1D'   C8                    	RZ
+  0B1E'   3D                    	DCR	A
+  0B1F'   CD 0B31'              	CALL	HTE
+  0B22'   7E                    	MOV	A,M
+  0B23'   CD 0B39'              	CALL	LM_ADD
+  0B26'   D8                    	RC
+  0B27'   21 103C'              	LXI	H,LYMAB
+  0B2A'   86                    	ADD	M
+  0B2B'   77                    	MOV	M,A
+  0B2C'   21 1035'              	LXI	H,LYROW
+  0B2F'   34                    	INR	M
+  0B30'   C9                    	RET
                                 
                                 ;HTE -- HL -> the row table's entry A.  Keeps A, BC.
-  0B19'                         HTE:
-  0B19'   5F                    	MOV	E,A
-  0B1A'   16 00                 	MVI	D,0
-  0B1C'   21 0000*              	LXI	H,HTAB
-  0B1F'   19                    	DAD	D
-  0B20'   C9                    	RET
+  0B31'                         HTE:
+  0B31'   5F                    	MOV	E,A
+  0B32'   16 00                 	MVI	D,0
+  0B34'   21 0000*              	LXI	H,HTAB
+  0B37'   19                    	DAD	D
+  0B38'   C9                    	RET
                                 
                                 ;LM_ADD -- A = a line's rows: CY if the screen has not that many left, else
                                 ; they are taken (LYUSE) and A is kept.
-  0B21'                         LM_ADD:
-  0B21'   47                    	MOV	B,A
-  0B22'   3A 0FC2'              	LDA	LYUSE
-  0B25'   80                    	ADD	B
-  0B26'   D8                    	RC
-  0B27'   4F                    	MOV	C,A
-  0B28'   3A 0F81'              	LDA	NEDIT
-  0B2B'   B9                    	CMP	C		; CY iff NEDIT < the rows that would make
-  0B2C'   D8                    	RC
-  0B2D'   79                    	MOV	A,C
-  0B2E'   32 0FC2'              	STA	LYUSE
-  0B31'   78                    	MOV	A,B
-  0B32'   C9                    	RET
+  0B39'                         LM_ADD:
+  0B39'   47                    	MOV	B,A
+  0B3A'   3A 103B'              	LDA	LYUSE
+  0B3D'   80                    	ADD	B
+  0B3E'   D8                    	RC
+  0B3F'   4F                    	MOV	C,A
+  0B40'   3A 0FF8'              	LDA	NEDIT
+  0B43'   B9                    	CMP	C		; CY iff NEDIT < the rows that would make
+  0B44'   D8                    	RC
+  0B45'   79                    	MOV	A,C
+  0B46'   32 103B'              	STA	LYUSE
+  0B49'   78                    	MOV	A,B
+  0B4A'   C9                    	RET
                                 
                                 ;LM_NX -- read the next line below: D = its last row, counted from 0.  A and
                                 ; the flags are FLINE's answer.  The reader is kept in RDHL/RDBC between
                                 ; lines, the registers being wanted for the lines above.
+                                ; A line that is in memory to its LF is measured where it lies (LNW), as the
+                                ; lines above the cursor's are; FLINE, a char at a time through RDGET, reads
+                                ; the one the bytes run out in, and the one taller than the screen.
                                 ;LM_FL -- the same, from where D, E, LYVB and the reader (HL/BC) stand.
-  0B33'                         LM_NX:
-  0B33'   11 0000               	LXI	D,0
-  0B36'   AF                    	XRA	A
-  0B37'   32 0FBF'              	STA	LYVB
-  0B3A'   2A 0FD6'              	LHLD	RDBC
-  0B3D'   44                    	MOV	B,H
-  0B3E'   4D                    	MOV	C,L
-  0B3F'   2A 0FD4'              	LHLD	RDHL
-  0B42'                         LM_FL:
-  0B42'   CD 0A01'              	CALL	FLINE
-  0B45'   22 0FD4'              	SHLD	RDHL
-  0B48'   60                    	MOV	H,B
-  0B49'   69                    	MOV	L,C
-  0B4A'   22 0FD6'              	SHLD	RDBC
-  0B4D'   B7                    	ORA	A
-  0B4E'   C9                    	RET
+  0B4B'                         LM_NX:
+  0B4B'   AF                    	XRA	A
+  0B4C'   32 1038'              	STA	LYVB
+  0B4F'   2A 104F'              	LHLD	RDBC
+  0B52'   44                    	MOV	B,H
+  0B53'   4D                    	MOV	C,L
+  0B54'   2A 104D'              	LHLD	RDHL
+  0B57'   E5                    	PUSH	H
+  0B58'   C5                    	PUSH	B
+	MACRO-80 3.44	09-Dec-81	PAGE	1-37
+
+
+  0B59'   CD 0B9E'              	CALL	LNW		; DE = its width; CY: it ended, LF and all
+  0B5C'   D2 0B80'              	JNC	LN_SL
+  0B5F'   E5                    	PUSH	H
+  0B60'   C5                    	PUSH	B
+  0B61'   EB                    	XCHG
+  0B62'   CD 05D3'              	CALL	XTRA		; BC = its rows past the first
+  0B65'   78                    	MOV	A,B
+  0B66'   B7                    	ORA	A
+  0B67'   51                    	MOV	D,C
+  0B68'   C1                    	POP	B
+  0B69'   E1                    	POP	H
+  0B6A'   C2 0B80'              	JNZ	LN_SL
+  0B6D'   3A 0FF8'              	LDA	NEDIT
+  0B70'   3D                    	DCR	A
+  0B71'   BA                    	CMP	D		; CY iff more rows than the screen has
+  0B72'   DA 0B80'              	JC	LN_SL
+  0B75'   F1                    	POP	PSW		; (the line's start is not wanted)
+  0B76'   F1                    	POP	PSW
+  0B77'   3E 0A                 	MVI	A,LF
+  0B79'   32 1043'              	STA	LYLAST
+  0B7C'   AF                    	XRA	A
+  0B7D'   C3 0B88'              	JMP	LM_ST
+  0B80'                         LN_SL:
+  0B80'   C1                    	POP	B
+  0B81'   E1                    	POP	H
+  0B82'   11 0000               	LXI	D,0
+  0B85'                         LM_FL:
+  0B85'   CD 0A19'              	CALL	FLINE
+  0B88'                         LM_ST:
+  0B88'   22 104D'              	SHLD	RDHL
+  0B8B'   60                    	MOV	H,B
+  0B8C'   69                    	MOV	L,C
+  0B8D'   22 104F'              	SHLD	RDBC
+  0B90'   B7                    	ORA	A
+  0B91'   C9                    	RET
                                 
                                 ;LYTOPP -- HL = the top line's start, BC = TOPLEN, the bytes from there to
                                 ; the cursor.
                                 ;G2P -- HL = a count of bytes back from the cursor: HL = that address.  And
                                 ; the other way about: an address in, its count out.  A refill moves the text,
                                 ; so anything kept across a forward read is kept as the count.  Keeps BC.
-  0B4F'                         LYTOPP:
-  0B4F'   2A 0FB4'              	LHLD	TOPLEN
-  0B52'   44                    	MOV	B,H
-  0B53'   4D                    	MOV	C,L
-	MACRO-80 3.44	09-Dec-81	PAGE	1-37
-
-
-  0B54'                         G2P:
-  0B54'   EB                    	XCHG
-  0B55'   2A 0000*              	LHLD	GAPBEG
-  0B58'   C3 0000*              	JMP	SUBHD
+  0B92'                         LYTOPP:
+  0B92'   2A 102D'              	LHLD	TOPLEN
+  0B95'   44                    	MOV	B,H
+  0B96'   4D                    	MOV	C,L
+  0B97'                         G2P:
+  0B97'   EB                    	XCHG
+  0B98'   2A 0000*              	LHLD	GAPBEG
+  0B9B'   C3 0000*              	JMP	SUBHD
                                 
                                 ;LNW -- measure one line.  HL = its text, BC = the bytes there are: DE = its
                                 ; width in columns (tabs expanded), HL/BC past it.  CY when it ended with its
                                 ; LF, NC when the bytes ran out first.
-  0B5B'                         LNW:
-  0B5B'   11 0000               	LXI	D,0
-  0B5E'                         LNW_LP:
-  0B5E'   78                    	MOV	A,B
-  0B5F'   B1                    	ORA	C
-  0B60'   C8                    	RZ
-  0B61'   7E                    	MOV	A,M
-  0B62'   23                    	INX	H
-  0B63'   0B                    	DCX	B
-  0B64'   FE 0A                 	CPI	LF
-  0B66'   CA 0B7B'              	JZ	LNW_LF
-  0B69'   FE 0D                 	CPI	CR
-  0B6B'   CA 0B5E'              	JZ	LNW_LP		; CR contributes no display column
-  0B6E'   FE 09                 	CPI	TAB
-  0B70'   C2 0B77'              	JNZ	LNW_1
-  0B73'   7B                    	MOV	A,E		; TAB: to the next multiple of TABWID
-  0B74'   F6 07                 	ORI	TABWID-1
-  0B76'   5F                    	MOV	E,A
-  0B77'                         LNW_1:
-  0B77'   13                    	INX	D
-  0B78'   C3 0B5E'              	JMP	LNW_LP
-  0B7B'                         LNW_LF:
-  0B7B'   37                    	STC
-  0B7C'   C9                    	RET
+  0B9E'                         LNW:
+  0B9E'   11 0000               	LXI	D,0
+  0BA1'                         LNW_LP:
+	MACRO-80 3.44	09-Dec-81	PAGE	1-38
+
+
+  0BA1'   78                    	MOV	A,B
+  0BA2'   B1                    	ORA	C
+  0BA3'   C8                    	RZ
+  0BA4'   7E                    	MOV	A,M
+  0BA5'   23                    	INX	H
+  0BA6'   0B                    	DCX	B
+  0BA7'   FE 20                 	CPI	' '
+  0BA9'   D2 0BBF'              	JNC	LNW_1		; (nearly all of them: asked first)
+  0BAC'   FE 0A                 	CPI	LF
+  0BAE'   CA 0BC3'              	JZ	LNW_LF
+  0BB1'   FE 0D                 	CPI	CR
+  0BB3'   CA 0BA1'              	JZ	LNW_LP		; CR contributes no display column
+  0BB6'   FE 09                 	CPI	TAB
+  0BB8'   C2 0BBF'              	JNZ	LNW_1
+  0BBB'   7B                    	MOV	A,E		; TAB: to the next multiple of TABWID
+  0BBC'   F6 07                 	ORI	TABWID-1
+  0BBE'   5F                    	MOV	E,A
+  0BBF'                         LNW_1:
+  0BBF'   13                    	INX	D
+  0BC0'   C3 0BA1'              	JMP	LNW_LP
+  0BC3'                         LNW_LF:
+  0BC3'   37                    	STC
+  0BC4'   C9                    	RET
                                 
                                 ;LYFAR -- vim's rule (NOT WordMaster, vim 9.1's update_topline) for a cursor
                                 ; line that moved off the screen.  Above the top line it counts LINES: up to
@@ -2223,47 +2273,47 @@
                                 ; and it goes in the middle (PL_MID).  Below, the line is some lines under the
                                 ; last one that showed whole (SCBOT): more than NEDIT of them is the middle
                                 ; too; fewer, and it is a matter of ROWS, which LYMID settles (LYND).
-  0B7D'                         LYFAR:
-  0B7D'   2A 0F82'              	LHLD	WINROW
-  0B80'   EB                    	XCHG
-  0B81'   2A 0000*              	LHLD	LNDLT
-  0B84'   19                    	DAD	D		; HL = the lines from the top line to it (signed)
-  0B85'   7C                    	MOV	A,H
-  0B86'   B7                    	ORA	A
-  0B87'   F2 0B9E'              	JP	LF_DN
-  0B8A'   3A 0F81'              	LDA	NEDIT
-  0B8D'   B7                    	ORA	A
-  0B8E'   1F                    	RAR
-  0B8F'   D6 02                 	SUI	2
-  0B91'   5F                    	MOV	E,A
-  0B92'   16 00                 	MVI	D,0
-  0B94'   19                    	DAD	D		; above: row + NEDIT/2 - 2 < 0 is far
-  0B95'   7C                    	MOV	A,H
-  0B96'   B7                    	ORA	A
-	MACRO-80 3.44	09-Dec-81	PAGE	1-38
+  0BC5'                         LYFAR:
+  0BC5'   2A 0FF9'              	LHLD	WINROW
+  0BC8'   EB                    	XCHG
+  0BC9'   2A 0000*              	LHLD	LNDLT
+  0BCC'   19                    	DAD	D		; HL = the lines from the top line to it (signed)
+  0BCD'   7C                    	MOV	A,H
+  0BCE'   B7                    	ORA	A
+  0BCF'   F2 0BE6'              	JP	LF_DN
+  0BD2'   3A 0FF8'              	LDA	NEDIT
+  0BD5'   B7                    	ORA	A
+  0BD6'   1F                    	RAR
+  0BD7'   D6 02                 	SUI	2
+  0BD9'   5F                    	MOV	E,A
+  0BDA'   16 00                 	MVI	D,0
+  0BDC'   19                    	DAD	D		; above: row + NEDIT/2 - 2 < 0 is far
+  0BDD'   7C                    	MOV	A,H
+  0BDE'   B7                    	ORA	A
+  0BDF'   F0                    	RP
+  0BE0'                         LF_FAR:
+  0BE0'   3E 02                 	MVI	A,PL_MID
+  0BE2'   32 102B'              	STA	PLACE
+  0BE5'   C9                    	RET
+  0BE6'                         LF_DN:
+  0BE6'   3A 1001'              	LDA	SCBOT
+  0BE9'   3C                    	INR	A
+  0BEA'   5F                    	MOV	E,A
+	MACRO-80 3.44	09-Dec-81	PAGE	1-39
 
 
-  0B97'   F0                    	RP
-  0B98'                         LF_FAR:
-  0B98'   3E 02                 	MVI	A,PL_MID
-  0B9A'   32 0FB2'              	STA	PLACE
-  0B9D'   C9                    	RET
-  0B9E'                         LF_DN:
-  0B9E'   3A 0F8A'              	LDA	SCBOT
-  0BA1'   3C                    	INR	A
-  0BA2'   5F                    	MOV	E,A
-  0BA3'   16 00                 	MVI	D,0
-  0BA5'   CD 0000*              	CALL	SUBHD		; HL = the lines it is under the last one shown,
-  0BA8'   7C                    	MOV	A,H		;   less one
-  0BA9'   B7                    	ORA	A
-  0BAA'   F8                    	RM			; on the screen
-  0BAB'   C2 0B98'              	JNZ	LF_FAR
-  0BAE'   3A 0F81'              	LDA	NEDIT
-  0BB1'   BD                    	CMP	L		; CY iff NEDIT < that
-  0BB2'   DA 0B98'              	JC	LF_FAR
-  0BB5'   7D                    	MOV	A,L
-  0BB6'   32 0FC5'              	STA	LYND		; (0: the line right under it only ever scrolls)
-  0BB9'   C9                    	RET
+  0BEB'   16 00                 	MVI	D,0
+  0BED'   CD 0000*              	CALL	SUBHD		; HL = the lines it is under the last one shown,
+  0BF0'   7C                    	MOV	A,H		;   less one
+  0BF1'   B7                    	ORA	A
+  0BF2'   F8                    	RM			; on the screen
+  0BF3'   C2 0BE0'              	JNZ	LF_FAR
+  0BF6'   3A 0FF8'              	LDA	NEDIT
+  0BF9'   BD                    	CMP	L		; CY iff NEDIT < that
+  0BFA'   DA 0BE0'              	JC	LF_FAR
+  0BFD'   7D                    	MOV	A,L
+  0BFE'   32 103E'              	STA	LYND		; (0: the line right under it only ever scrolls)
+  0C01'   C9                    	RET
                                 
                                 ;HTBLD -- the rows each line about the cursor takes, in file order, in
                                 ; HTAB[0..HTN): what the layout places the screen by, and the scrolls, which
@@ -2287,280 +2337,285 @@
                                 ; past text that filled the row above (an insert at the end of a line just as
                                 ; wide as the screen).
                                 ; LINPSB runs WM's SETCNT: the caller keeps the count (CMD.MAC ZSAVE).
-  0BBA'                         HTBLD:
-  0BBA'   79                    	MOV	A,C
-  0BBB'   32 0FC8'              	STA	HTLIM
-  0BBE'   AF                    	XRA	A
-  0BBF'   32 0000*              	STA	HTN
-  0BC2'   32 0FA8'              	STA	LYOK		; (not the screen's until LAYOUT says so)
-  0BC5'   32 0000*              	STA	HTEOF
-  0BC8'   32 0000*              	STA	HTBOF
-  0BCB'   32 0FC9'              	STA	LYXE
-  0BCE'   32 0FA5'              	STA	TALLF
-  0BD1'   68                    	MOV	L,B
-  0BD2'   67                    	MOV	H,A
-	MACRO-80 3.44	09-Dec-81	PAGE	1-39
-
-
-  0BD3'   CD 0000*              	CALL	LINPSB		; HL = the highest of them (paged back if needed);
-  0BD6'   F5                    	PUSH	PSW		;   CY: memory would not hold them all
-  0BD7'   E5                    	PUSH	H
-  0BD8'   CD 0A5C'              	CALL	ISBOF
-  0BDB'   C2 0BE2'              	JNZ	HB_1
-  0BDE'   3C                    	INR	A
-  0BDF'   32 0000*              	STA	HTBOF
-  0BE2'                         HB_1:
-  0BE2'   E1                    	POP	H
-  0BE3'   E5                    	PUSH	H
-  0BE4'   CD 0B54'              	CALL	G2P		; HL = the bytes from there to the cursor
-  0BE7'   E5                    	PUSH	H
-  0BE8'   3A 0F80'              	LDA	NCOLS		; LYLIM = those, or the bytes a screen's rows
-  0BEB'   C6 02                 	ADI	2		;   hold, a line end to each, if that is fewer:
-  0BED'   6F                    	MOV	L,A		;   lines farther up are too big to be shown with
-  0BEE'   26 00                 	MVI	H,0		;   the cursor's, and held in memory they would
-  0BF0'   3A 0F81'              	LDA	NEDIT		;   leave no room to read down
-  0BF3'   CD 0E52'              	CALL	MULHA
-  0BF6'   D1                    	POP	D
-  0BF7'   42                    	MOV	B,D
-  0BF8'   4B                    	MOV	C,E
-  0BF9'   CD 0000*              	CALL	CMP16		; CY iff there are fewer than that
-  0BFC'   D2 0C00'              	JNC	HB_LM
-  0BFF'   EB                    	XCHG
-  0C00'                         HB_LM:
-  0C00'   22 0FC0'              	SHLD	LYLIM
-  0C03'   E1                    	POP	H
-  0C04'   F1                    	POP	PSW
-  0C05'   D2 0C0F'              	JNC	HB_AB
-  0C08'   3A 0000*              	LDA	HTBOF
-  0C0B'   B7                    	ORA	A
-  0C0C'   CC 0B5B'              	CZ	LNW		; ... and what it does hold need not start with
-                                				;   a line: the table starts at the next one
-  0C0F'                         HB_AB:
-  0C0F'   C5                    	PUSH	B		; (CBOL, if this turns out to be the cursor's)
-  0C10'   CD 0B5B'              	CALL	LNW		; DE = a line's width; CY: it ended, LF and all
-  0C13'   D2 0C36'              	JNC	HB_CU
-  0C16'   E3                    	XTHL			; (that count is not wanted; the pointer is)
-  0C17'   C5                    	PUSH	B
-  0C18'   EB                    	XCHG
-  0C19'   CD 05D3'              	CALL	XTRA		; BC = its rows past the first
-  0C1C'   78                    	MOV	A,B
-  0C1D'   B7                    	ORA	A
-  0C1E'   C2 0C2B'              	JNZ	HB_TA
-  0C21'   3A 0F81'              	LDA	NEDIT
-  0C24'   3D                    	DCR	A
-  0C25'   B9                    	CMP	C		; CY iff more rows than the screen has
-  0C26'   79                    	MOV	A,C
-  0C27'   3C                    	INR	A
-  0C28'   D2 0C2E'              	JNC	HB_PA
-  0C2B'                         HB_TA:
-  0C2B'   3A 0F81'              	LDA	NEDIT
-  0C2E'                         HB_PA:
-  0C2E'   CD 0D47'              	CALL	HTPUT
-  0C31'   C1                    	POP	B
-  0C32'   E1                    	POP	H
+  0C02'                         HTBLD:
+  0C02'   79                    	MOV	A,C
+  0C03'   32 1041'              	STA	HTLIM
+  0C06'   AF                    	XRA	A
+  0C07'   32 0000*              	STA	HTN
+  0C0A'   32 101F'              	STA	LYOK		; (not the screen's until LAYOUT says so)
+  0C0D'   32 0000*              	STA	HTEOF
+  0C10'   32 0000*              	STA	HTBOF
+  0C13'   32 1042'              	STA	LYXE
+  0C16'   32 101C'              	STA	TALLF
+  0C19'   68                    	MOV	L,B
+  0C1A'   67                    	MOV	H,A
+  0C1B'   CD 0000*              	CALL	LINPSB		; HL = the highest of them (paged back if needed);
+  0C1E'   F5                    	PUSH	PSW		;   CY: memory would not hold them all
+  0C1F'   E5                    	PUSH	H
+  0C20'   CD 0A74'              	CALL	ISBOF
+  0C23'   C2 0C2A'              	JNZ	HB_1
+  0C26'   3C                    	INR	A
+  0C27'   32 0000*              	STA	HTBOF
+  0C2A'                         HB_1:
+  0C2A'   E1                    	POP	H
 	MACRO-80 3.44	09-Dec-81	PAGE	1-40
 
 
-  0C33'   C3 0C0F'              	JMP	HB_AB
-  0C36'                         HB_CU:
-  0C36'   EB                    	XCHG
-  0C37'   22 0FB8'              	SHLD	CURDCL
-  0C3A'   E1                    	POP	H
-  0C3B'   22 0FB6'              	SHLD	CBOL
-  0C3E'   EB                    	XCHG			; none of it spilled while reading down: the
-  0C3F'   2A 0FC0'              	LHLD	LYLIM		;   lines measured (LYLIM), and all of the
-  0C42'   CD 0000*              	CALL	CMP16		;   cursor's own up to here
-  0C45'   DA 0C49'              	JC	HB_WL
-  0C48'   EB                    	XCHG
-  0C49'                         HB_WL:
-  0C49'   24                    	INR	H
-  0C4A'   22 0000*              	SHLD	WRLIM
-  0C4D'   3A 0000*              	LDA	HTN
-  0C50'   32 0000*              	STA	HTCUR
-  0C53'   2A 0FB8'              	LHLD	CURDCL
-  0C56'   CD 05DA'              	CALL	DIVN		; BC = rows into the line, A = cells used there
-  0C59'   5F                    	MOV	E,A
-  0C5A'   3A 0FB8'              	LDA	CURDCL
-  0C5D'   93                    	SUB	E
-  0C5E'   32 0FBF'              	STA	LYVB		; the column the cursor's row starts at
-  0C61'   D5                    	PUSH	D		; (E: the cells used in the cursor's row)
-  0C62'   2A 0F84'              	LHLD	SKIPR
-  0C65'   50                    	MOV	D,B
-  0C66'   59                    	MOV	E,C
-  0C67'   CD 0000*              	CALL	CMP16		; CY iff the cursor's row is above the first shown
-  0C6A'   EB                    	XCHG			; HL = the cursor's row of the line, DE = SKIPR
-  0C6B'   DA 0C89'              	JC	HB_SS		; then that is the first
-  0C6E'   CD 0000*              	CALL	SUBHD		; HL = the rows from the first shown to it
-  0C71'   7C                    	MOV	A,H
-  0C72'   B7                    	ORA	A
-  0C73'   C2 0C7F'              	JNZ	HB_SD
-  0C76'   3A 0F81'              	LDA	NEDIT
-  0C79'   3D                    	DCR	A
-  0C7A'   BD                    	CMP	L		; CY iff that is under the last edit row
-  0C7B'   EB                    	XCHG			; HL = SKIPR, as it was
-  0C7C'   D2 0C89'              	JNC	HB_SS
-  0C7F'                         HB_SD:
-  0C7F'   3A 0F81'              	LDA	NEDIT		; then it is the last: SKIPR = its row - NEDIT + 1
-  0C82'   2F                    	CMA
-  0C83'   6F                    	MOV	L,A
-  0C84'   26 FF                 	MVI	H,0FFH
-  0C86'   23                    	INX	H
-  0C87'   23                    	INX	H
-  0C88'   09                    	DAD	B
-  0C89'                         HB_SS:
-  0C89'   22 0F84'              	SHLD	SKIPR
-  0C8C'   EB                    	XCHG
-  0C8D'   60                    	MOV	H,B
-  0C8E'   69                    	MOV	L,C
-  0C8F'   CD 0000*              	CALL	SUBHD		; HL = the cursor's row of what is shown of it
-  0C92'   7D                    	MOV	A,L
-  0C93'   32 0F8D'              	STA	CSRAW
-  0C96'   D1                    	POP	D
-  0C97'   57                    	MOV	D,A
+  0C2B'   E5                    	PUSH	H
+  0C2C'   CD 0B97'              	CALL	G2P		; HL = the bytes from there to the cursor
+  0C2F'   E5                    	PUSH	H
+  0C30'   3A 0FF7'              	LDA	NCOLS		; LYLIM = those, or the bytes a screen's rows
+  0C33'   C6 02                 	ADI	2		;   hold, a line end to each, if that is fewer:
+  0C35'   6F                    	MOV	L,A		;   lines farther up are too big to be shown with
+  0C36'   26 00                 	MVI	H,0		;   the cursor's, and held in memory they would
+  0C38'   3A 0FF8'              	LDA	NEDIT		;   leave no room to read down
+  0C3B'   CD 0EC9'              	CALL	MULHA
+  0C3E'   D1                    	POP	D
+  0C3F'   42                    	MOV	B,D
+  0C40'   4B                    	MOV	C,E
+  0C41'   CD 0000*              	CALL	CMP16		; CY iff there are fewer than that
+  0C44'   D2 0C48'              	JNC	HB_LM
+  0C47'   EB                    	XCHG
+  0C48'                         HB_LM:
+  0C48'   22 1039'              	SHLD	LYLIM
+  0C4B'   E1                    	POP	H
+  0C4C'   F1                    	POP	PSW
+  0C4D'   D2 0C57'              	JNC	HB_A0
+  0C50'   3A 0000*              	LDA	HTBOF
+  0C53'   B7                    	ORA	A
+  0C54'   CC 0B9E'              	CZ	LNW		; ... and what it does hold need not start with
+                                				;   a line: the table starts at the next one
+  0C57'                         HB_A0:
+  0C57'   E5                    	PUSH	H
+  0C58'   CD 0B97'              	CALL	G2P
+  0C5B'   22 1023'              	SHLD	HTTOPC		; (LYTP: the top line is found from here)
+  0C5E'   E1                    	POP	H
+  0C5F'                         HB_AB:
+  0C5F'   C5                    	PUSH	B		; (CBOL, if this turns out to be the cursor's)
+  0C60'   CD 0B9E'              	CALL	LNW		; DE = a line's width; CY: it ended, LF and all
+  0C63'   D2 0C86'              	JNC	HB_CU
+  0C66'   E3                    	XTHL			; (that count is not wanted; the pointer is)
+  0C67'   C5                    	PUSH	B
+  0C68'   EB                    	XCHG
+  0C69'   CD 05D3'              	CALL	XTRA		; BC = its rows past the first
+  0C6C'   78                    	MOV	A,B
+  0C6D'   B7                    	ORA	A
+  0C6E'   C2 0C7B'              	JNZ	HB_TA
+  0C71'   3A 0FF8'              	LDA	NEDIT
+  0C74'   3D                    	DCR	A
+  0C75'   B9                    	CMP	C		; CY iff more rows than the screen has
+  0C76'   79                    	MOV	A,C
+  0C77'   3C                    	INR	A
+  0C78'   D2 0C7E'              	JNC	HB_PA
+  0C7B'                         HB_TA:
+  0C7B'   3A 0FF8'              	LDA	NEDIT
+  0C7E'                         HB_PA:
+  0C7E'   CD 0D97'              	CALL	HTPUT
+  0C81'   C1                    	POP	B
+  0C82'   E1                    	POP	H
+  0C83'   C3 0C5F'              	JMP	HB_AB
+  0C86'                         HB_CU:
+  0C86'   EB                    	XCHG
+  0C87'   22 1031'              	SHLD	CURDCL
 	MACRO-80 3.44	09-Dec-81	PAGE	1-41
 
 
-  0C98'   CD 0000*              	CALL	RGET0
-  0C9B'   CD 0B42'              	CALL	LM_FL		; the rest of the line: D = its last row
-  0C9E'   F5                    	PUSH	PSW
-  0C9F'   FE 01                 	CPI	1
-  0CA1'   CA 0D30'              	JZ	HB_TO		; more rows than the screen has
-  0CA4'   2A 0F84'              	LHLD	SKIPR
-  0CA7'   7C                    	MOV	A,H
-  0CA8'   B5                    	ORA	L
-  0CA9'   CA 0CCC'              	JZ	HB_E2
-  0CAC'   7C                    	MOV	A,H
-  0CAD'   B7                    	ORA	A
-  0CAE'   C2 0CC7'              	JNZ	HB_TE		; (256 rows off the top and more: it is taller)
-  0CB1'   7D                    	MOV	A,L
-  0CB2'   82                    	ADD	D		; SKIPR + D = its rows, less one
-  0CB3'   DA 0CC7'              	JC	HB_TE
-  0CB6'   21 0F81'              	LXI	H,NEDIT
-  0CB9'   BE                    	CMP	M
-  0CBA'   D2 0CC7'              	JNC	HB_TE		; more than NEDIT of them
-  0CBD'   57                    	MOV	D,A		; no taller than the screen after all: whole
-  0CBE'   21 0000               	LXI	H,0
-  0CC1'   22 0F84'              	SHLD	SKIPR
-  0CC4'   C3 0CCC'              	JMP	HB_E2
-  0CC7'                         HB_TE:
-  0CC7'   3E 01                 	MVI	A,1
-  0CC9'   32 0FA5'              	STA	TALLF
-  0CCC'                         HB_E2:
-  0CCC'   7B                    	MOV	A,E
-  0CCD'   B7                    	ORA	A
-  0CCE'   C2 0CDA'              	JNZ	HB_E3
-  0CD1'   B2                    	ORA	D
-  0CD2'   CA 0CDA'              	JZ	HB_E3		; (its first row: an empty line)
-  0CD5'   3E 01                 	MVI	A,1
-  0CD7'   32 0FC9'              	STA	LYXE
-  0CDA'                         HB_E3:
-  0CDA'   7A                    	MOV	A,D
-  0CDB'   3C                    	INR	A
-  0CDC'   32 0F8E'              	STA	LYTSH
-  0CDF'   3A 0FA5'              	LDA	TALLF
-  0CE2'   B7                    	ORA	A
-  0CE3'   C2 0D3B'              	JNZ	HB_TX
-  0CE6'   F1                    	POP	PSW
-  0CE7'   FA 0D0C'              	JM	HB_LS		; the text ends with it
-  0CEA'                         HB_PT:
-  0CEA'   7A                    	MOV	A,D
-  0CEB'   3C                    	INR	A
-  0CEC'   CD 0D47'              	CALL	HTPUT
-  0CEF'   47                    	MOV	B,A
-  0CF0'   3A 0FC8'              	LDA	HTLIM
-  0CF3'   90                    	SUB	B
-  0CF4'   32 0FC8'              	STA	HTLIM
-  0CF7'   D8                    	RC
-  0CF8'   CA 0D17'              	JZ	HB_PK		; rows enough
-  0CFB'                         HB_NX:
-  0CFB'   CD 0B33'              	CALL	LM_NX		; the next line down
-  0CFE'   CA 0CEA'              	JZ	HB_PT
-  0D01'   F2 0D44'              	JP	HB_TL		; one taller than the screen
+  0C8A'   E1                    	POP	H
+  0C8B'   22 102F'              	SHLD	CBOL
+  0C8E'   EB                    	XCHG			; none of it spilled while reading down: the
+  0C8F'   2A 1039'              	LHLD	LYLIM		;   lines measured (LYLIM), and all of the
+  0C92'   CD 0000*              	CALL	CMP16		;   cursor's own up to here
+  0C95'   DA 0C99'              	JC	HB_WL
+  0C98'   EB                    	XCHG
+  0C99'                         HB_WL:
+  0C99'   24                    	INR	H
+  0C9A'   22 0000*              	SHLD	WRLIM
+  0C9D'   3A 0000*              	LDA	HTN
+  0CA0'   32 0000*              	STA	HTCUR
+  0CA3'   2A 1031'              	LHLD	CURDCL
+  0CA6'   CD 05DA'              	CALL	DIVN		; BC = rows into the line, A = cells used there
+  0CA9'   5F                    	MOV	E,A
+  0CAA'   3A 1031'              	LDA	CURDCL
+  0CAD'   93                    	SUB	E
+  0CAE'   32 1038'              	STA	LYVB		; the column the cursor's row starts at
+  0CB1'   D5                    	PUSH	D		; (E: the cells used in the cursor's row)
+  0CB2'   2A 0FFB'              	LHLD	SKIPR
+  0CB5'   50                    	MOV	D,B
+  0CB6'   59                    	MOV	E,C
+  0CB7'   CD 0000*              	CALL	CMP16		; CY iff the cursor's row is above the first shown
+  0CBA'   EB                    	XCHG			; HL = the cursor's row of the line, DE = SKIPR
+  0CBB'   DA 0CD9'              	JC	HB_SS		; then that is the first
+  0CBE'   CD 0000*              	CALL	SUBHD		; HL = the rows from the first shown to it
+  0CC1'   7C                    	MOV	A,H
+  0CC2'   B7                    	ORA	A
+  0CC3'   C2 0CCF'              	JNZ	HB_SD
+  0CC6'   3A 0FF8'              	LDA	NEDIT
+  0CC9'   3D                    	DCR	A
+  0CCA'   BD                    	CMP	L		; CY iff that is under the last edit row
+  0CCB'   EB                    	XCHG			; HL = SKIPR, as it was
+  0CCC'   D2 0CD9'              	JNC	HB_SS
+  0CCF'                         HB_SD:
+  0CCF'   3A 0FF8'              	LDA	NEDIT		; then it is the last: SKIPR = its row - NEDIT + 1
+  0CD2'   2F                    	CMA
+  0CD3'   6F                    	MOV	L,A
+  0CD4'   26 FF                 	MVI	H,0FFH
+  0CD6'   23                    	INX	H
+  0CD7'   23                    	INX	H
+  0CD8'   09                    	DAD	B
+  0CD9'                         HB_SS:
+  0CD9'   22 0FFB'              	SHLD	SKIPR
+  0CDC'   EB                    	XCHG
+  0CDD'   60                    	MOV	H,B
+  0CDE'   69                    	MOV	L,C
+  0CDF'   CD 0000*              	CALL	SUBHD		; HL = the cursor's row of what is shown of it
+  0CE2'   7D                    	MOV	A,L
+  0CE3'   32 1004'              	STA	CSRAW
+  0CE6'   D1                    	POP	D
+  0CE7'   57                    	MOV	D,A
+  0CE8'   CD 0000*              	CALL	RGET0
+  0CEB'   CD 0B85'              	CALL	LM_FL		; the rest of the line: D = its last row
+  0CEE'   F5                    	PUSH	PSW
+  0CEF'   FE 01                 	CPI	1
 	MACRO-80 3.44	09-Dec-81	PAGE	1-42
 
 
-  0D04'   3A 0FCA'              	LDA	LYLAST		; the text ended: was that a line?
-  0D07'   FE 0A                 	CPI	LF
-  0D09'   CA 0D11'              	JZ	HB_EF
-  0D0C'                         HB_LS:
-  0D0C'   7A                    	MOV	A,D
-  0D0D'   3C                    	INR	A
-  0D0E'   CD 0D47'              	CALL	HTPUT
-  0D11'                         HB_EF:
-  0D11'   3E 01                 	MVI	A,1
-  0D13'   32 0000*              	STA	HTEOF
-  0D16'   C9                    	RET
-  0D17'                         HB_PK:
-  0D17'   2A 0FD6'              	LHLD	RDBC		; just the rows asked for: is the text over
-  0D1A'   44                    	MOV	B,H		;   right there?
-  0D1B'   4D                    	MOV	C,L
-  0D1C'   2A 0FD4'              	LHLD	RDHL
-  0D1F'   CD 0000*              	CALL	RDGET
-  0D22'   D0                    	RNC
-  0D23'   C3 0D11'              	JMP	HB_EF
-                                ;HBMOR -- on with the table from where HTBLD left the reader, for A rows more
-                                ; (LAYOUT: under a line taller than the screen, which ends the table).
-  0D26'                         HBMOR:
-  0D26'   32 0FC8'              	STA	HTLIM
-  0D29'   B7                    	ORA	A
-  0D2A'   CA 0D17'              	JZ	HB_PK
-  0D2D'   C3 0CFB'              	JMP	HB_NX
-  0D30'                         HB_TO:
-  0D30'   3E 01                 	MVI	A,1
-  0D32'   32 0FA5'              	STA	TALLF
-  0D35'   3A 0F81'              	LDA	NEDIT
-  0D38'   32 0F8E'              	STA	LYTSH
-  0D3B'                         HB_TX:
-  0D3B'   F1                    	POP	PSW		; (taller than the screen: M if the text ends
-  0D3C'   F2 0D44'              	JP	HB_TL		;   with it, and on the screen)
-  0D3F'   3E 01                 	MVI	A,1
-  0D41'   32 0000*              	STA	HTEOF
-  0D44'                         HB_TL:
-  0D44'   3A 0F81'              	LDA	NEDIT
-                                ;HTPUT -- A = a line's rows: the table's next entry (a 256th is dropped).
-                                ; Keeps A, BC, DE, HL.
-  0D47'                         HTPUT:
-  0D47'   E5                    	PUSH	H
-  0D48'   D5                    	PUSH	D
-  0D49'   21 0000*              	LXI	H,HTN
-  0D4C'   5E                    	MOV	E,M
-  0D4D'   1C                    	INR	E
-  0D4E'   CA 0D5A'              	JZ	HP_1
-  0D51'   73                    	MOV	M,E
-  0D52'   1D                    	DCR	E
-  0D53'   16 00                 	MVI	D,0
-  0D55'   21 0000*              	LXI	H,HTAB
-  0D58'   19                    	DAD	D
-  0D59'   77                    	MOV	M,A
-  0D5A'                         HP_1:
-  0D5A'   D1                    	POP	D
-  0D5B'   E1                    	POP	H
+  0CF1'   CA 0D80'              	JZ	HB_TO		; more rows than the screen has
+  0CF4'   2A 0FFB'              	LHLD	SKIPR
+  0CF7'   7C                    	MOV	A,H
+  0CF8'   B5                    	ORA	L
+  0CF9'   CA 0D1C'              	JZ	HB_E2
+  0CFC'   7C                    	MOV	A,H
+  0CFD'   B7                    	ORA	A
+  0CFE'   C2 0D17'              	JNZ	HB_TE		; (256 rows off the top and more: it is taller)
+  0D01'   7D                    	MOV	A,L
+  0D02'   82                    	ADD	D		; SKIPR + D = its rows, less one
+  0D03'   DA 0D17'              	JC	HB_TE
+  0D06'   21 0FF8'              	LXI	H,NEDIT
+  0D09'   BE                    	CMP	M
+  0D0A'   D2 0D17'              	JNC	HB_TE		; more than NEDIT of them
+  0D0D'   57                    	MOV	D,A		; no taller than the screen after all: whole
+  0D0E'   21 0000               	LXI	H,0
+  0D11'   22 0FFB'              	SHLD	SKIPR
+  0D14'   C3 0D1C'              	JMP	HB_E2
+  0D17'                         HB_TE:
+  0D17'   3E 01                 	MVI	A,1
+  0D19'   32 101C'              	STA	TALLF
+  0D1C'                         HB_E2:
+  0D1C'   7B                    	MOV	A,E
+  0D1D'   B7                    	ORA	A
+  0D1E'   C2 0D2A'              	JNZ	HB_E3
+  0D21'   B2                    	ORA	D
+  0D22'   CA 0D2A'              	JZ	HB_E3		; (its first row: an empty line)
+  0D25'   3E 01                 	MVI	A,1
+  0D27'   32 1042'              	STA	LYXE
+  0D2A'                         HB_E3:
+  0D2A'   7A                    	MOV	A,D
+  0D2B'   3C                    	INR	A
+  0D2C'   32 1005'              	STA	LYTSH
+  0D2F'   3A 101C'              	LDA	TALLF
+  0D32'   B7                    	ORA	A
+  0D33'   C2 0D8B'              	JNZ	HB_TX
+  0D36'   F1                    	POP	PSW
+  0D37'   FA 0D5C'              	JM	HB_LS		; the text ends with it
+  0D3A'                         HB_PT:
+  0D3A'   7A                    	MOV	A,D
+  0D3B'   3C                    	INR	A
+  0D3C'   CD 0D97'              	CALL	HTPUT
+  0D3F'   47                    	MOV	B,A
+  0D40'   3A 1041'              	LDA	HTLIM
+  0D43'   90                    	SUB	B
+  0D44'   32 1041'              	STA	HTLIM
+  0D47'   D8                    	RC
+  0D48'   CA 0D67'              	JZ	HB_PK		; rows enough
+  0D4B'                         HB_NX:
+  0D4B'   CD 0B4B'              	CALL	LM_NX		; the next line down
+  0D4E'   CA 0D3A'              	JZ	HB_PT
+  0D51'   F2 0D94'              	JP	HB_TL		; one taller than the screen
+  0D54'   3A 1043'              	LDA	LYLAST		; the text ended: was that a line?
+  0D57'   FE 0A                 	CPI	LF
+  0D59'   CA 0D61'              	JZ	HB_EF
+  0D5C'                         HB_LS:
 	MACRO-80 3.44	09-Dec-81	PAGE	1-43
 
 
-  0D5C'   C9                    	RET
+  0D5C'   7A                    	MOV	A,D
+  0D5D'   3C                    	INR	A
+  0D5E'   CD 0D97'              	CALL	HTPUT
+  0D61'                         HB_EF:
+  0D61'   3E 01                 	MVI	A,1
+  0D63'   32 0000*              	STA	HTEOF
+  0D66'   C9                    	RET
+  0D67'                         HB_PK:
+  0D67'   2A 104F'              	LHLD	RDBC		; just the rows asked for: is the text over
+  0D6A'   44                    	MOV	B,H		;   right there?
+  0D6B'   4D                    	MOV	C,L
+  0D6C'   2A 104D'              	LHLD	RDHL
+  0D6F'   CD 0000*              	CALL	RDGET
+  0D72'   D0                    	RNC
+  0D73'   C3 0D61'              	JMP	HB_EF
+                                ;HBMOR -- on with the table from where HTBLD left the reader, for A rows more
+                                ; (LAYOUT: under a line taller than the screen, which ends the table).
+  0D76'                         HBMOR:
+  0D76'   32 1041'              	STA	HTLIM
+  0D79'   B7                    	ORA	A
+  0D7A'   CA 0D67'              	JZ	HB_PK
+  0D7D'   C3 0D4B'              	JMP	HB_NX
+  0D80'                         HB_TO:
+  0D80'   3E 01                 	MVI	A,1
+  0D82'   32 101C'              	STA	TALLF
+  0D85'   3A 0FF8'              	LDA	NEDIT
+  0D88'   32 1005'              	STA	LYTSH
+  0D8B'                         HB_TX:
+  0D8B'   F1                    	POP	PSW		; (taller than the screen: M if the text ends
+  0D8C'   F2 0D94'              	JP	HB_TL		;   with it, and on the screen)
+  0D8F'   3E 01                 	MVI	A,1
+  0D91'   32 0000*              	STA	HTEOF
+  0D94'                         HB_TL:
+  0D94'   3A 0FF8'              	LDA	NEDIT
+                                ;HTPUT -- A = a line's rows: the table's next entry (a 256th is dropped).
+                                ; Keeps A, BC, DE, HL.
+  0D97'                         HTPUT:
+  0D97'   E5                    	PUSH	H
+  0D98'   D5                    	PUSH	D
+  0D99'   21 0000*              	LXI	H,HTN
+  0D9C'   5E                    	MOV	E,M
+  0D9D'   1C                    	INR	E
+  0D9E'   CA 0DAA'              	JZ	HP_1
+  0DA1'   73                    	MOV	M,E
+  0DA2'   1D                    	DCR	E
+  0DA3'   16 00                 	MVI	D,0
+  0DA5'   21 0000*              	LXI	H,HTAB
+  0DA8'   19                    	DAD	D
+  0DA9'   77                    	MOV	M,A
+  0DAA'                         HP_1:
+  0DAA'   D1                    	POP	D
+  0DAB'   E1                    	POP	H
+  0DAC'   C9                    	RET
                                 
                                 ;TABCUR -- in command mode a cursor on a TAB shows on the tab's last column,
                                 ; as vi does (insert mode keeps it at the tab's first column, where the next
+	MACRO-80 3.44	09-Dec-81	PAGE	1-44
+
+
                                 ; char goes).  The char is resident at GAPEND after LAYOUT's forward read.
-  0D5D'                         TABCUR:
-  0D5D'   3A 0000*              	LDA	EDMODE
-  0D60'   FE 00                 	CPI	EM_CMD
-  0D62'   C0                    	RNZ
-  0D63'   2A 0000*              	LHLD	TXTEND
-  0D66'   EB                    	XCHG
-  0D67'   2A 0000*              	LHLD	GAPEND
-  0D6A'   CD 0000*              	CALL	CMP16		; Z iff GAPEND == TXTEND: no char under the cursor
-  0D6D'   C8                    	RZ
-  0D6E'   7E                    	MOV	A,M
-  0D6F'   FE 09                 	CPI	TAB
-  0D71'   C0                    	RNZ
-  0D72'   2A 0FB8'              	LHLD	CURDCL
-  0D75'   7D                    	MOV	A,L
-  0D76'   F6 07                 	ORI	TABWID-1
-  0D78'   6F                    	MOV	L,A
-  0D79'   22 0FB8'              	SHLD	CURDCL
-  0D7C'   C9                    	RET
+  0DAD'                         TABCUR:
+  0DAD'   3A 0000*              	LDA	EDMODE
+  0DB0'   FE 00                 	CPI	EM_CMD
+  0DB2'   C0                    	RNZ
+  0DB3'   2A 0000*              	LHLD	TXTEND
+  0DB6'   EB                    	XCHG
+  0DB7'   2A 0000*              	LHLD	GAPEND
+  0DBA'   CD 0000*              	CALL	CMP16		; Z iff GAPEND == TXTEND: no char under the cursor
+  0DBD'   C8                    	RZ
+  0DBE'   7E                    	MOV	A,M
+  0DBF'   FE 09                 	CPI	TAB
+  0DC1'   C0                    	RNZ
+  0DC2'   2A 1031'              	LHLD	CURDCL
+  0DC5'   7D                    	MOV	A,L
+  0DC6'   F6 07                 	ORI	TABWID-1
+  0DC8'   6F                    	MOV	L,A
+  0DC9'   22 1031'              	SHLD	CURDCL
+  0DCC'   C9                    	RET
                                 
                                 ;============================================================
                                 ; TEXT READER -- the screen's text, straight from the gap buffer.  After
@@ -2569,285 +2624,310 @@
                                 ;============================================================
                                 
                                 ;RDTOP -- start reading at the top line.
-  0D7D'                         RDTOP:
-  0D7D'   2A 0FB4'              	LHLD	TOPLEN
-  0D80'   C3 0D86'              	JMP	RDSET
+  0DCD'                         RDTOP:
+  0DCD'   2A 102D'              	LHLD	TOPLEN
+  0DD0'   C3 0DD6'              	JMP	RDSET
                                 ;RDBOL -- start reading at the cursor line's start.
-  0D83'                         RDBOL:
-  0D83'   2A 0FB6'              	LHLD	CBOL
-  0D86'                         RDSET:
-  0D86'   22 0FD2'              	SHLD	RDN
-  0D89'   EB                    	XCHG
-  0D8A'   2A 0000*              	LHLD	GAPBEG
-  0D8D'   CD 0000*              	CALL	SUBHD
-  0D90'   22 0FD0'              	SHLD	RDP
-  0D93'   AF                    	XRA	A
-  0D94'   32 0FD8'              	STA	RDSEG
-  0D97'   C9                    	RET
+  0DD3'                         RDBOL:
+  0DD3'   2A 102F'              	LHLD	CBOL
+  0DD6'                         RDSET:
+  0DD6'   22 104B'              	SHLD	RDN
+  0DD9'   EB                    	XCHG
+  0DDA'   2A 0000*              	LHLD	GAPBEG
+  0DDD'   CD 0000*              	CALL	SUBHD
+  0DE0'   22 1049'              	SHLD	RDP
+  0DE3'   AF                    	XRA	A
+  0DE4'   32 1051'              	STA	RDSEG
+  0DE7'   C9                    	RET
                                 
                                 ;RDCH -- next screen byte in A; CY at the end of the text.  Preserves BC/DE/HL.
-  0D98'                         RDCH:
-  0D98'   C5                    	PUSH	B
-  0D99'   D5                    	PUSH	D
-  0D9A'   E5                    	PUSH	H
-  0D9B'   2A 0FD2'              	LHLD	RDN		; before-gap bytes left?
-  0D9E'   7C                    	MOV	A,H
-  0D9F'   B5                    	ORA	L
-  0DA0'   CA 0DB3'              	JZ	RDC_AF
-	MACRO-80 3.44	09-Dec-81	PAGE	1-44
-
-
-  0DA3'   2B                    	DCX	H
-  0DA4'   22 0FD2'              	SHLD	RDN
-  0DA7'   2A 0FD0'              	LHLD	RDP
-  0DAA'   7E                    	MOV	A,M
-  0DAB'   23                    	INX	H
-  0DAC'   22 0FD0'              	SHLD	RDP
-  0DAF'   B7                    	ORA	A		; CY=0
-  0DB0'   C3 0DD7'              	JMP	RDC_RT
-  0DB3'                         RDC_AF:
-  0DB3'   3A 0FD8'              	LDA	RDSEG
-  0DB6'   B7                    	ORA	A
-  0DB7'   C2 0DC4'              	JNZ	RDC_NX
-  0DBA'   3C                    	INR	A		; first after-gap byte: start RGET
-  0DBB'   32 0FD8'              	STA	RDSEG
-  0DBE'   CD 0000*              	CALL	RGET0
-  0DC1'   C3 0DCC'              	JMP	RDC_GT
-  0DC4'                         RDC_NX:
-  0DC4'   2A 0FD6'              	LHLD	RDBC
-  0DC7'   44                    	MOV	B,H
-  0DC8'   4D                    	MOV	C,L
-  0DC9'   2A 0FD4'              	LHLD	RDHL
-  0DCC'                         RDC_GT:
-  0DCC'   CD 0000*              	CALL	RDGET
-  0DCF'   22 0FD4'              	SHLD	RDHL		; (SHLD/MOV keep RDGET's flags)
-  0DD2'   60                    	MOV	H,B
-  0DD3'   69                    	MOV	L,C
-  0DD4'   22 0FD6'              	SHLD	RDBC
-  0DD7'                         RDC_RT:
-  0DD7'   E1                    	POP	H
-  0DD8'   D1                    	POP	D
-  0DD9'   C1                    	POP	B
-  0DDA'   C9                    	RET
-                                
-                                ;RDSKIP -- skip A lines (stops early at the end of the text).
-  0DDB'                         RDSKIP:
-  0DDB'   B7                    	ORA	A
-  0DDC'   C8                    	RZ
-  0DDD'   32 0FD9'              	STA	SKPN
-  0DE0'   2A 0FD2'              	LHLD	RDN		; what lies before the gap is passed over where
-  0DE3'   44                    	MOV	B,H		;   it lies
-  0DE4'   4D                    	MOV	C,L
-  0DE5'   2A 0FD0'              	LHLD	RDP
-  0DE8'                         RSK_F:
-  0DE8'   78                    	MOV	A,B
-  0DE9'   B1                    	ORA	C
-  0DEA'   CA 0DFF'              	JZ	RSK_S
-  0DED'   7E                    	MOV	A,M
-  0DEE'   23                    	INX	H
-  0DEF'   0B                    	DCX	B
-  0DF0'   FE 0A                 	CPI	LF
-  0DF2'   C2 0DE8'              	JNZ	RSK_F
-  0DF5'   3A 0FD9'              	LDA	SKPN
-  0DF8'   3D                    	DCR	A
-  0DF9'   32 0FD9'              	STA	SKPN
-  0DFC'   C2 0DE8'              	JNZ	RSK_F
-  0DFF'                         RSK_S:
+  0DE8'                         RDCH:
+  0DE8'   C5                    	PUSH	B
+  0DE9'   D5                    	PUSH	D
+  0DEA'   E5                    	PUSH	H
+  0DEB'   2A 104B'              	LHLD	RDN		; before-gap bytes left?
+  0DEE'   7C                    	MOV	A,H
+  0DEF'   B5                    	ORA	L
+  0DF0'   CA 0E03'              	JZ	RDC_AF
+  0DF3'   2B                    	DCX	H
+  0DF4'   22 104B'              	SHLD	RDN
+  0DF7'   2A 1049'              	LHLD	RDP
+  0DFA'   7E                    	MOV	A,M
 	MACRO-80 3.44	09-Dec-81	PAGE	1-45
 
 
-  0DFF'   22 0FD0'              	SHLD	RDP
-  0E02'   60                    	MOV	H,B
-  0E03'   69                    	MOV	L,C
-  0E04'   22 0FD2'              	SHLD	RDN
-  0E07'   3A 0FD9'              	LDA	SKPN
-  0E0A'   B7                    	ORA	A
-  0E0B'   C8                    	RZ
-  0E0C'                         RSK_LP:
-  0E0C'   CD 0D98'              	CALL	RDCH
-  0E0F'   D8                    	RC
-  0E10'   FE 0A                 	CPI	LF
-  0E12'   C2 0E0C'              	JNZ	RSK_LP
-  0E15'   3A 0FD9'              	LDA	SKPN
-  0E18'   3D                    	DCR	A
-  0E19'   32 0FD9'              	STA	SKPN
-  0E1C'   C2 0E0C'              	JNZ	RSK_LP
-  0E1F'   C9                    	RET
+  0DFB'   23                    	INX	H
+  0DFC'   22 1049'              	SHLD	RDP
+  0DFF'   B7                    	ORA	A		; CY=0
+  0E00'   C3 0E27'              	JMP	RDC_RT
+  0E03'                         RDC_AF:
+  0E03'   3A 1051'              	LDA	RDSEG
+  0E06'   B7                    	ORA	A
+  0E07'   C2 0E14'              	JNZ	RDC_NX
+  0E0A'   3C                    	INR	A		; first after-gap byte: start RGET
+  0E0B'   32 1051'              	STA	RDSEG
+  0E0E'   CD 0000*              	CALL	RGET0
+  0E11'   C3 0E1C'              	JMP	RDC_GT
+  0E14'                         RDC_NX:
+  0E14'   2A 104F'              	LHLD	RDBC
+  0E17'   44                    	MOV	B,H
+  0E18'   4D                    	MOV	C,L
+  0E19'   2A 104D'              	LHLD	RDHL
+  0E1C'                         RDC_GT:
+  0E1C'   CD 0000*              	CALL	RDGET
+  0E1F'   22 104D'              	SHLD	RDHL		; (SHLD/MOV keep RDGET's flags)
+  0E22'   60                    	MOV	H,B
+  0E23'   69                    	MOV	L,C
+  0E24'   22 104F'              	SHLD	RDBC
+  0E27'                         RDC_RT:
+  0E27'   E1                    	POP	H
+  0E28'   D1                    	POP	D
+  0E29'   C1                    	POP	B
+  0E2A'   C9                    	RET
+                                
+                                ;RDSKIP -- skip A lines (stops early at the end of the text).  What is in
+                                ; memory is passed over where it lies, before the gap and after it; RDCH
+                                ; reads on only when those bytes run out with lines still to pass.
+  0E2B'                         RDSKIP:
+  0E2B'   B7                    	ORA	A
+  0E2C'   C8                    	RZ
+  0E2D'   32 1052'              	STA	SKPN
+  0E30'   2A 104B'              	LHLD	RDN
+  0E33'   44                    	MOV	B,H
+  0E34'   4D                    	MOV	C,L
+  0E35'   2A 1049'              	LHLD	RDP
+  0E38'   CD 0E7D'              	CALL	RSK_M
+  0E3B'   22 1049'              	SHLD	RDP
+  0E3E'   60                    	MOV	H,B
+  0E3F'   69                    	MOV	L,C
+  0E40'   22 104B'              	SHLD	RDN
+  0E43'   C8                    	RZ
+  0E44'   3A 1051'              	LDA	RDSEG
+  0E47'   B7                    	ORA	A
+  0E48'   C2 0E55'              	JNZ	RSK_A
+  0E4B'   3C                    	INR	A		; first after-gap byte: start RGET
+  0E4C'   32 1051'              	STA	RDSEG
+  0E4F'   CD 0000*              	CALL	RGET0
+  0E52'   C3 0E5D'              	JMP	RSK_B
+  0E55'                         RSK_A:
+  0E55'   2A 104F'              	LHLD	RDBC
+  0E58'   44                    	MOV	B,H
+	MACRO-80 3.44	09-Dec-81	PAGE	1-46
+
+
+  0E59'   4D                    	MOV	C,L
+  0E5A'   2A 104D'              	LHLD	RDHL
+  0E5D'                         RSK_B:
+  0E5D'   CD 0E7D'              	CALL	RSK_M
+  0E60'   22 104D'              	SHLD	RDHL
+  0E63'   60                    	MOV	H,B
+  0E64'   69                    	MOV	L,C
+  0E65'   22 104F'              	SHLD	RDBC
+  0E68'   C8                    	RZ
+  0E69'                         RSK_LP:
+  0E69'   CD 0DE8'              	CALL	RDCH
+  0E6C'   D8                    	RC
+  0E6D'   FE 0A                 	CPI	LF
+  0E6F'   C2 0E69'              	JNZ	RSK_LP
+  0E72'   3A 1052'              	LDA	SKPN
+  0E75'   3D                    	DCR	A
+  0E76'   32 1052'              	STA	SKPN
+  0E79'   C2 0E69'              	JNZ	RSK_LP
+  0E7C'   C9                    	RET
+                                ;RSK_M -- pass over SKPN lines in the BC bytes at HL.  Z when that was all of
+                                ; them; NZ when the bytes ran out first (SKPN = the lines still to pass).
+  0E7D'                         RSK_M:
+  0E7D'   78                    	MOV	A,B
+  0E7E'   B1                    	ORA	C
+  0E7F'   CA 0E95'              	JZ	RSK_E
+  0E82'   7E                    	MOV	A,M
+  0E83'   23                    	INX	H
+  0E84'   0B                    	DCX	B
+  0E85'   FE 0A                 	CPI	LF
+  0E87'   C2 0E7D'              	JNZ	RSK_M
+  0E8A'   3A 1052'              	LDA	SKPN
+  0E8D'   3D                    	DCR	A
+  0E8E'   32 1052'              	STA	SKPN
+  0E91'   C2 0E7D'              	JNZ	RSK_M
+  0E94'   C9                    	RET
+  0E95'                         RSK_E:
+  0E95'   3C                    	INR	A		; (NZ)
+  0E96'   C9                    	RET
                                 
                                 ;PSKIP -- PROW, for the top line of a full repaint when rows of it are off
                                 ; the top (HL = PSKN = SKIPR, not 0): pass over that many rows, and paint the
                                 ; rest of the line.  A TAB across the last of them leaves its other cells on
                                 ; the first row shown.
-  0E20'                         PSKIP:
-  0E20'   3A 0F80'              	LDA	NCOLS
-  0E23'   CD 0E52'              	CALL	MULHA		; HL = the cells to pass over
-  0E26'   EB                    	XCHG
-  0E27'   21 0000               	LXI	H,0
-  0E2A'   22 0FDB'              	SHLD	PSKN
-  0E2D'                         PS_LP:
-  0E2D'   7A                    	MOV	A,D
-  0E2E'   B3                    	ORA	E
-  0E2F'   CA 0E86'              	JZ	PR_LP
-  0E32'   CD 0D98'              	CALL	RDCH
-  0E35'   FE 0D                 	CPI	CR
-  0E37'   CA 0E2D'              	JZ	PS_LP
-  0E3A'   0E 01                 	MVI	C,1
-  0E3C'   FE 09                 	CPI	TAB
-  0E3E'   CC 0E5C'              	CZ	TABN
-  0E41'                         PS_CL:
-  0E41'   7A                    	MOV	A,D
-  0E42'   B3                    	ORA	E
-  0E43'   CA 0EA0'              	JZ	PRTBLP		; (only a TAB gets here with cells to go)
-  0E46'   1B                    	DCX	D
-  0E47'   21 0FDD'              	LXI	H,DCOL
-  0E4A'   34                    	INR	M
-  0E4B'   0D                    	DCR	C
-  0E4C'   C2 0E41'              	JNZ	PS_CL
-  0E4F'   C3 0E2D'              	JMP	PS_LP
+  0E97'                         PSKIP:
+  0E97'   3A 0FF7'              	LDA	NCOLS
+  0E9A'   CD 0EC9'              	CALL	MULHA		; HL = the cells to pass over
+  0E9D'   EB                    	XCHG
+  0E9E'   21 0000               	LXI	H,0
+  0EA1'   22 1054'              	SHLD	PSKN
+  0EA4'                         PS_LP:
+  0EA4'   7A                    	MOV	A,D
+  0EA5'   B3                    	ORA	E
+  0EA6'   CA 0EFD'              	JZ	PR_LP
+  0EA9'   CD 0DE8'              	CALL	RDCH
+  0EAC'   FE 0D                 	CPI	CR
+  0EAE'   CA 0EA4'              	JZ	PS_LP
+	MACRO-80 3.44	09-Dec-81	PAGE	1-47
+
+
+  0EB1'   0E 01                 	MVI	C,1
+  0EB3'   FE 09                 	CPI	TAB
+  0EB5'   CC 0ED3'              	CZ	TABN
+  0EB8'                         PS_CL:
+  0EB8'   7A                    	MOV	A,D
+  0EB9'   B3                    	ORA	E
+  0EBA'   CA 0F17'              	JZ	PRTBLP		; (only a TAB gets here with cells to go)
+  0EBD'   1B                    	DCX	D
+  0EBE'   21 1056'              	LXI	H,DCOL
+  0EC1'   34                    	INR	M
+  0EC2'   0D                    	DCR	C
+  0EC3'   C2 0EB8'              	JNZ	PS_CL
+  0EC6'   C3 0EA4'              	JMP	PS_LP
                                 
                                 ;MULHA -- HL = HL * A (A not 0).  Clobbers DE.
-  0E52'                         MULHA:
-  0E52'   EB                    	XCHG
-  0E53'   21 0000               	LXI	H,0
-  0E56'                         MH_LP:
-  0E56'   19                    	DAD	D
-  0E57'   3D                    	DCR	A
-	MACRO-80 3.44	09-Dec-81	PAGE	1-46
-
-
-  0E58'   C2 0E56'              	JNZ	MH_LP
-  0E5B'   C9                    	RET
+  0EC9'                         MULHA:
+  0EC9'   EB                    	XCHG
+  0ECA'   21 0000               	LXI	H,0
+  0ECD'                         MH_LP:
+  0ECD'   19                    	DAD	D
+  0ECE'   3D                    	DCR	A
+  0ECF'   C2 0ECD'              	JNZ	MH_LP
+  0ED2'   C9                    	RET
                                 
                                 ;TABN -- C = the cells a TAB at column DCOL takes (1..8).
-  0E5C'                         TABN:
-  0E5C'   3A 0FDD'              	LDA	DCOL		; spaces = 8 - (dcol mod 8)
-  0E5F'   E6 07                 	ANI	7
-  0E61'   4F                    	MOV	C,A
-  0E62'   3E 08                 	MVI	A,8
-  0E64'   91                    	SUB	C
-  0E65'   4F                    	MOV	C,A
-  0E66'   C9                    	RET
+  0ED3'                         TABN:
+  0ED3'   3A 1056'              	LDA	DCOL		; spaces = 8 - (dcol mod 8)
+  0ED6'   E6 07                 	ANI	7
+  0ED8'   4F                    	MOV	C,A
+  0ED9'   3E 08                 	MVI	A,8
+  0EDB'   91                    	SUB	C
+  0EDC'   4F                    	MOV	C,A
+  0EDD'   C9                    	RET
                                 
                                 ;PAINTR -- paint from screen row PROWN: the reader's line, on as many rows as
                                 ; it takes, or the fill char on a row past the text ('~'; '@' where a line did
                                 ; not fit).  The reader must be at that row's line.  Row already cleared.
-  0E67'                         PAINTR:
-  0E67'   3A 0FDA'              	LDA	PROWN
-  0E6A'   21 0F88'              	LXI	H,TXEND
-  0E6D'   BE                    	CMP	M		; CY iff the row holds text
-  0E6E'   DA 0E77'              	JC	PROW
-  0E71'   3A 0F89'              	LDA	FILCH
-  0E74'   C3 0018'              	JMP	OUTCH
+  0EDE'                         PAINTR:
+  0EDE'   3A 1053'              	LDA	PROWN
+  0EE1'   21 0FFF'              	LXI	H,TXEND
+  0EE4'   BE                    	CMP	M		; CY iff the row holds text
+  0EE5'   DA 0EEE'              	JC	PROW
+  0EE8'   3A 1000'              	LDA	FILCH
+  0EEB'   C3 0018'              	JMP	OUTCH
                                 
                                 ;PROW -- paint the reader's line: tabs expanded, and on to the next row when
                                 ; this one is full and there is more (PROWN follows it down).  The reader ends
                                 ; past the line's LF (or at the end).
-  0E77'                         PROW:
-  0E77'   AF                    	XRA	A
-  0E78'   32 0FDD'              	STA	DCOL
-  0E7B'   32 0FDE'              	STA	XC
-  0E7E'   2A 0FDB'              	LHLD	PSKN
-  0E81'   7C                    	MOV	A,H
-  0E82'   B5                    	ORA	L
-  0E83'   C2 0E20'              	JNZ	PSKIP
-  0E86'                         PR_LP:
-  0E86'   CD 0D98'              	CALL	RDCH
-  0E89'   D8                    	RC			; end of text -> line done
-  0E8A'   FE 0A                 	CPI	LF
-  0E8C'   C8                    	RZ			; consumed the LF -> next line start
-  0E8D'   FE 0D                 	CPI	CR
-  0E8F'   CA 0E86'              	JZ	PR_LP		; drop CR (part of the CR,LF break)
-  0E92'   FE 09                 	CPI	TAB
-  0E94'   CA 0E9D'              	JZ	PR_TAB
-  0E97'   CD 0EAC'              	CALL	PCELL
-  0E9A'   C3 0E86'              	JMP	PR_LP
-  0E9D'                         PR_TAB:
-  0E9D'   CD 0E5C'              	CALL	TABN		; C = space count (1..8)
-  0EA0'                         PRTBLP:
-  0EA0'   3E 20                 	MVI	A,' '
-  0EA2'   CD 0EAC'              	CALL	PCELL		; (keeps C)
-  0EA5'   0D                    	DCR	C
-  0EA6'   C2 0EA0'              	JNZ	PRTBLP
-  0EA9'   C3 0E86'              	JMP	PR_LP
+  0EEE'                         PROW:
+  0EEE'   AF                    	XRA	A
+  0EEF'   32 1056'              	STA	DCOL
+  0EF2'   32 1057'              	STA	XC
+  0EF5'   2A 1054'              	LHLD	PSKN
+  0EF8'   7C                    	MOV	A,H
+  0EF9'   B5                    	ORA	L
+  0EFA'   C2 0E97'              	JNZ	PSKIP
+	MACRO-80 3.44	09-Dec-81	PAGE	1-48
+
+
+  0EFD'                         PR_LP:
+  0EFD'   CD 0DE8'              	CALL	RDCH
+  0F00'   D8                    	RC			; end of text -> line done
+  0F01'   FE 0A                 	CPI	LF
+  0F03'   C8                    	RZ			; consumed the LF -> next line start
+  0F04'   FE 0D                 	CPI	CR
+  0F06'   CA 0EFD'              	JZ	PR_LP		; drop CR (part of the CR,LF break)
+  0F09'   FE 09                 	CPI	TAB
+  0F0B'   CA 0F14'              	JZ	PR_TAB
+  0F0E'   CD 0F23'              	CALL	PCELL
+  0F11'   C3 0EFD'              	JMP	PR_LP
+  0F14'                         PR_TAB:
+  0F14'   CD 0ED3'              	CALL	TABN		; C = space count (1..8)
+  0F17'                         PRTBLP:
+  0F17'   3E 20                 	MVI	A,' '
+  0F19'   CD 0F23'              	CALL	PCELL		; (keeps C)
+  0F1C'   0D                    	DCR	C
+  0F1D'   C2 0F17'              	JNZ	PRTBLP
+  0F20'   C3 0EFD'              	JMP	PR_LP
                                 
                                 ;PCELL -- put the char in A on the next cell of the line.  Keeps C.
-	MACRO-80 3.44	09-Dec-81	PAGE	1-47
-
-
-  0EAC'                         PCELL:
-  0EAC'   47                    	MOV	B,A
-  0EAD'   21 0FDD'              	LXI	H,DCOL
-  0EB0'   34                    	INR	M
-  0EB1'   3A 0F80'              	LDA	NCOLS
-  0EB4'   21 0FDE'              	LXI	H,XC
-  0EB7'   BE                    	CMP	M
-  0EB8'   CC 0EC0'              	CZ	PWRAP		; the row is full: this one starts the next
-  0EBB'   34                    	INR	M
-  0EBC'   78                    	MOV	A,B
-  0EBD'   C3 0018'              	JMP	OUTCH
+  0F23'                         PCELL:
+  0F23'   47                    	MOV	B,A
+  0F24'   21 1056'              	LXI	H,DCOL
+  0F27'   34                    	INR	M
+  0F28'   3A 0FF7'              	LDA	NCOLS
+  0F2B'   21 1057'              	LXI	H,XC
+  0F2E'   BE                    	CMP	M
+  0F2F'   CC 0F37'              	CZ	PWRAP		; the row is full: this one starts the next
+  0F32'   34                    	INR	M
+  0F33'   78                    	MOV	A,B
+  0F34'   C3 0018'              	JMP	OUTCH
                                 ;PWRAP -- on to the next row, cleared (CR,LF: the terminal's own wrap is not
                                 ; relied on).  From the last row to paint (PEND) there is nowhere to go: the
                                 ; rest of the line is not shown, and PROW returns to its caller from here.
-  0EC0'                         PWRAP:
-  0EC0'   36 00                 	MVI	M,0
-  0EC2'   3A 0FA4'              	LDA	PEND
-  0EC5'   3D                    	DCR	A
-  0EC6'   21 0FDA'              	LXI	H,PROWN
-  0EC9'   BE                    	CMP	M
-  0ECA'   CA 0EDF'              	JZ	PW_END
-  0ECD'   34                    	INR	M
-  0ECE'   3E 0D                 	MVI	A,CR
-  0ED0'   CD 0018'              	CALL	OUTCH
-  0ED3'   3E 0A                 	MVI	A,LF
-  0ED5'   CD 0018'              	CALL	OUTCH
-  0ED8'   CD 0092'              	CALL	CEKL		; (keeps BC)
-  0EDB'   21 0FDE'              	LXI	H,XC
-  0EDE'   C9                    	RET
-  0EDF'                         PW_END:
-  0EDF'   E1                    	POP	H		; PCELL's return, and PROW's
-  0EE0'   E1                    	POP	H
-  0EE1'   C9                    	RET
+  0F37'                         PWRAP:
+  0F37'   36 00                 	MVI	M,0
+  0F39'   3A 101B'              	LDA	PEND
+  0F3C'   3D                    	DCR	A
+  0F3D'   21 1053'              	LXI	H,PROWN
+  0F40'   BE                    	CMP	M
+  0F41'   CA 0F56'              	JZ	PW_END
+  0F44'   34                    	INR	M
+  0F45'   3E 0D                 	MVI	A,CR
+  0F47'   CD 0018'              	CALL	OUTCH
+  0F4A'   3E 0A                 	MVI	A,LF
+  0F4C'   CD 0018'              	CALL	OUTCH
+  0F4F'   CD 0092'              	CALL	CEKL		; (keeps BC)
+  0F52'   21 1057'              	LXI	H,XC
+  0F55'   C9                    	RET
+  0F56'                         PW_END:
+  0F56'   E1                    	POP	H		; PCELL's return, and PROW's
+  0F57'   E1                    	POP	H
+  0F58'   C9                    	RET
                                 
                                 ;MODEMS -- the mode message on the bottom row, as vim writes it: '-- INSERT --'
+	MACRO-80 3.44	09-Dec-81	PAGE	1-49
+
+
                                 ; while an insert is open, '-- REPLACE --' for 'R', and nothing at all in
                                 ; command mode.  It is drawn only when the mode differs from what the row last
                                 ; showed (OEDMOD) -- which a full repaint spoils, since that blanks the row --
                                 ; so an ex message stays put until the mode really changes, the way vim's load
                                 ; message survives every motion.  The cursor goes back where SCDRAW left it.
-  0EE2'                         MODEMS:
-  0EE2'   3A 0000*              	LDA	EDMODE
-  0EE5'   47                    	MOV	B,A
-  0EE6'   3A 0FAF'              	LDA	OEDMOD
-  0EE9'   B8                    	CMP	B
-  0EEA'   C8                    	RZ			; the row already shows this mode
-  0EEB'   78                    	MOV	A,B
-  0EEC'   32 0FAF'              	STA	OEDMOD
-  0EEF'   21 0F5F'              	LXI	H,SINSM
-  0EF2'   FE 01                 	CPI	EM_INS
-  0EF4'   CA 0F02'              	JZ	MD_DRW
-  0EF7'   21 0F6C'              	LXI	H,SREPM
-  0EFA'   FE 02                 	CPI	EM_REP
-  0EFC'   CA 0F02'              	JZ	MD_DRW
-  0EFF'   21 0F7A'              	LXI	H,SNULL		; command mode: the row goes blank
-  0F02'                         MD_DRW:
-	MACRO-80 3.44	09-Dec-81	PAGE	1-48
-
-
-  0F02'   E5                    	PUSH	H
-  0F03'   3A 0F7F'              	LDA	NROWS
-  0F06'   CD 008C'              	CALL	GOROW1
-  0F09'   E1                    	POP	H
-  0F0A'   CD 0025'              	CALL	OUTSTR
+  0F59'                         MODEMS:
+  0F59'   3A 0000*              	LDA	EDMODE
+  0F5C'   47                    	MOV	B,A
+  0F5D'   3A 1028'              	LDA	OEDMOD
+  0F60'   B8                    	CMP	B
+  0F61'   C8                    	RZ			; the row already shows this mode
+  0F62'   78                    	MOV	A,B
+  0F63'   32 1028'              	STA	OEDMOD
+  0F66'   21 0FD6'              	LXI	H,SINSM
+  0F69'   FE 01                 	CPI	EM_INS
+  0F6B'   CA 0F79'              	JZ	MD_DRW
+  0F6E'   21 0FE3'              	LXI	H,SREPM
+  0F71'   FE 02                 	CPI	EM_REP
+  0F73'   CA 0F79'              	JZ	MD_DRW
+  0F76'   21 0FF1'              	LXI	H,SNULL		; command mode: the row goes blank
+  0F79'                         MD_DRW:
+  0F79'   E5                    	PUSH	H
+  0F7A'   3A 0FF6'              	LDA	NROWS
+  0F7D'   CD 008C'              	CALL	GOROW1
+  0F80'   E1                    	POP	H
+  0F81'   CD 0025'              	CALL	OUTSTR
                                 ;SCURS -- put the cursor back on the text, where SCDRAW left it.  Anything that
                                 ; writes the bottom row after a frame (MODEMS, CMD.MAC's messages) ends here.
-  0F0D'                         SCURS:
-  0F0D'   3A 0F86'              	LDA	SROW
-  0F10'   47                    	MOV	B,A
-  0F11'   3A 0F87'              	LDA	SCOL
-  0F14'   4F                    	MOV	C,A
-  0F15'   CD 0064'              	CALL	GOTOXY
-  0F18'   21 0F54'              	LXI	H,SSHOW
-  0F1B'   C3 0025'              	JMP	OUTSTR
+  0F84'                         SCURS:
+  0F84'   3A 0FFD'              	LDA	SROW
+  0F87'   47                    	MOV	B,A
+  0F88'   3A 0FFE'              	LDA	SCOL
+  0F8B'   4F                    	MOV	C,A
+  0F8C'   CD 0064'              	CALL	GOTOXY
+  0F8F'   21 0FCB'              	LXI	H,SSHOW
+  0F92'   C3 0025'              	JMP	OUTSTR
                                 
                                 ;============================================================
                                 ; TEARDOWN -- reset the scroll region, show the cursor, and leave the cursor at
@@ -2855,137 +2935,142 @@
                                 ; CR,LF before "A>", which scrolls the text up one row and puts the prompt on
                                 ; the bottom row.  Emitting one here too cost a second row for nothing.
                                 ;============================================================
-  0F1E'                         SCDONE:
-  0F1E'   CD 0086'              	CALL	CRGRS
-  0F21'   21 0F54'              	LXI	H,SSHOW
-  0F24'   CD 0025'              	CALL	OUTSTR
-  0F27'   3A 0F7F'              	LDA	NROWS		; bottom left, over the message row -- and blank:
-  0F2A'   C3 008C'              	JMP	GOROW1		;   the CCP prompt lands here
+  0F95'                         SCDONE:
+  0F95'   CD 0086'              	CALL	CRGRS
+  0F98'   21 0FCB'              	LXI	H,SSHOW
+  0F9B'   CD 0025'              	CALL	OUTSTR
+  0F9E'   3A 0FF6'              	LDA	NROWS		; bottom left, over the message row -- and blank:
+  0FA1'   C3 008C'              	JMP	GOROW1		;   the CCP prompt lands here
                                 
                                 ;============================================================
                                 ; STRINGS (0-terminated)
                                 ;============================================================
-  0F2D'   1B 5B 39 39           SPROBE: DB	ESC,'[','9','9','9',';','9','9','9','H'
-  0F31'   39 3B 39 39           
-  0F35'   39 48                 
-  0F37'   1B 5B 36 6E           	DB	ESC,'[','6','n',0
-  0F3B'   00                    
-  0F3C'   1B 5B 4B 00           SEK:	DB	ESC,'[','K',0
-  0F40'   1B 5B 00              SCSI:	DB	ESC,'[',0		; CSI -- the prefix a counted ESC[<n>X needs
-  0F43'   1B 5B 31 40           SICH:	DB	ESC,'[','1','@',0	; ICH -- insert one cell at the cursor
-  0F47'   00                    
-  0F48'   1B 5B 31 3B           SRGP:	DB	ESC,'[','1',';',0	; region prefix "ESC[1;" (EMITB + 'r' follow)
-  0F4C'   00                    
-  0F4D'   1B 5B 3F 32           SHIDE:	DB	ESC,'[','?','2','5','l',0
-  0F51'   35 6C 00              
-  0F54'   1B 5B 3F 32           SSHOW:	DB	ESC,'[','?','2','5','h',0
-  0F58'   35 68 00              
-  0F5B'   1B 5B 72 00           SREGRS: DB	ESC,'[','r',0
-  0F5F'   2D 2D 20 49           SINSM:	DB	'-','-',' ','I','N','S','E','R','T',' ','-','-',0
-  0F63'   4E 53 45 52           
-  0F67'   54 20 2D 2D           
-  0F6B'   00                    
-  0F6C'   2D 2D 20 52           SREPM:	DB	'-','-',' ','R','E','P','L','A','C','E',' ','-','-',0
-  0F70'   45 50 4C 41           
-  0F74'   43 45 20 2D           
-  0F78'   2D 00                 
-	MACRO-80 3.44	09-Dec-81	PAGE	1-49
+  0FA4'   1B 5B 39 39           SPROBE: DB	ESC,'[','9','9','9',';','9','9','9','H'
+  0FA8'   39 3B 39 39           
+  0FAC'   39 48                 
+	MACRO-80 3.44	09-Dec-81	PAGE	1-50
 
 
-  0F7A'   00                    SNULL:	DB	0
-  0F7B'   3C 3C 3C 00           SSKIP:	DB	'<','<','<',0
+  0FAE'   1B 5B 36 6E           	DB	ESC,'[','6','n',0
+  0FB2'   00                    
+  0FB3'   1B 5B 4B 00           SEK:	DB	ESC,'[','K',0
+  0FB7'   1B 5B 00              SCSI:	DB	ESC,'[',0		; CSI -- the prefix a counted ESC[<n>X needs
+  0FBA'   1B 5B 31 40           SICH:	DB	ESC,'[','1','@',0	; ICH -- insert one cell at the cursor
+  0FBE'   00                    
+  0FBF'   1B 5B 31 3B           SRGP:	DB	ESC,'[','1',';',0	; region prefix "ESC[1;" (EMITB + 'r' follow)
+  0FC3'   00                    
+  0FC4'   1B 5B 3F 32           SHIDE:	DB	ESC,'[','?','2','5','l',0
+  0FC8'   35 6C 00              
+  0FCB'   1B 5B 3F 32           SSHOW:	DB	ESC,'[','?','2','5','h',0
+  0FCF'   35 68 00              
+  0FD2'   1B 5B 72 00           SREGRS: DB	ESC,'[','r',0
+  0FD6'   2D 2D 20 49           SINSM:	DB	'-','-',' ','I','N','S','E','R','T',' ','-','-',0
+  0FDA'   4E 53 45 52           
+  0FDE'   54 20 2D 2D           
+  0FE2'   00                    
+  0FE3'   2D 2D 20 52           SREPM:	DB	'-','-',' ','R','E','P','L','A','C','E',' ','-','-',0
+  0FE7'   45 50 4C 41           
+  0FEB'   43 45 20 2D           
+  0FEF'   2D 00                 
+  0FF1'   00                    SNULL:	DB	0
+  0FF2'   3C 3C 3C 00           SSKIP:	DB	'<','<','<',0
                                 
                                 ;============================================================
                                 ; DATA
                                 ;============================================================
-  0F7F'   18                    NROWS:	DB	24		; runtime rows    (default; DSR may enlarge)
-  0F80'   50                    NCOLS:	DB	80		; runtime columns
-  0F81'   17                    NEDIT:	DB	23		; edit rows = NROWS-1 (messages take the last)
+  0FF6'   18                    NROWS:	DB	24		; runtime rows    (default; DSR may enlarge)
+  0FF7'   50                    NCOLS:	DB	80		; runtime columns
+  0FF8'   17                    NEDIT:	DB	23		; edit rows = NROWS-1 (messages take the last)
                                 
                                 ;--- a frame's facts, and (SCPRE) the same of the frame before, in one order
-  0F82'   0000                  WINROW: DW	0		; lines on the screen above the cursor's (WM WINROW)
-  0F84'   0000                  SKIPR:	DW	0		; rows of the top line that are off the top (a
+  0FF9'   0000                  WINROW: DW	0		; lines on the screen above the cursor's (WM WINROW)
+  0FFB'   0000                  SKIPR:	DW	0		; rows of the top line that are off the top (a
                                 				;   line taller than the screen; vim's w_skipcol)
-  0F86'   00                    SROW:	DB	0		; computed cursor screen row
-  0F87'   00                    SCOL:	DB	0		; computed cursor screen column
-  0F88'   01                    TXEND:	DB	1		; the first row with no text on it
-  0F89'   7E                    FILCH:	DB	'~'		; what such a row shows: '~', or '@' for a line cut
-  0F8A'   00                    SCBOT:	DB	0		; WINROW of the last line shown
-  0F8B'   0000                  LYABV:	DW	0		; rows the lines above the cursor's take
-  0F8D'   00                    CSRAW:	DB	0		; the row of its line (as shown) the cursor is on
-  0F8E'   00                    LYTSH:	DB	0		; HTBLD: the rows of the cursor's line that show
-  0F8F'   00                    NXTR:	DB	0		; ... and of the line under it (0: not shown)
+  0FFD'   00                    SROW:	DB	0		; computed cursor screen row
+  0FFE'   00                    SCOL:	DB	0		; computed cursor screen column
+  0FFF'   01                    TXEND:	DB	1		; the first row with no text on it
+  1000'   7E                    FILCH:	DB	'~'		; what such a row shows: '~', or '@' for a line cut
+  1001'   00                    SCBOT:	DB	0		; WINROW of the last line shown
+  1002'   0000                  LYABV:	DW	0		; rows the lines above the cursor's take
+  1004'   00                    CSRAW:	DB	0		; the row of its line (as shown) the cursor is on
+  1005'   00                    LYTSH:	DB	0		; HTBLD: the rows of the cursor's line that show
+  1006'   00                    NXTR:	DB	0		; ... and of the line under it (0: not shown)
   000E                          FRMLEN	EQU	$-WINROW
-  0F90'   0000                  OLDWR:	DW	0
-  0F92'   0000                  OLDSK:	DW	0
-  0F94'   0000                  OLDSC:	DW	0
-  0F96'   0000                  OLDTX:	DW	0		; (TXEND, and FILCH)
-  0F98'   00                    OLDBOT:	DB	0
-  0F99'   0000                  OLDAB:	DW	0
-  0F9B'   00                    OLDCS:	DB	0
-  0F9C'   00                    OLDCR:	DB	0
-  0F9D'   00                    OLDNR:	DB	0
+  1007'   0000                  OLDWR:	DW	0
+  1009'   0000                  OLDSK:	DW	0
+  100B'   0000                  OLDSC:	DW	0
+  100D'   0000                  OLDTX:	DW	0		; (TXEND, and FILCH)
+  100F'   00                    OLDBOT:	DB	0
+  1010'   0000                  OLDAB:	DW	0
+  1012'   00                    OLDCS:	DB	0
+  1013'   00                    OLDCR:	DB	0
+  1014'   00                    OLDNR:	DB	0
                                 
-  0F9E'   00                    OPN:	DB	0		; SCDRAW: rows the screen gave up at the top
-  0F9F'   00                    OPM:	DB	0		; ... or gained there
-  0FA0'   00                    EDA:	DB	0		; the edit: the rows it had
-  0FA1'   00                    EDB:	DB	0		; ... and has
-  0FA2'   00                    EDR:	DB	0		; ... its first row
-  0FA3'   00                    EDP:	DB	0		; ... the first of them to draw
-  0FA4'   00                    PEND:	DB	0		; PRNG: the row to stop before
-  0FA5'   00                    TALLF:	DB	0		; 1 = the top line is taller than the screen
-  0FA6'   0000                  SCRLN:	DW	0		; lines the text moved up this frame (signed)
-  0FA8'   00                    LYOK:	DB	0		; 1 = the row table is the screen's, as it stands
-  0FA9'   00                    LQKC:	DB	0		; LYQK: the cells before the cursor on its row
-  0FAA'   0000                  LYTOP:	DW	0		; ... the bytes in memory before the top line then
-  0FAC'   0000                  LYPG:	DW	0		; ... and PGTOPM
-  0FAE'   00                    FORCEF: DB	0		; 1 = a full frame is not finished -> repaint in full
-  0FAF'   00                    OEDMOD: DB	EM_CMD		; the mode the bottom row last showed (0FFH: unknown)
+  1015'   00                    OPN:	DB	0		; SCDRAW: rows the screen gave up at the top
+	MACRO-80 3.44	09-Dec-81	PAGE	1-51
+
+
+  1016'   00                    OPM:	DB	0		; ... or gained there
+  1017'   00                    EDA:	DB	0		; the edit: the rows it had
+  1018'   00                    EDB:	DB	0		; ... and has
+  1019'   00                    EDR:	DB	0		; ... its first row
+  101A'   00                    EDP:	DB	0		; ... the first of them to draw
+  101B'   00                    PEND:	DB	0		; PRNG: the row to stop before
+  101C'   00                    TALLF:	DB	0		; 1 = the top line is taller than the screen
+  101D'   0000                  SCRLN:	DW	0		; lines the text moved up this frame (signed)
+  101F'   00                    LYOK:	DB	0		; 1 = the row table is the screen's, as it stands
+  1020'   00                    LQKC:	DB	0		; LYQK: the cells before the cursor on its row
+  1021'   0000                  LYTOP:	DW	0		; ... the bytes in memory before the top line then
+  1023'   0000                  HTTOPC: DW	0		; HTBLD: the bytes from the table's first line to
+                                				;   the cursor
+  1025'   0000                  LYPG:	DW	0		; ... and PGTOPM
+  1027'   00                    FORCEF: DB	0		; 1 = a full frame is not finished -> repaint in full
+  1028'   00                    OEDMOD: DB	EM_CMD		; the mode the bottom row last showed (0FFH: unknown)
                                 
-  0FB0'   00                    SCEOF:	DB	0		; 1 = the end of the file is on the screen
-  0FB1'   00                    SCBOF:	DB	0		; 1 = the top row is the file's first line
-  0FB2'   00                    PLACE:	DB	0		; the command's request of the next layout (VI.INC
+  1029'   00                    SCEOF:	DB	0		; 1 = the end of the file is on the screen
+  102A'   00                    SCBOF:	DB	0		; 1 = the top row is the file's first line
+  102B'   00                    PLACE:	DB	0		; the command's request of the next layout (VI.INC
                                 				;   PL_ASK / PL_SET / PL_MID)
-  0FB3'   00                    CSUB:	DB	0		; the row of its line the cursor is on (0 = first)
+  102C'   00                    CSUB:	DB	0		; the row of its line the cursor is on (0 = first)
                                 
-	MACRO-80 3.44	09-Dec-81	PAGE	1-50
-
-
-  0FB4'   0000                  TOPLEN: DW	0		; bytes from the top line's start to the cursor
-  0FB6'   0000                  CBOL:	DW	0		; bytes from the cursor line's start to the cursor
-  0FB8'   0000                  CURDCL: DW	0		; cursor display column (0-based, tabs expanded)
-  0FBA'   0000                  LYDLT:	DW	0		; LAYOUT: LNDLT taken for this frame
-  0FBC'   00                    LYROW:	DB	0		; LAYOUT: working row
-  0FBD'   0000                  LYIB:	DW	0		; LYMID: -> the entry of the next line below
-  0FBF'   00                    LYVB:	DB	0		; LAYOUT: the column its current row starts at (low
+  102D'   0000                  TOPLEN: DW	0		; bytes from the top line's start to the cursor
+  102F'   0000                  CBOL:	DW	0		; bytes from the cursor line's start to the cursor
+  1031'   0000                  CURDCL: DW	0		; cursor display column (0-based, tabs expanded)
+  1033'   0000                  LYDLT:	DW	0		; LAYOUT: LNDLT taken for this frame
+  1035'   00                    LYROW:	DB	0		; LAYOUT: working row
+  1036'   0000                  LYIB:	DW	0		; LYMID: -> the entry of the next line below
+  1038'   00                    LYVB:	DB	0		; LAYOUT: the column its current row starts at (low
                                 				;   byte: TAB stops)
-  0FC0'   0000                  LYLIM:	DW	0		; HTBLD: bytes back to pin while reading down
-  0FC2'   00                    LYUSE:	DB	0		; LYMID: rows taken
-  0FC3'   00                    LYMAB:	DB	0		; LYMID: ... of them above the cursor's line
-  0FC4'   00                    LYMBL:	DB	0		; LYMID: ... and below it ('~' rows too)
-  0FC5'   00                    LYND:	DB	0		; LYMID: lines under the last one shown (LYFAR)
-  0FC6'   00                    LYPRF:	DB	0		; LYMID: 1 = a line above first when rows are even
-  0FC7'   00                    LYSVR:	DB	0		; LAYOUT: LYROW as CURRW gave it
-  0FC8'   00                    HTLIM:	DB	0		; HTBLD: rows still to gather
-  0FC9'   00                    LYXE:	DB	0		; HTBLD: 1 when the cursor has a row to itself
-  0FCA'   00                    LYLAST: DB	0		; LAYOUT: last byte read forward
-  0FCB'   0000                  SVCNT:	DW	0		; LAYOUT: saved CMDCNT
-  0FCD'   0000                  SVAUX:	DW	0		; LAYOUT: saved AUXCNT
-  0FCF'   00                    SVDIR:	DB	0		; LAYOUT: saved DIRFLG
+  1039'   0000                  LYLIM:	DW	0		; HTBLD: bytes back to pin while reading down
+  103B'   00                    LYUSE:	DB	0		; LYMID: rows taken
+  103C'   00                    LYMAB:	DB	0		; LYMID: ... of them above the cursor's line
+  103D'   00                    LYMBL:	DB	0		; LYMID: ... and below it ('~' rows too)
+  103E'   00                    LYND:	DB	0		; LYMID: lines under the last one shown (LYFAR)
+  103F'   00                    LYPRF:	DB	0		; LYMID: 1 = a line above first when rows are even
+  1040'   00                    LYSVR:	DB	0		; LAYOUT: LYROW as CURRW gave it
+  1041'   00                    HTLIM:	DB	0		; HTBLD: rows still to gather
+  1042'   00                    LYXE:	DB	0		; HTBLD: 1 when the cursor has a row to itself
+  1043'   00                    LYLAST: DB	0		; LAYOUT: last byte read forward
+  1044'   0000                  SVCNT:	DW	0		; LAYOUT: saved CMDCNT
+  1046'   0000                  SVAUX:	DW	0		; LAYOUT: saved AUXCNT
+  1048'   00                    SVDIR:	DB	0		; LAYOUT: saved DIRFLG
                                 
-  0FD0'   0000                  RDP:	DW	0		; reader: next before-gap byte
-  0FD2'   0000                  RDN:	DW	0		; reader: before-gap bytes left
-  0FD4'   0000                  RDHL:	DW	0		; reader: RGET pointer
-  0FD6'   0000                  RDBC:	DW	0		; reader: RGET count
-  0FD8'   00                    RDSEG:	DB	0		; reader: 1 once reading after the gap
-  0FD9'   00                    SKPN:	DB	0		; RDSKIP line count
-  0FDA'   00                    PROWN:	DB	0		; screen row being painted (0-based)
-  0FDB'   0000                  PSKN:	DW	0		; PROW: rows of the line to pass over first
-  0FDD'   00                    DCOL:	DB	0		; column in the line while painting (low byte)
-  0FDE'   00                    XC:	DB	0		; cells used in the row being painted
+  1049'   0000                  RDP:	DW	0		; reader: next before-gap byte
+  104B'   0000                  RDN:	DW	0		; reader: before-gap bytes left
+  104D'   0000                  RDHL:	DW	0		; reader: RGET pointer
+  104F'   0000                  RDBC:	DW	0		; reader: RGET count
+  1051'   00                    RDSEG:	DB	0		; reader: 1 once reading after the gap
+  1052'   00                    SKPN:	DB	0		; RDSKIP line count
+  1053'   00                    PROWN:	DB	0		; screen row being painted (0-based)
+  1054'   0000                  PSKN:	DW	0		; PROW: rows of the line to pass over first
+  1056'   00                    DCOL:	DB	0		; column in the line while painting (low byte)
+  1057'   00                    XC:	DB	0		; cells used in the row being painted
                                 
-  0FDF'   0000                  TMPR:	DW	0		; DSR parse: rows
-  0FE1'   0000                  TMPC:	DW	0		; DSR parse: cols
+	MACRO-80 3.44	09-Dec-81	PAGE	1-52
+
+
+  1058'   0000                  TMPR:	DW	0		; DSR parse: rows
+  105A'   0000                  TMPC:	DW	0		; DSR parse: cols
                                 
                                 	END
 	MACRO-80 3.44	09-Dec-81	PAGE	S
@@ -2998,136 +3083,139 @@ Symbols:
 0000I'	BCONST          0005 	BDOS            0007 	BEL             
 0001 	BF_CONIN        0002 	BF_CONOUT       000B 	BF_CONST        
 0019 	BF_CURDSK       0009 	BF_PRTSTR       0008 	BS              
-0FB6I'	CBOL            0092'	CEKL            0080'	CHIDE           
+102FI'	CBOL            0092'	CEKL            0080'	CHIDE           
 01DD'	CLAMP           01F0'	CLP_MAX         01EE'	CLP_MIN         
-0774*	CMDCNT          0080 	CMDTAIL         0D6B*	CMP16           
+0774*	CMDCNT          0080 	CMDTAIL         0DBB*	CMP16           
 001A 	CPMEOF          000D 	CR              0086'	CRGRS           
-0F8D'	CSRAW           0FB3I'	CSUB            05CF'	CS_SET          
-0FB8I'	CURDCL          0608*	CURRW           05A8'	CURSC           
-0466*	DCHBS           045B*	DCHN            0FDD'	DCOL            
+1004'	CSRAW           102CI'	CSUB            05CF'	CS_SET          
+1031I'	CURDCL          0608*	CURRW           05A8'	CURSC           
+0466*	DCHBS           045B*	DCHN            1056'	DCOL            
 007F 	DEL             005C 	DFTFCB          0780*	DIRFLG          
 05DA'	DIVN            0080 	DOTMAX          05E5'	DV_LP           
-0FA0'	EDA             0FA1'	EDB             0EE3*	EDMODE          
-0FA3'	EDP             0FA2'	EDR             0047'	EMDIG           
+1017'	EDA             1018'	EDB             0F5A*	EDMODE          
+101A'	EDP             1019'	EDR             0047'	EMDIG           
 0053'	EMD_DN          0049'	EMD_LP          005B'	EMD_PR          
 0063'	EMD_RT          002F'	EMITB           0000 	EM_CMD          
 0003 	EM_EX           0001 	EM_INS          0002 	EM_REP          
 001B 	ESC             0028 	EXMAX           052BI'	EXMSG           
-0510I'	EXPRM           0521I'	EXRUB           0A5A'	FC_1            
-0F89'	FILCH           0A01'	FLINE           0A44'	FL_CEL          
-0A41'	FL_EOF          0A3F'	FL_LF           0A1F'	FL_OVR          
-0A22'	FL_TAB          0FAE'	FORCEF          000E 	FRMLEN          
-0A2D'	FT_LP           0A3B'	FT_OVR          0B54'	G2P             
-0D8B*	GAPBEG          0D68*	GAPEND          008C'	GOROW1          
-0140'	GOTOP           0064'	GOTOXY          0D26'	HBMOR           
-0BE2'	HB_1            0C0F'	HB_AB           0C36'	HB_CU           
-0CCC'	HB_E2           0CDA'	HB_E3           0D11'	HB_EF           
-0C00'	HB_LM           0D0C'	HB_LS           0CFB'	HB_NX           
-0C2E'	HB_PA           0D17'	HB_PK           0CEA'	HB_PT           
-0C7F'	HB_SD           0C89'	HB_SS           0C2B'	HB_TA           
-0CC7'	HB_TE           0D44'	HB_TL           0D30'	HB_TO           
-0D3B'	HB_TX           0C49'	HB_WL           0D5A'	HP_1            
-0D56*	HTAB            0BBAI'	HTBLD           0C09*	HTBOF           
-0C51*	HTCUR           0B19'	HTE             0D42*	HTEOF           
-0FC8'	HTLIM           0D4A*	HTN             0D47'	HTPUT           
-0560'	HTTOP           03EA*	ICHAPP          02A2*	ILABOV          
-02B0*	ILN             0A5C'	ISBOF           00FA*	KBRDY           
-0020 	KBRSIZ          05EFI'	LAYOUT          0AEB'	LB_1            
-000A 	LF              0B9E'	LF_DN           0B98'	LF_FAR          
-0BD4*	LINPSB          0AFD'	LMABV           0ACF'	LMBLW           
-0B21'	LM_ADD          0B42'	LM_FL           0A99'	LM_LP           
-0A74'	LM_NR           0B33'	LM_NX           0A8E'	LM_P            
-0AAF'	LM_U            0B82*	LNDLT           0B5B'	LNW             
-0B77'	LNW_1           0B7B'	LNW_LF          0B5E'	LNW_LP          
-08D4'	LQCU            08B9'	LQGD            0FA9'	LQKC            
-081A'	LQK_1           084D'	LQK_2           082D'	LQK_E           
-07AD'	LQK_G           0857'	LQK_N           09E4'	LQMV            
-09FF'	LQ_NO           0987'	LS_1            09CA'	LS_AP           
-0930'	LS_C            09D9'	LS_E            09E0'	LS_F            
-08FC'	LS_GO           095C'	LS_M            099B'	LS_S            
-09A9'	LS_S1           086B'	LT_1            089D'	LT_2            
+0510I'	EXPRM           0521I'	EXRUB           0A72'	FC_1            
+1000'	FILCH           0A19'	FLINE           0A5C'	FL_CEL          
+0A59'	FL_EOF          0A57'	FL_LF           0A37'	FL_OVR          
+0A3A'	FL_TAB          1027'	FORCEF          000E 	FRMLEN          
+0A45'	FT_LP           0A53'	FT_OVR          0B97'	G2P             
+0DDB*	GAPBEG          0DB8*	GAPEND          008C'	GOROW1          
+0140'	GOTOP           0064'	GOTOXY          0D76'	HBMOR           
+0C2A'	HB_1            0C57'	HB_A0           0C5F'	HB_AB           
+0C86'	HB_CU           0D1C'	HB_E2           0D2A'	HB_E3           
+0D61'	HB_EF           0C48'	HB_LM           0D5C'	HB_LS           
+0D4B'	HB_NX           0C7E'	HB_PA           0D67'	HB_PK           
+0D3A'	HB_PT           0CCF'	HB_SD           0CD9'	HB_SS           
+0C7B'	HB_TA           0D17'	HB_TE           0D94'	HB_TL           
+0D80'	HB_TO           0D8B'	HB_TX           0C99'	HB_WL           
+0DAA'	HP_1            0DA6*	HTAB            0C02I'	HTBLD           
+0C51*	HTBOF           0CA1*	HTCUR           0B31'	HTE             
+0D92*	HTEOF           1041'	HTLIM           0D9A*	HTN             
+0D97'	HTPUT           0560'	HTTOP           1023'	HTTOPC          
+03EA*	ICHAPP          02A2*	ILABOV          02B0*	ILN             
+0A74'	ISBOF           00FA*	KBRDY           0020 	KBRSIZ          
+05EFI'	LAYOUT          0B03'	LB_1            000A 	LF              
+0BE6'	LF_DN           0BE0'	LF_FAR          0C1C*	LINPSB          
+0B15'	LMABV           0AE7'	LMBLW           0B39'	LM_ADD          
+0B85'	LM_FL           0AB1'	LM_LP           0A8C'	LM_NR           
+0B4B'	LM_NX           0AA6'	LM_P            0B88'	LM_ST           
+0AC7'	LM_U            0BCA*	LNDLT           0B9E'	LNW             
+0BBF'	LNW_1           0BC3'	LNW_LF          0BA1'	LNW_LP          
+0B80'	LN_SL           08EC'	LQCU            08D1'	LQGD            
+1020'	LQKC            081A'	LQK_1           084D'	LQK_2           
+082D'	LQK_E           07AD'	LQK_G           0857'	LQK_N           
+09FC'	LQMV            0A17'	LQ_NO           099F'	LS_1            
+09E2'	LS_AP           0948'	LS_C            09F1'	LS_E            
+09F8'	LS_F            0914'	LS_GO           0974'	LS_M            
 	MACRO-80 3.44	09-Dec-81	PAGE	S-1
 
 
-089F'	LT_3            08A9'	LT_4            08B3'	LT_NO           
-0F8B'	LYABV           0FBA'	LYDLT           0B7D'	LYFAR           
-0FBD'	LYIB            0AB6'	LYINI           0FCA'	LYLAST          
-0FC0'	LYLIM           0FC3'	LYMAB           0FC4'	LYMBL           
-0A6A'	LYMID           09F0'	LYMQ            0FC5'	LYND            
-0FA8'	LYOK            0FAC'	LYPG            0FC6'	LYPRF           
-0783'	LYQK            0FBC'	LYROW           08F6'	LYSTP           
-0FC7'	LYSVR           0FAA'	LYTOP           0B4F'	LYTOPP          
-0859'	LYTP            0F8E'	LYTSH           0FC2'	LYUSE           
-0FBF'	LYVB            0FC9'	LYXE            0645'	LY_B1           
-064F'	LY_BLD          06BC'	LY_BW           06F2'	LY_CUT          
-071F'	LY_END          068D'	LY_FD           067F'	LY_FT           
-066E'	LY_NT           0732'	LY_NX           0637'	LY_SAM          
-076D'	LY_TC           06FA'	LY_WE           06DB'	LY_WK           
-0F02'	MD_DRW          0E56'	MH_LP           0003 	MKMAX           
-0004 	MKSIZ           0EE2I'	MODEMS          0E52'	MULHA           
-0004 	MW_BIG          0003 	MW_CTG          0001 	MW_FIL          
-0000 	MW_NON          0002 	MW_WRT          0F80I'	NCOLS           
-0F81I'	NEDIT           0F7FI'	NROWS           0000 	NUL             
-0F8F'	NXTR            0FAF'	OEDMOD          0F99'	OLDAB           
-0F98'	OLDBOT          0F9C'	OLDCR           0F9B'	OLDCS           
-0F9D'	OLDNR           0F94'	OLDSC           0F92'	OLDSK           
-0F96'	OLDTX           0F90'	OLDWR           0F9F'	OPM             
-0F9E'	OPN             0018I'	OUTCH           0A65*	OUTPOS          
-0025I'	OUTSTR          0E67'	PAINTR          0EAC'	PCELL           
-0FA4'	PEND            08CB*	PGTOPM          0121'	PG_1            
-00B5'	PG_F            00E8'	PG_GO           00C4'	PG_H            
-00D4'	PG_K            00F2'	PG_LP           00BE'	PG_N            
-0102'	PG_P            00E5'	PG_S            0FB2I'	PLACE           
-0000 	PL_ASK          0002 	PL_MID          0001 	PL_SET          
-0098'	PRNG            0E77'	PROW            0FDA'	PROWN           
-0EA0'	PRTBLP          0E86'	PR_LP           0E9D'	PR_TAB          
-0E20'	PSKIP           0FDB'	PSKN            0E41'	PS_CL           
-0E2D'	PS_LP           0131'	PT_NL           0EC0'	PWRAP           
-0EDF'	PW_END          015E'	RDB             0FD6'	RDBC            
-0D83'	RDBOL           0172'	RDB_GO          0161'	RDB_LP          
-0D98'	RDCH            0DB3'	RDC_AF          0DCC'	RDC_GT          
-0DC4'	RDC_NX          0DD7'	RDC_RT          0DCD*	RDGET           
-0FD4'	RDHL            0FD2'	RDN             0177'	RDNUM           
-019E'	RDNUMS          0FD0'	RDP             0FD8'	RDSEG           
-0D86'	RDSET           0DDB'	RDSKIP          0D7D'	RDTOP           
-0DBF*	RGET0           09E5*	RINTENT         019C'	RN_DN           
-017A'	RN_LP           0503'	ROWS_M          0DE8'	RSK_F           
-0E0C'	RSK_LP          0DFF'	RSK_S           01DC'	RS_BAD          
-0007 	R_DCH           0003 	R_DLIN          0000 	R_FULL          
-0004 	R_ICH           0005 	R_ILIN          0006 	R_JOIN          
-0002 	R_LINE          0001 	R_MOVE          03C9'	SB_0            
-03CA'	SB_1            03D1'	SB_2            03DE'	SB_3            
-03BF'	SB_DN           0FB1I'	SCBOF           0F8AI'	SCBOT           
-0F1EI'	SCDONE          0203I'	SCDRAW          0FB0I'	SCEOF           
-04DB'	SCFULL          0147I'	SCINIT          0F87'	SCOL            
-01F2I'	SCPRE           0FA6'	SCRLN           0F40'	SCSI            
-0F0DI'	SCURS           043C'	SC_DC0          044B'	SC_DC1          
-0425'	SC_DCH          0404'	SC_IC0          0413'	SC_IC1          
-041D'	SC_ICC          03E9'	SC_ICH          0232'	SD_1            
-025C'	SD_2            0263'	SD_3            026B'	SD_AN           
+09B3'	LS_S            09C1'	LS_S1           0878'	LT_0            
+0883'	LT_1            08B5'	LT_2            08B7'	LT_3            
+08C1'	LT_4            08CB'	LT_NO           1002'	LYABV           
+1033'	LYDLT           0BC5'	LYFAR           1036'	LYIB            
+0ACE'	LYINI           1043'	LYLAST          1039'	LYLIM           
+103C'	LYMAB           103D'	LYMBL           0A82'	LYMID           
+0A08'	LYMQ            103E'	LYND            101F'	LYOK            
+1025'	LYPG            103F'	LYPRF           0783'	LYQK            
+1035'	LYROW           090E'	LYSTP           1040'	LYSVR           
+1021'	LYTOP           0B92'	LYTOPP          0859'	LYTP            
+1005'	LYTSH           103B'	LYUSE           1038'	LYVB            
+1042'	LYXE            0645'	LY_B1           064F'	LY_BLD          
+06BC'	LY_BW           06F2'	LY_CUT          071F'	LY_END          
+068D'	LY_FD           067F'	LY_FT           066E'	LY_NT           
+0732'	LY_NX           0637'	LY_SAM          076D'	LY_TC           
+06FA'	LY_WE           06DB'	LY_WK           0F79'	MD_DRW          
+0ECD'	MH_LP           0003 	MKMAX           0004 	MKSIZ           
+0F59I'	MODEMS          0EC9'	MULHA           0004 	MW_BIG          
+0003 	MW_CTG          0001 	MW_FIL          0000 	MW_NON          
+0002 	MW_WRT          0FF7I'	NCOLS           0FF8I'	NEDIT           
+0FF6I'	NROWS           0000 	NUL             1006'	NXTR            
+1028'	OEDMOD          1010'	OLDAB           100F'	OLDBOT          
+1013'	OLDCR           1012'	OLDCS           1014'	OLDNR           
+100B'	OLDSC           1009'	OLDSK           100D'	OLDTX           
+1007'	OLDWR           1016'	OPM             1015'	OPN             
+0018I'	OUTCH           0A7D*	OUTPOS          0025I'	OUTSTR          
+0EDE'	PAINTR          0F23'	PCELL           101B'	PEND            
+08E3*	PGTOPM          0121'	PG_1            00B5'	PG_F            
+00E8'	PG_GO           00C4'	PG_H            00D4'	PG_K            
+00F2'	PG_LP           00BE'	PG_N            0102'	PG_P            
+00E5'	PG_S            102BI'	PLACE           0000 	PL_ASK          
+0002 	PL_MID          0001 	PL_SET          0098'	PRNG            
+0EEE'	PROW            1053'	PROWN           0F17'	PRTBLP          
+0EFD'	PR_LP           0F14'	PR_TAB          0E97'	PSKIP           
+1054'	PSKN            0EB8'	PS_CL           0EA4'	PS_LP           
+0131'	PT_NL           0F37'	PWRAP           0F56'	PW_END          
+015E'	RDB             104F'	RDBC            0DD3'	RDBOL           
+0172'	RDB_GO          0161'	RDB_LP          0DE8'	RDCH            
+0E03'	RDC_AF          0E1C'	RDC_GT          0E14'	RDC_NX          
+0E27'	RDC_RT          0E1D*	RDGET           104D'	RDHL            
+104B'	RDN             0177'	RDNUM           019E'	RDNUMS          
+1049'	RDP             1051'	RDSEG           0DD6'	RDSET           
+0E2B'	RDSKIP          0DCD'	RDTOP           0E50*	RGET0           
+09FD*	RINTENT         019C'	RN_DN           017A'	RN_LP           
+0503'	ROWS_M          0E55'	RSK_A           0E5D'	RSK_B           
+0E95'	RSK_E           0E69'	RSK_LP          0E7D'	RSK_M           
+01DC'	RS_BAD          0007 	R_DCH           0003 	R_DLIN          
+0000 	R_FULL          0004 	R_ICH           0005 	R_ILIN          
+0006 	R_JOIN          0002 	R_LINE          0001 	R_MOVE          
+03C9'	SB_0            03CA'	SB_1            03D1'	SB_2            
+03DE'	SB_3            03BF'	SB_DN           102AI'	SCBOF           
+1001I'	SCBOT           0F95I'	SCDONE          0203I'	SCDRAW          
+1029I'	SCEOF           04DB'	SCFULL          0147I'	SCINIT          
+0FFE'	SCOL            01F2I'	SCPRE           101D'	SCRLN           
+0FB7'	SCSI            0F84I'	SCURS           043C'	SC_DC0          
+044B'	SC_DC1          0425'	SC_DCH          0404'	SC_IC0          
 	MACRO-80 3.44	09-Dec-81	PAGE	S-2
 
 
-030A'	SD_GO           0278'	SD_IL           0378'	SD_NS           
-02C3'	SD_OL           0344'	SD_PT           0360'	SD_SH           
-04BE'	SEGO            0478'	SEGQ            0F3C'	SEK             
-04C1'	SE_1            04CF'	SE_2            0535'	SHFT            
-0F4D'	SHIDE           0545'	SH_1            0F43'	SICH            
-0F5F'	SINSM           02AD'	SI_2            0F84I'	SKIPR           
-0FD9'	SKPN            0586'	SM_DN           057C'	SM_LP           
-0F7A'	SNULL           0305'	SO_GO           02E9'	SO_UP           
-0F2D'	SPROBE          01FA'	SP_LP           048D'	SQ_1            
-04A7'	SQ_2            04A3'	SQ_NO           0F5B'	SREGRS          
-0F6C'	SREPM           0597'	SRGN            0F48'	SRGP            
-0F86'	SROW            0527'	SRUB            0F54'	SSHOW           
-0F7B'	SSKIP           0D8E*	SUBHD           056A'	SUMT            
-056E'	SUMX            0FCD'	SVAUX           0FCB'	SVCNT           
-0FCF'	SVDIR           0009 	TAB             0D5D'	TABCUR          
-0E5C'	TABN            0008 	TABWID          0FA5I'	TALLF           
-058E'	TEV             0FE1'	TMPC            0FDF'	TMPR            
-0FB4'	TOPLEN          0F88I'	TXEND           0A5E*	TXTBEG          
-0D64*	TXTEND          0000 	WBOOT           0F82I'	WINROW          
-0C4B*	WRLIM           0FDE'	XC              05D3'	XTRA            
+0413'	SC_IC1          041D'	SC_ICC          03E9'	SC_ICH          
+0232'	SD_1            025C'	SD_2            0263'	SD_3            
+026B'	SD_AN           030A'	SD_GO           0278'	SD_IL           
+0378'	SD_NS           02C3'	SD_OL           0344'	SD_PT           
+0360'	SD_SH           04BE'	SEGO            0478'	SEGQ            
+0FB3'	SEK             04C1'	SE_1            04CF'	SE_2            
+0535'	SHFT            0FC4'	SHIDE           0545'	SH_1            
+0FBA'	SICH            0FD6'	SINSM           02AD'	SI_2            
+0FFBI'	SKIPR           1052'	SKPN            0586'	SM_DN           
+057C'	SM_LP           0FF1'	SNULL           0305'	SO_GO           
+02E9'	SO_UP           0FA4'	SPROBE          01FA'	SP_LP           
+048D'	SQ_1            04A7'	SQ_2            04A3'	SQ_NO           
+0FD2'	SREGRS          0FE3'	SREPM           0597'	SRGN            
+0FBF'	SRGP            0FFD'	SROW            0527'	SRUB            
+0FCB'	SSHOW           0FF2'	SSKIP           0DDE*	SUBHD           
+056A'	SUMT            056E'	SUMX            1046'	SVAUX           
+1044'	SVCNT           1048'	SVDIR           0009 	TAB             
+0DAD'	TABCUR          0ED3'	TABN            0008 	TABWID          
+101CI'	TALLF           058E'	TEV             105A'	TMPC            
+1058'	TMPR            102D'	TOPLEN          0FFFI'	TXEND           
+0A76*	TXTBEG          0DB4*	TXTEND          0000 	WBOOT           
+0FF9I'	WINROW          0C9B*	WRLIM           1057'	XC              
+05D3'	XTRA            
 
 
 

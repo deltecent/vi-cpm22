@@ -1456,17 +1456,31 @@ LQK_N:
 	RET
 
 ;LYTP -- L = the lines to be above the cursor's (H = 0): HL = the start of
-; the top line.  WM's line move finds it (LINPSB), walking back over all of
-; them.  With a table that was kept (LYSTP) there is less to do: no lines
-; above, and it is the cursor's line; else the top line is the old one, or
-; some lines down from it, and the old one is where LYTOP says while the
-; pager has left the text alone.
+; the top line.  WM's line move (LINPSB) would find it, walking back over all
+; of them; but HTBLD has walked back already, to the table's first line
+; (HTTOPC), and the top line is that one or some lines down from it.  With a
+; table that was kept (LYSTP): no lines above, and it is the cursor's line;
+; else the top line is the old one, or some lines down from it, and the old
+; one is where LYTOP says while the pager has left the text alone.
 LYTP:
 	LDA	LYOK
 	ORA	A
-	JZ	LINPSB
-	ORA	L
-	DCR	A		; (LYOK is 1)
+	JNZ	LT_0
+	MOV	B,L
+	LDA	HTCUR
+	SUB	B
+	JC	LT_NO
+	MOV	C,A		; C = the lines the top is under the table's first
+	LHLD	HTTOPC
+	CALL	G2P
+	XCHG
+	LHLD	GAPBEG
+	XCHG			; HL = the table's first line, DE = the gap
+	INR	C
+	JMP	LT_2
+LT_0:
+	MOV	A,L
+	ORA	A
 	JNZ	LT_1
 	LHLD	CBOL
 	JMP	G2P
@@ -1946,17 +1960,48 @@ LM_ADD:
 ;LM_NX -- read the next line below: D = its last row, counted from 0.  A and
 ; the flags are FLINE's answer.  The reader is kept in RDHL/RDBC between
 ; lines, the registers being wanted for the lines above.
+; A line that is in memory to its LF is measured where it lies (LNW), as the
+; lines above the cursor's are; FLINE, a char at a time through RDGET, reads
+; the one the bytes run out in, and the one taller than the screen.
 ;LM_FL -- the same, from where D, E, LYVB and the reader (HL/BC) stand.
 LM_NX:
-	LXI	D,0
 	XRA	A
 	STA	LYVB
 	LHLD	RDBC
 	MOV	B,H
 	MOV	C,L
 	LHLD	RDHL
+	PUSH	H
+	PUSH	B
+	CALL	LNW		; DE = its width; CY: it ended, LF and all
+	JNC	LN_SL
+	PUSH	H
+	PUSH	B
+	XCHG
+	CALL	XTRA		; BC = its rows past the first
+	MOV	A,B
+	ORA	A
+	MOV	D,C
+	POP	B
+	POP	H
+	JNZ	LN_SL
+	LDA	NEDIT
+	DCR	A
+	CMP	D		; CY iff more rows than the screen has
+	JC	LN_SL
+	POP	PSW		; (the line's start is not wanted)
+	POP	PSW
+	MVI	A,LF
+	STA	LYLAST
+	XRA	A
+	JMP	LM_ST
+LN_SL:
+	POP	B
+	POP	H
+	LXI	D,0
 LM_FL:
 	CALL	FLINE
+LM_ST:
 	SHLD	RDHL
 	MOV	H,B
 	MOV	L,C
@@ -1990,6 +2035,8 @@ LNW_LP:
 	MOV	A,M
 	INX	H
 	DCX	B
+	CPI	' '
+	JNC	LNW_1		; (nearly all of them: asked first)
 	CPI	LF
 	JZ	LNW_LF
 	CPI	CR
@@ -2113,11 +2160,16 @@ HB_LM:
 	SHLD	LYLIM
 	POP	H
 	POP	PSW
-	JNC	HB_AB
+	JNC	HB_A0
 	LDA	HTBOF
 	ORA	A
 	CZ	LNW		; ... and what it does hold need not start with
 				;   a line: the table starts at the next one
+HB_A0:
+	PUSH	H
+	CALL	G2P
+	SHLD	HTTOPC		; (LYTP: the top line is found from here)
+	POP	H
 HB_AB:
 	PUSH	B		; (CBOL, if this turns out to be the cursor's)
 	CALL	LNW		; DE = a line's width; CY: it ended, LF and all
@@ -2398,35 +2450,41 @@ RDC_RT:
 	POP	B
 	RET
 
-;RDSKIP -- skip A lines (stops early at the end of the text).
+;RDSKIP -- skip A lines (stops early at the end of the text).  What is in
+; memory is passed over where it lies, before the gap and after it; RDCH
+; reads on only when those bytes run out with lines still to pass.
 RDSKIP:
 	ORA	A
 	RZ
 	STA	SKPN
-	LHLD	RDN		; what lies before the gap is passed over where
-	MOV	B,H		;   it lies
+	LHLD	RDN
+	MOV	B,H
 	MOV	C,L
 	LHLD	RDP
-RSK_F:
-	MOV	A,B
-	ORA	C
-	JZ	RSK_S
-	MOV	A,M
-	INX	H
-	DCX	B
-	CPI	LF
-	JNZ	RSK_F
-	LDA	SKPN
-	DCR	A
-	STA	SKPN
-	JNZ	RSK_F
-RSK_S:
+	CALL	RSK_M
 	SHLD	RDP
 	MOV	H,B
 	MOV	L,C
 	SHLD	RDN
-	LDA	SKPN
+	RZ
+	LDA	RDSEG
 	ORA	A
+	JNZ	RSK_A
+	INR	A		; first after-gap byte: start RGET
+	STA	RDSEG
+	CALL	RGET0
+	JMP	RSK_B
+RSK_A:
+	LHLD	RDBC
+	MOV	B,H
+	MOV	C,L
+	LHLD	RDHL
+RSK_B:
+	CALL	RSK_M
+	SHLD	RDHL
+	MOV	H,B
+	MOV	L,C
+	SHLD	RDBC
 	RZ
 RSK_LP:
 	CALL	RDCH
@@ -2437,6 +2495,25 @@ RSK_LP:
 	DCR	A
 	STA	SKPN
 	JNZ	RSK_LP
+	RET
+;RSK_M -- pass over SKPN lines in the BC bytes at HL.  Z when that was all of
+; them; NZ when the bytes ran out first (SKPN = the lines still to pass).
+RSK_M:
+	MOV	A,B
+	ORA	C
+	JZ	RSK_E
+	MOV	A,M
+	INX	H
+	DCX	B
+	CPI	LF
+	JNZ	RSK_M
+	LDA	SKPN
+	DCR	A
+	STA	SKPN
+	JNZ	RSK_M
+	RET
+RSK_E:
+	INR	A		; (NZ)
 	RET
 
 ;PSKIP -- PROW, for the top line of a full repaint when rows of it are off
@@ -2678,6 +2755,8 @@ SCRLN:	DW	0		; lines the text moved up this frame (signed)
 LYOK:	DB	0		; 1 = the row table is the screen's, as it stands
 LQKC:	DB	0		; LYQK: the cells before the cursor on its row
 LYTOP:	DW	0		; ... the bytes in memory before the top line then
+HTTOPC: DW	0		; HTBLD: the bytes from the table's first line to
+				;   the cursor
 LYPG:	DW	0		; ... and PGTOPM
 FORCEF: DB	0		; 1 = a full frame is not finished -> repaint in full
 OEDMOD: DB	EM_CMD		; the mode the bottom row last showed (0FFH: unknown)
