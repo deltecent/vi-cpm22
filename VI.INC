@@ -94,4 +94,12 @@ DOTMAX	EQU	128		; keys one recorded change may hold (see '.')
 KBRSIZ	EQU	32		; KEY.MAC's type-ahead ring (a power of two)
 MKMAX	EQU	3		; marks 'a'-'c' -- three is enough (COMMANDS.md)
 MKSIZ	EQU	4		; each: a 3-byte file position (the 4th is spare)
+SREPMX	EQU	EXMAX-4		; ':s' replacement -- bounded by the ex line
+				;   itself, so SCOPY can never truncate a line
+				;   anyone is able to type: the shortest
+				;   substitute is 's' '/' + one pattern char +
+				;   '/' before the replacement starts, and
+				;   RDLINE stores at most EXMAX.  Tied to
+				;   EXMAX rather than written out, so the two
+				;   cannot drift apart.
 

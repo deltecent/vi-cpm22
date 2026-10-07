@@ -1,6 +1,6 @@
 # What a command costs on a 100 K file
 
-Written by `python3 timecost.py --write`; do not edit. Measured on a `VI.COM` of 22016 bytes, one fresh editor per row, on a file of 12800 lines of 8 bytes.
+Written by `python3 timecost.py --write`; do not edit. Measured on a `VI.COM` of 21504 bytes, one fresh editor per row, on a file of 12800 lines of 8 bytes.
 
 The seconds are the simulator's emulated clock (2 MHz 8080, 9600-baud console, the BIOS's disk loops). The simulated drive has no seek time and no rotation, so **these are a floor**: a real drive adds to every row that pages and to none that does not. The message is what the bottom row said afterwards.
 
@@ -14,16 +14,16 @@ The seconds are the simulator's emulated clock (2 MHz 8080, 9600-baud console, t
 | `200j` at line 6000 | 1.5 | 298 |  |
 | `G` from the top | 45.0 | 298 |  |
 | `gg` from the end | 35.6 | 296 |  |
-| `6000G` from the top | 20.2 | 298 |  |
+| `6000G` from the top | 20.3 | 298 |  |
 | `6100G` from line 6000 | 0.8 | 298 |  |
 | `5900G` from line 6000 | 0.8 | 298 |  |
 | `100G` from line 12000 | 32.2 | 298 |  |
 | `G` again, after `G` `gg` | 33.3 | 298 |  |
-| `gg` from the end, after `x` there | 53.0 | 296 |  |
+| `gg` from the end, after `x` there | 51.4 | 296 |  |
 | `'a` to line 100 from line 6000 | 14.3 | 298 |  |
 | `^G` at the end | 0.4 | 44 | "TEST.TXT" line 12800 col 1 |
 | `G` from the top, ESC 10 s into it | 17.5 | 52 | Interrupted |
-| `/zzzz` from line 6000, never found | 108.3 | 55 | Pattern not found: zzzz |
+| `/zzzz` from line 6000, never found | 108.4 | 55 | Pattern not found: zzzz |
 | `/zzzz` from line 6000, ESC 10 s into it | 25.9 | 68 | Interrupted |
 | `/012000` from the top | 41.0 | 315 |  |
 | `/000100` from line 6000 (wraps) | 61.2 | 315 |  |
@@ -43,13 +43,13 @@ The seconds are the simulator's emulated clock (2 MHz 8080, 9600-baud console, t
 | `u` after `500dd` | 0.1 | 34 | Too large to undo |
 | `P` after `500dd` | 1.7 | 298 |  |
 | `2000dd` (16 K) | 9.4 | 298 |  |
-| `P` after `2000dd` | 16.3 | 298 |  |
-| `3000dd` (24 K) | 28.6 | 332 | Too large to yank |
-| `5000dd` (40 K) | 28.6 | 332 | Too large to yank |
+| `P` after `2000dd` | 14.8 | 298 |  |
+| `3000dd` (24 K) | 27.7 | 332 | Too large to yank |
+| `5000dd` (40 K) | 27.7 | 332 | Too large to yank |
 | `60yy` | 0.3 | 0 |  |
 | `500yy` (4 K) | 3.7 | 298 |  |
-| `2000yy` (16 K) | 23.6 | 298 |  |
-| `5000yy` (40 K) | 28.0 | 332 | Too large to yank |
+| `2000yy` (16 K) | 22.0 | 298 |  |
+| `5000yy` (40 K) | 27.1 | 332 | Too large to yank |
 | `d6500G` (4 K) | 2.8 | 298 |  |
 | `u` after `d6500G` | 0.1 | 34 | Too large to undo |
 | `d9000G` (24 K) | 16.6 | 298 |  |
@@ -79,14 +79,14 @@ The seconds are the simulator's emulated clock (2 MHz 8080, 9600-baud console, t
 | `:6000,6100w T.TXT` (800 bytes) | 3.8 | 66 | "T.TXT" written |
 | `:6000,9000w T.TXT` (24 K) | 29.5 | 66 | "T.TXT" written |
 | `:r T.TXT` of 800 bytes, at line 3000 | 1.9 | 316 |  |
-| `:r T.TXT` of 24 K, at line 3000 | 28.5 | 316 |  |
+| `:r T.TXT` of 24 K, at line 3000 | 27.0 | 316 |  |
 
 ## Memory and work files
 
 | | |
 |---|---|
 | BDOS entry, the word at 0006H | B606H |
-| arena, from the top of the program to the BDOS | 23318 bytes (5AEFH-B605H) |
+| arena, from the top of the program to the BDOS | 23303 bytes (5AFEH-B605H) |
 | text in memory when the file is opened | 2048 bytes |
 | undo region, taken out of the arena | 1024 bytes |
 | text in memory after `6000G` `G` `6000G` `gg` `G` | 12288, 10496, 20736, 20480, 18432 bytes |

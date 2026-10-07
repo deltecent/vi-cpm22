@@ -54,15 +54,13 @@ RESVMEM EQU	0D80H		; WM 25: the arena QROOM keeps free past
 				;   the Q-buffer
 
 ;--- Primitives the exerciser / editor calls (all WordMaster names). ----------
-	PUBLIC	BINIT
+	PUBLIC	ZINIT, BINIT
 	PUBLIC	INSBLK, INSSTR, PUTGAP, DELTO
 	PUBLIC	PUTCUR, PEEKL, PEEKLX
 	PUBLIC	BUFSUM, PRSPAN, AFTLEN, SPANBC
 
 ;--- The (base,limit) pointer row + arena bounds it reads/reports. ------------
-	PUBLIC	BUFBEG, QBEG, QEND, TXTBAS
-	PUBLIC	TXTBEG, GAPBEG, GAPEND, TXTEND, BUFEND
-	PUBLIC	PBEGMEM, ERRFLG
+	PUBLIC	PBEGMEM
 
 ;--- The Q-buffer: the vi layer's yank register.  WM.ASM 1528-1600. ----------
 	PUBLIC	QCOPY, QGET, QKILL, QROOM, QPUTLN
@@ -70,24 +68,18 @@ RESVMEM EQU	0D80H		; WM 25: the arena QROOM keeps free past
 
 ;--- String search: the pattern and the two matchers.  WM.ASM 2035-2150. -----
 	PUBLIC	MATCHF, MATCHB, FWDCNT, SUBLEN
-	PUBLIC	SRCHBF, SRCHST, SRCMAX
+	PUBLIC	SRCMAX
 
 ;--- APPENDED pointer-free logical-offset API (see header; NOT WordMaster). ----
 	PUBLIC	CUROFF, LOGLEN, CHARAT, GOTO, LFCNT
 	PUBLIC	DELFWD, DELPRV, UNDELF
 
 ;--- APPENDED single-level undo ('u'; NOT WordMaster -- WM has none). ---------
-	PUBLIC	UNDBEG, UNDO, UNDRPL
+	PUBLIC	UNDBEG, UNDO
 	PUBLIC	UNDHER			 ; ... where the next change starts
 	PUBLIC	UNDINS			 ; ... a block insert, for 'u'
 	PUBLIC	UNDCLR
-	PUBLIC	UNDN, UNDST, UNDBAD	 ; ... and its state, for a probe
-	PUBLIC	UNDWHY			 ; why UNDO refused (CMD.MAC's message)
 	PUBLIC	UNDNEW			 ; ... and the change it captured
-	PUBLIC	UNDCUR			 ; where 'u' puts the cursor back
-	PUBLIC	UNDML, UNDL0		 ; ... and whether it changed one line
-	PUBLIC	UNDLK, UNDLC, UNDLL0	 ; ... or put whole lines in, or took them
-	PUBLIC	UBEG, UEND		 ; ... and the region's bounds
 
 ;--- Helpers PAGE.MAC (the file-I/O layer) links against. ---------------------
 ;NOTE: only 6 characters of a name are significant, so SUBCP2 is named to
@@ -118,6 +110,7 @@ RESVMEM EQU	0D80H		; WM 25: the arena QROOM keeps free past
 	EXTRN	KBPOLL			; KEY.MAC  -- WM GETKEY (type-ahead drain)
 	EXTRN	UNDREC, RSVTOP		; RSV.MAC  -- the captured change, and the
 					;   top of the reserve block = arena base
+	EXTRN	RSVZ, RSVZN		; RSV.MAC  -- the cells that start at zero
 
 ;--- Screen reads (WM LINPOSB/LINEPOS, RGET0/RGET) -- the renderer's text access.
 	PUBLIC	LINPSB, RGET0, RGET
@@ -125,7 +118,7 @@ RESVMEM EQU	0D80H		; WM 25: the arena QROOM keeps free past
 	EXTRN	NEEDIN			; PAGE.MAC -- WM 4617 (RGET pages in)
 
 ;--- APPENDED (NOT WordMaster): cursor line tracking for the renderer. ----------
-	PUBLIC	LNDLT, RDGET
+	PUBLIC	RDGET
 
 	CSEG
 
@@ -134,7 +127,22 @@ RESVMEM EQU	0D80H		; WM 25: the arena QROOM keeps free past
 ; Aims every region base at PBEGMEM, writes the 0 sentinel at PBEGMEM, sets
 ; TXTBAS = PBEGMEM+1, collapses the gap pointers onto TXTBAS, then sets BUFEND
 ; from the word at 0006.  (WM's PGCONST tail runs from PAGE.MAC's OPENFIL.)
+;
+; ZINIT is the first call every program makes: it clears the cells that start
+; at zero (RSV.MAC, RSVZ on) and falls into BINIT.  They are not in the image,
+; so nothing but this makes them zero.  OPENFIL calls BINIT itself, to empty
+; the buffer for a new file, and must leave those cells as they are.
 ;============================================================
+ZINIT:				; APPENDED (not WordMaster)
+	LXI	H,RSVZ
+	LXI	B,RSVZN
+ZINIT1:
+	MVI	M,0
+	INX	H
+	DCX	B
+	MOV	A,B
+	ORA	C
+	JNZ	ZINIT1
 BINIT:				; WM 341
 	LHLD	PBEGMEM
 	XCHG
@@ -2387,74 +2395,22 @@ UNDHX:
 	RET
 
 ;============================================================
-; DATA -- the (base,limit) pointer row (WM 6828-6871 layout) + scratch.
-; The disassembly's DB values for these cells are aliased code bytes; only the
-; order/adjacency is authoritative.  BINIT sets every cell at run time.
+; DATA -- what the image carries: the cells that start at something.
 ;============================================================
-BUFBEG: DW	0		; region-array base
-QBEG:	DW	0		; ^Q scratch buffer begin
-QEND:	DW	0		; ^Q scratch buffer end
-HOLEQP:	 DW	 0
-TXTBAS: DW	0		; text base = PBEGMEM+1 (past the 0 sentinel)
-;UBEG/UEND -- APPENDED: the undo region, a region of the arena like the Q
-;buffer, with UEND its insertion point.  It goes HERE, between the slider and
-;the text, so both of the row's interleaved walks stay aligned: the holes from
-;BUFBEG are (BUFBEG,QBEG) (QEND,HOLEQP) (TXTBAS,UBEG) (UEND,TXTBEG)
-;(GAPBEG,GAPEND) (TXTEND,BUFEND), and the data regions from QBEG are
-;(QBEG,QEND) (HOLEQP,TXTBAS) (UBEG,UEND) (TXTBEG,GAPBEG) (GAPEND,TXTEND).
-;NEXTPR, MOVGAP, BUFSUM, HOLEUP/HOLEDN, PRSPAN and INIBAS's count are all
-;untouched by it; INIGAP empties it.
-UBEG:	DW	0		; undo region begin
-UEND:	DW	0		; undo region end = its insertion point
-TXTBEG: DW	0		; window start
-GAPBEG: DW	0		; cursor / gap start
-GAPEND: DW	0		; gap end / first char after cursor
-TXTEND: DW	0		; window end
-PRTERM	 EQU	 TXTEND+1	 ; NEXTPR terminator = high byte of TXTEND
-BUFEND: DW	0		; top of usable text RAM
-MVGTOP	 EQU	 BUFEND+1	 ; MOVGAP upper bound = high byte of BUFEND
+;The cells that start at zero are not in the image: RSV.MAC names them, in
+;the RAM just above it, and BUF.MAC's ZINIT clears them before anything runs.
+;Their order there is the order they had here, and code depends on it.
+;WM's (base,limit) pointer row, the search pattern and 'u''s state are there.
+	EXTRN	BUFBEG, QBEG, QEND, HOLEQP, TXTBAS, UBEG
+	EXTRN	UEND, TXTBEG, GAPBEG, GAPEND, TXTEND, PRTERM
+	EXTRN	BUFEND, MVGTOP, ERRFLG, SRCHBF, SRCHST, L2756
+	EXTRN	QCPDON, UNDN, UNDST, UNDBAD, UNDRPL, UNDDIR
+	EXTRN	UNDWHY, UNDTY, UNDOF, UNDLN, UNDBO, UNDCL
+	EXTRN	UNDLSA, UNDPG, UNDPTR, UNDB1, UNDPCU, UNDCUR
+	EXTRN	UNDLK, UNDLC, UNDLL0, UNDML, UNDL0, LNDLT
 
-ERRFLG: DB	0		; nonzero after ERRMSG fired (harness reads it)
-
-;The search pattern, in WM's SRCHBUF layout (WM 6900): the length, then the
-;string, 0-terminated.  CMD.MAC fills it from the '/' line and passes DE =
-;SRCHST; FWDCNT reads the length from the byte below that, as WM does.
-SRCMAX: DB	SRMAX		; ... its capacity, so CMD.MAC cannot drift
-SRCHBF: DB	0		; the pattern length
-SRCHST: DS	SRMAX+1		; the pattern, 0-terminated
-
-L2756:	DW	0		; WM L2756 -- GOLINE's last target position
-QCPDON: DW	0		; (appended) QCPYN: bytes already copied in
-;--- 'u' (undo): see the UNDO section above for how these are driven.
-UNDN:	DB	0		; steps captured (0 = nothing to undo)
-UNDST:	DB	0		; 0 none, 1 change applied ('u' undoes it),
-				;   2 already undone ('u' puts it back)
-UNDBAD: DB	0		; 1 = this change was too big to capture
-UNDNEW: DB	1		; 1 = the next capture starts a new change
-UNDRPL: DB	0		; 1 = 'u' replaying, so nothing is captured
-UNDDIR: DB	0		; the replay's direction (0 forward, 1 inverse)
-UNDWHY: DB	0		; 0 = nothing to undo, 1 = it has paged away
-UNDTY:	DB	0		; the step / record type being handled
-UNDOF:	DW	0		; ... its logical offset
-UNDLN:	DW	0		; ... its length
-UNDBO:	DW	0		; ... where its bytes lie in the region
-UNDCL:	DW	0		; the length being captured (BC does not survive)
-UNDLSA: DW	0		; the last record's address (UNDEXT's scratch)
-UNDPG:	DW	0		; PGTOPM when this change was captured
-UNDPTR: DW	0		; the region's write point, as an OFFSET
-UNDB1:	DB	0		; the byte going in (PRSPAN wants BC)
-UNDPCU: DW	0		; the cursor as the current command began
-UNDCUR: DW	0		; ... as the command that made THIS change began
-UNDLK:	DB	0		; the replay: 1 = whole lines put in, 2 = taken
-UNDLC:	DB	0		;   out, 0FFH neither; how many; and LNDLT where
-UNDLL0:	DW	0		;   they start (URLNQ)
-UNDML:	DB	0		; the replay: 0 = every step on one line, no
-				;   line end put back or taken (0FFH: no step
-				;   yet, 1: not so)
-UNDL0:	DW	0		; ... LNDLT with the cursor on that line
-
-LNDLT:	DW	0		; (appended) lines the cursor moved since the last
-				;   screen layout (signed; SCRN.MAC consumes it)
+SRCMAX: DB	SRMAX		; SRCHST's capacity, so CMD.MAC cannot drift
+UNDNEW: DB	1		; 'u': 1 = the next capture starts a new change
 
 ;PBEGMEM -- base of the text arena: the first RAM byte past everything the
 ;program holds.  The gap buffer's text lives from here up to BUFEND.  BUF

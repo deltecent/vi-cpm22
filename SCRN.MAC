@@ -41,19 +41,15 @@
 	INCLUDE VI.INC
 
 	PUBLIC	BCONST, BCONIN, BCONOU
-	PUBLIC	SCINIT, SCDRAW, SCDONE, SCPRE, SKIPR, TALLF
+	PUBLIC	SCINIT, SCDRAW, SCDONE, SCPRE, SKIPR
 	PUBLIC	EXPRM, EXRUB, OUTCH	; ':' / '/' line echo (CMD.MAC RDLINE)
 	PUBLIC	EXMSG, OUTSTR		; ex error message on the bottom row
 	PUBLIC	MODEMS			; the mode message ('-- INSERT --')
 	PUBLIC	SCURS			; the cursor, back where SCDRAW left it
-	PUBLIC	CBOL, CURDCL		; cursor column: bytes / display (^G)
 	PUBLIC	NROWS, NCOLS, NEDIT
 	PUBLIC	WINROW			; lines above the cursor's (signed word)
 	PUBLIC	SCBOT			; WINROW of the last line shown
-	PUBLIC	SCEOF, SCBOF		; end / start of the file is on the screen
-	PUBLIC	PLACE			; request: the cursor's line placed / mid-screen
 	PUBLIC	TXEND			; the first row with no text on it ('M')
-	PUBLIC	CSUB			; the row of its line the cursor is on
 	PUBLIC	HTBLD			; the rows each line takes (the scrolls)
 	PUBLIC	LAYOUT			; the layout alone (VI.MAC, before '+{n}')
 
@@ -2769,9 +2765,7 @@ SEK:	DB	ESC,'[','K',0
 SCSI:	DB	ESC,'[',0		; CSI -- the prefix a counted ESC[<n>X needs
 SICH:	DB	ESC,'[','1','@',0	; ICH -- insert one cell at the cursor
 SRGP:	DB	ESC,'[','1',';',0	; region prefix "ESC[1;" (EMITB + 'r' follow)
-TCOK:	DB	0		; TCPOS is where the terminal's cursor is
 CHID:	DB	1		; the cursor is hidden, or may be (the first frame)
-TCPOS:	DW	0		; SCOL, SROW as SCURS last sent them
 SHIDE:	DB	ESC,'[','?','2','5','l',0
 SSHOW:	DB	ESC,'[','?','2','5','h',0
 SREGRS: DB	ESC,'[','r',0
@@ -2787,7 +2781,8 @@ NROWS:	DB	24		; runtime rows    (default; DSR may enlarge)
 NCOLS:	DB	80		; runtime columns
 NEDIT:	DB	23		; edit rows = NROWS-1 (messages take the last)
 
-;--- a frame's facts, and (SCPRE) the same of the frame before, in one order
+;--- a frame's facts.  SCPRE keeps the same of the frame before, in the same
+;    order, at OLDWR (RSV.MAC)
 WINROW: DW	0		; lines on the screen above the cursor's (WM WINROW)
 SKIPR:	DW	0		; rows of the top line that are off the top (a
 				;   line taller than the screen; vim's w_skipcol)
@@ -2801,74 +2796,21 @@ CSRAW:	DB	0		; the row of its line (as shown) the cursor is on
 LYTSH:	DB	0		; HTBLD: the rows of the cursor's line that show
 NXTR:	DB	0		; ... and of the line under it (0: not shown)
 FRMLEN	EQU	$-WINROW
-OLDWR:	DW	0
-OLDSK:	DW	0
-OLDSC:	DW	0
-OLDTX:	DW	0		; (TXEND, and FILCH)
-OLDBOT:	DB	0
-OLDAB:	DW	0
-OLDCS:	DB	0
-OLDCR:	DB	0
-OLDNR:	DB	0
-
-OPN:	DB	0		; SCDRAW: rows the screen gave up at the top
-OPM:	DB	0		; ... or gained there
-EDA:	DB	0		; the edit: the rows it had
-EDB:	DB	0		; ... and has
-EDR:	DB	0		; ... its first row
-EDP:	DB	0		; ... the first of them to draw
-PEND:	DB	0		; PRNG: the row to stop before
-TALLF:	DB	0		; 1 = the top line is taller than the screen
-SCRLN:	DW	0		; lines the text moved up this frame (signed)
-LYOK:	DB	0		; 1 = the row table is the screen's, as it stands
-LQKC:	DB	0		; LYQK: the cells before the cursor on its row
-LYTOP:	DW	0		; ... the bytes in memory before the top line then
-HTTOPC: DW	0		; HTBLD: the bytes from the table's first line to
-				;   the cursor
-LYPG:	DW	0		; ... and PGTOPM
-FORCEF: DB	0		; 1 = a full frame is not finished -> repaint in full
-OEDMOD: DB	EM_CMD		; the mode the bottom row last showed (0FFH: unknown)
-
-SCEOF:	DB	0		; 1 = the end of the file is on the screen
-SCBOF:	DB	0		; 1 = the top row is the file's first line
-PLACE:	DB	0		; the command's request of the next layout (VI.INC
-				;   PL_ASK / PL_SET / PL_MID)
-CSUB:	DB	0		; the row of its line the cursor is on (0 = first)
-
-TOPLEN: DW	0		; bytes from the top line's start to the cursor
-CBOL:	DW	0		; bytes from the cursor line's start to the cursor
-CURDCL: DW	0		; cursor display column (0-based, tabs expanded)
-LYDLT:	DW	0		; LAYOUT: LNDLT taken for this frame
-LYROW:	DB	0		; LAYOUT: working row
-LYIB:	DW	0		; LYMID: -> the entry of the next line below
-LYVB:	DB	0		; LAYOUT: the column its current row starts at (low
-				;   byte: TAB stops)
-LYLIM:	DW	0		; HTBLD: bytes back to pin while reading down
-LYUSE:	DB	0		; LYMID: rows taken
-LYMAB:	DB	0		; LYMID: ... of them above the cursor's line
-LYMBL:	DB	0		; LYMID: ... and below it ('~' rows too)
-LYND:	DB	0		; LYMID: lines under the last one shown (LYFAR)
-LYPRF:	DB	0		; LYMID: 1 = a line above first when rows are even
-LYSVR:	DB	0		; LAYOUT: LYROW as CURRW gave it
-HTLIM:	DB	0		; HTBLD: rows still to gather
-LYXE:	DB	0		; HTBLD: 1 when the cursor has a row to itself
-LYLAST: DB	0		; LAYOUT: last byte read forward
-SVCNT:	DW	0		; LAYOUT: saved CMDCNT
-SVAUX:	DW	0		; LAYOUT: saved AUXCNT
-SVDIR:	DB	0		; LAYOUT: saved DIRFLG
-
-RDP:	DW	0		; reader: next before-gap byte
-RDN:	DW	0		; reader: before-gap bytes left
-RDHL:	DW	0		; reader: RGET pointer
-RDBC:	DW	0		; reader: RGET count
-RDSEG:	DB	0		; reader: 1 once reading after the gap
-SKPN:	DB	0		; RDSKIP line count
-PROWN:	DB	0		; screen row being painted (0-based)
-PSKN:	DW	0		; PROW: rows of the line to pass over first
-DCOL:	DB	0		; column in the line while painting (low byte)
-XC:	DB	0		; cells used in the row being painted
-
-TMPR:	DW	0		; DSR parse: rows
-TMPC:	DW	0		; DSR parse: cols
+;The row stays in the image whole, for TXEND and FILCH: SCPRE copies it as
+;one block.  Its copy (OLDWR on) and everything else start at zero:
+;The cells that start at zero are not in the image: RSV.MAC names them, in
+;the RAM just above it, and BUF.MAC's ZINIT clears them before anything runs.
+;Their order there is the order they had here, and code depends on it.
+	EXTRN	TCOK, TCPOS, OLDWR, OLDSK, OLDSC, OLDTX
+	EXTRN	OLDBOT, OLDAB, OLDCS, OLDCR, OLDNR, OPN
+	EXTRN	OPM, EDA, EDB, EDR, EDP, PEND
+	EXTRN	TALLF, SCRLN, LYOK, LQKC, LYTOP, HTTOPC
+	EXTRN	LYPG, FORCEF, OEDMOD, SCEOF, SCBOF, PLACE
+	EXTRN	CSUB, TOPLEN, CBOL, CURDCL, LYDLT, LYROW
+	EXTRN	LYIB, LYVB, LYLIM, LYUSE, LYMAB, LYMBL
+	EXTRN	LYND, LYPRF, LYSVR, HTLIM, LYXE, LYLAST
+	EXTRN	SVCNT, SVAUX, SVDIR, RDP, RDN, RDHL
+	EXTRN	RDBC, RDSEG, SKPN, PROWN, PSKN, DCOL
+	EXTRN	XC, TMPR, TMPC
 
 	END

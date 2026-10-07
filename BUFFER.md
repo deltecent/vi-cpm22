@@ -41,7 +41,9 @@ The **arena** is all the RAM between the program and CP/M:
 
 `RSV.MAC` links last and emits no bytes: it names the storage that only needs
 to exist at run time (the stack, the key ring, the undo records, the sector
-buffer) as offsets above the image, so none of it costs `.COM` bytes. The arena
+buffer, and every cell that starts at zero, the pointer row below among them)
+as offsets above the image, so none of it costs `.COM` bytes. `ZINIT` clears
+the cells that start at zero and falls into `BINIT`. The arena
 starts at `PBEGMEM`, past that block. Every byte of image is a byte less arena.
 
 Inside the arena, one row of `(base, limit)` pointer pairs describes every

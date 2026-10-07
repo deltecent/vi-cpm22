@@ -29,7 +29,7 @@
 
 WBOOT	EQU	0
 
-	EXTRN	BINIT
+	EXTRN	ZINIT
 	EXTRN	OPENFIL, SAVEFIL
 	EXTRN	INSBLK, PUTCUR
 	EXTRN	TXTBEG, GAPBEG, GAPEND, TXTEND, BUFEND, TXTBAS
@@ -42,7 +42,7 @@ BLKLN	EQU	128		; one block = exactly one record
 
 	PUBLIC	INSLEN, SNTXTB, SNOUTR, SNTXTA, DONE
 	PUBLIC	CNTTST			; BUF.MAC PAGESTP count-test (resident stub)
-	PUBLIC	CMDCNT, KBPOLL		; BUF.MAC line-move EXTRNs (stubbed)
+	PUBLIC	KBPOLL			; BUF.MAC line-move EXTRN (stubbed)
 
 	CSEG
 
@@ -50,7 +50,7 @@ BLKLN	EQU	128		; one block = exactly one record
 ; The battery.
 ;============================================================
 START:	LXI	SP,STACK
-	CALL	BINIT
+	CALL	ZINIT		; the cells that start at zero, then BINIT
 ;--- WINCAP: shrink the window ---
 	LHLD	TXTBEG		; = TXTBAS just after BINIT
 	LXI	D,WINSIZE
@@ -110,11 +110,10 @@ INSNXT:
 CNTTST:
 	XRA	A
 	RET
-;CMDCNT / KBPOLL -- stubs for BUF.MAC's line move (GOLINE/SCRLST): no command
-; count and no keyboard in this batch battery.
+;KBPOLL -- a stub for BUF.MAC's line move (GOLINE/SCRLST): no keyboard in this
+; batch battery.  (Its CMDCNT is RSV.MAC's, zero: no command count either.)
 KBPOLL:
 	RET
-CMDCNT: DW	0
 
 ;------------------------------------------------------------
 ; Data

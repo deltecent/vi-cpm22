@@ -63,7 +63,7 @@ back to one of them.
   between the top of the program and the BDOS (`BUFEND = [0006H] - 1`; WM's
   `INIT` stops 7 pages lower only when that vector's low byte is not 06H, which
   is something loaded under the BDOS, a debugger for one). With a 56 K CP/M it
-  is 27,066 bytes in this build. **Every byte of the image comes out of
+  is 23,303 bytes in this build. **Every byte of the image comes out of
   the arena**, so the binary is the scarce resource. Commands are priced in
   bytes before they are built, and a command that earns too little gets cut.
 - **The console is a 9600-baud serial line**, about 960 characters a second. A
@@ -100,7 +100,7 @@ Six code modules plus a reserve block, linked in this order (two more,
 | `KEY.MAC` | the keyboard: one byte a key, over the type-ahead ring | VI (the ring is WordMaster's mechanism) |
 | `PAGE.MAC` | files and paging: record engine, load, spill/rewind, save and rename | WordMaster 5.55A, verbatim, plus appended glue |
 | `BUF.MAC` | the gap buffer: pointer row, insert/delete/move, line moves, matcher, Q-buffer | WordMaster 5.55A, verbatim, plus the logical-offset API and undo capture |
-| `RSV.MAC` | emits no bytes; names the storage above the image | VI |
+| `RSV.MAC` | emits no bytes; names the storage above the image: the reserves, and every cell that starts at zero | VI |
 | `QSN.MAC` | the harnesses' hooks (`QSNAP`, `CMDRUN`); links into CMDTST/MOTTST only, never into `VI.COM` | VI |
 | `PSV.MAC` | the pager tests' write-back step (`SAVEFIL`); links into PGTST/PGXTST/PGXINS/PGBKTST only | WordMaster 5.55A, verbatim |
 
@@ -196,9 +196,11 @@ move would break:
 
 - `AUXCNT` sits directly after `NEWFIL`, because `GOLINE` reads the byte after
   `NEWFIL` as `AUXCNT`'s low byte.
-- The three FCBs carry open flags at FCB-1 and FCB-2, and those neighbours must
-  stay `DB 0`.
+- The three FCBs carry open flags at FCB-1 and FCB-2, which must start at
+  zero.
 - `SRCHST` and `SREPL` are read through `[DE-1]` for their length.
+- All of these cells start at zero, so they are in RSV.MAC (§4), each module's
+  in the order they had in that module. That order is the contract now.
 - `005BH`, the source's has-data flag, is cleared before every open, as WM's
   `L02F2` does. Otherwise a file that does not exist would be read from
   whatever the last program left there.
@@ -209,15 +211,17 @@ move would break:
 
     0100H   VI.COM image: VI SCRN CMD KEY PAGE BUF (code + initialised data)
     RSVBAS  the reserve block (RSV.MAC): stack, '.' buffers, ex line, file name,
-            type-ahead ring, sector stage + guards, undo records, marks
+            type-ahead ring, sector stage + guards, undo records, marks, row table
+    RSVZ    the cells that start at zero (RSV.MAC), 587 bytes: every module's
+            variables, the three FCBs, WM's pointer row, the search pattern
     RSVTOP  = PBEGMEM: the arena base
               pointer row, text + gap, Q-buffer (the yank register), undo region
     BUFEND  = BDOS base - 1   (B605H with a 56 K CP/M; see section 1)
 
-In this build the `.COM` file is 21376 bytes (167 records). **The size that
+In this build the `.COM` file is 21504 bytes (168 records). **The size that
 matters is a 4 K BLOCK BOUNDARY**, because that is what the 8 MB disk
 allocates in: 20480 bytes occupy five blocks and one byte more occupies six.
-This build is past that line by 896 bytes, by decision (objective 6: the
+This build is past that line by 1024 bytes, by decision (objective 6: the
 bytes went on keys that answer at once), and the next boundary is **24576
 bytes**, so everything between here and there costs the same 24 K on disk.
 What each byte does cost is arena: the yank register and the room to edit in.
@@ -226,11 +230,23 @@ What each byte does cost is arena: the yank register and the room to edit in.
 the `.COM`, `DS` included, and fills that space with its own leftovers rather
 than zeros. A `DS` inside the image therefore adds file bytes and load time for
 storage that is overwritten before it is read. RSV.MAC names that storage
-above the image instead. Only a `DS` that is written before it is read may
-move there. One that sits against an initialised neighbour it depends on (§3)
-stays put. `build_vi.py` checks each `;CHECK` line in RSV.MAC against BUF.MAC's
-equates on every build, because a reserve that silently comes up short would
-overrun into the arena. **Nothing may assume a `DS` starts at zero.**
+above the image instead. `build_vi.py` checks each `;CHECK` line in RSV.MAC
+against BUF.MAC's equates on every build, because a reserve that silently
+comes up short would overrun into the arena. **Nothing may assume a `DS`
+starts at zero.**
+
+**The cells that start at zero are there too.** A `DB 0` costs a file byte to
+hold a zero. RSV.MAC names those cells after the reserves, from `RSVZ` to
+`RSVTOP`, and `ZINIT` (BUF.MAC) clears that run and falls into `BINIT`. It is
+the first call `VI.COM` and every test program makes, so `ARGSCN` now runs
+after it rather than first. The loop is 15 bytes and the cells are 587, which
+took 572 bytes out of the image. It bought no arena: the storage moved, it
+did not go, and the arena is 15 bytes smaller for the loop. A cell that
+starts at anything but zero stays a `DB` in its own module, since setting it
+at run time costs more code than the byte it frees. SCRN.MAC's frame row
+stays whole for the same reason: it holds `TXEND` and `FILCH` and is copied
+as one block. New cells go at the end of their module's run in RSV.MAC, with
+the `CELL` macro; the module declares them `EXTRN`.
 
 **Test hooks do not ship.** `QSN.MAC` holds `QSNAP` (the cursor snapshot
 `cmdtst.py`/`mottst.py` read) and `CMDRUN` (the headless key loop); the editor

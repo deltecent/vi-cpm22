@@ -21,12 +21,12 @@
 ; without a full repaint when the viewport did not move; the edits that can be
 ; drawn cheaper set their own R_* intent (RENDER.md).
 ;
-; EXTRNS: BINIT (BUF); SCINIT/SCDRAW/SCDONE (SCRN); GETKEY (KEY);
+; EXTRNS: ZINIT (BUF); SCINIT/SCDRAW/SCDONE (SCRN); GETKEY (KEY);
 ;         FOPEN/CMDDIS/QUITF (CMD).
 ;============================================================
 	INCLUDE VI.INC
 
-	EXTRN	BINIT			; BUF.MAC -- stand up the arena
+	EXTRN	ZINIT			; BUF.MAC -- stand up the arena
 	EXTRN	ERRHK			; BUF.MAC -- where a fatal message goes
 	EXTRN	EDTHK			; BUF.MAC -- who hears of an edit
 	EXTRN	MKSHFT			; CMD.MAC  -- the marks do
@@ -46,9 +46,12 @@
 
 START:
 	LXI	SP,VISTK
-	CALL	ARGSCN			; '+{n}' / '-R': FIRST, since the line
-					;   sits at the default DMA address
-	CALL	BINIT			; gap-buffer pointer row + arena bounds
+	CALL	ZINIT			; the cells that start at zero, then the
+					;   gap-buffer pointer row + arena bounds
+	CALL	ARGSCN			; '+{n}' / '-R': before any disk I/O,
+					;   since the line sits at the default
+					;   DMA address -- and after ZINIT, which
+					;   would clear what it finds
 	CALL	SCINIT			; terminal geometry (DSR autodetect)
 	LXI	H,SCDONE		; a fatal message goes where a quit
 	SHLD	ERRHK			;   leaves the cursor: bottom left

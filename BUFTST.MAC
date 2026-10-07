@@ -34,13 +34,13 @@
 
 WBOOT	EQU	0
 
-	EXTRN	BINIT
+	EXTRN	ZINIT
 	EXTRN	INSBLK, PUTCUR, DELTO
 	EXTRN	TXTBEG, GAPBEG, GAPEND, TXTEND
 
 	PUBLIC	NRES, RESLTS
 	PUBLIC	CNTTST			; BUF.MAC's PAGESTP count-test (CMD.MAC owns
-	PUBLIC	CMDCNT, KBPOLL		; BUF.MAC line-move EXTRNs (stubbed)
+	PUBLIC	KBPOLL			; BUF.MAC line-move EXTRN (stubbed)
 					; the real one; this battery is resident)
 
 NMAX	EQU	32		; result slots (each 4 bytes: cksum, len)
@@ -121,7 +121,7 @@ DELB	MACRO	N
 START:	LXI	SP,STACK
 	LXI	H,0
 	SHLD	NRES		; no checkpoints recorded yet
-	CALL	BINIT
+	CALL	ZINIT		; the cells that start at zero, then BINIT
 
 	INS	S1,S1LEN	;  1  "Hello, World!",CR,LF
 	HOME			;  2  cursor -> start
@@ -194,11 +194,10 @@ CHECK:
 CNTTST:
 	XRA	A		; Z set -> count exhausted -> PAGESTP returns
 	RET
-;CMDCNT / KBPOLL -- stubs for BUF.MAC's line move (GOLINE/SCRLST): no command
-; count and no keyboard in this batch battery.
+;KBPOLL -- a stub for BUF.MAC's line move (GOLINE/SCRLST): no keyboard in this
+; batch battery.  (Its CMDCNT is RSV.MAC's, zero: no command count either.)
 KBPOLL:
 	RET
-CMDCNT: DW	0
 
 ;------------------------------------------------------------
 ; TMEASURE -- order-sensitive checksum + length of the logical text.

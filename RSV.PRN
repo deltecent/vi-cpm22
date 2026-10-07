@@ -21,27 +21,45 @@
                                 ; bought here except .COM bytes; nothing is paid except that these names now
                                 ; resolve through the linker instead of inside their own module.
                                 ;
-                                ; WHAT MAY LIVE HERE.  Only a DS, and only one that is written before it is
-                                ; read.  Two things disqualify a block:
+                                ; WHAT MAY LIVE HERE.  Two kinds of storage, and nothing else:
                                 ;
-                                ;   - an initialised neighbour it is contracted to.  SRCHST is read through
-                                ;     [DE-1] for its length (SRCHBF), and SREPL through SREPLN the same way;
-                                ;     PAGE's three FCBs carry WRREC/CLOSEC open flags at FCB-1 and FCB-2.
-                                ;     Those flag bytes are DB 0 and must stay DB 0, so the DS they sit against
-                                ;     stays with them.
-                                ;   - any reliance on starting clear.  There is no such thing: see above.
+                                ;   - a reserve: a block that is written before it is read, so it does not
+                                ;     matter what it holds when the program starts.  The stack, the buffers
+                                ;     and the tables in the first part of the layout are these.
+                                ;   - a cell that starts at zero.  These are the second part of the layout,
+                                ;     RSVZ to RSVTOP, and BUF.MAC's ZINIT clears every byte of it before
+                                ;     anything else runs -- in VI.COM and in every test program alike.  A
+                                ;     DB 0 in the image was a promise the linker kept; this is the same
+                                ;     promise, kept by fifteen bytes of code instead of a byte of file each.
                                 ;
-                                ; SECBUF comes here with its two guard bytes, because all three are DS and
-                                ; move together -- STAGSEC writes SECBUF-1 through SECBUF+128 (C=82H) and
-                                ; ^Z-pads whatever the copy did not fill, so no stale byte reaches a sector.
+                                ; A cell that starts at anything BUT zero stays a DB or DW in its own module
+                                ; (NROWS, GOALCOL, UNDNEW ...): setting it at run time would cost more code
+                                ; than the byte it frees.  So does a cell that code reaches from such a one
+                                ; by stepping a pointer -- SCRN.MAC's frame row is copied whole and holds
+                                ; TXEND and FILCH, so all of it stays there.
+                                ;
+                                ; ORDER IS PART OF THE CONTRACT.  Each module's cells are here in the order
+                                ; they had in that module, because code walks from one into the next: WM's
+                                ; pointer row, AUXCNT after NEWFIL, the two flag bytes below each FCB, the
+                                ; length byte below SRCHST and below SREPL, and every LHLD that takes two
+                                ; byte cells at once.  Add a cell at the end of its module's run, or beside
+                                ; the cell it belongs with; never sort them.
+                                ;
+                                ; SECBUF is a reserve, and comes with its two guard bytes -- STAGSEC writes
+                                ; SECBUF-1 through SECBUF+128 (C=82H) and ^Z-pads whatever the copy did not
+                                ; fill, so no stale byte reaches a sector.
                                 ;
                                 ; Sizes that also exist in the module that uses the storage are declared in
-                                ; VI.INC (DOTMAX, KBRSIZ, EXMAX) so the two cannot disagree.  The one size
-                                ; that cannot be shared -- BUF.MAC does not include VI.INC -- carries a CHECK
-                                ; line below, which build_vi.py evaluates against BUF.MAC on every build.
+                                ; VI.INC (DOTMAX, KBRSIZ, EXMAX, SREPMX) so the two cannot disagree.  The
+                                ; sizes that cannot be shared -- BUF.MAC does not include VI.INC -- carry a
+                                ; CHECK line below, which build_vi.py evaluates against BUF.MAC on every
+                                ; build.
                                 ;============================================================
                          C      	INCLUDE VI.INC
                          C      ;============================================================
+	MACRO-80 3.44	09-Dec-81	PAGE	1-1
+
+
                          C      ; FILE:    VI.INC
                          C      ; PROJECT: VI -- vi-style CP/M editor on WordMaster's gap buffer
                          C      ; CPU:     Intel 8080 (strict -- no Z80 extensions)
@@ -57,9 +75,6 @@
                          C      ;------------------------------------------------------------
                          C      ; CP/M SYSTEM ADDRESSES
                          C      ;------------------------------------------------------------
-	MACRO-80 3.44	09-Dec-81	PAGE	1-1
-
-
   0005                   C      BDOS	EQU	0005H		; BDOS entry point
   0000                   C      WBOOT	EQU	0000H		; warm boot / exit to CP/M
   005C                   C      DFTFCB	EQU	005CH		; default FCB (command argument 1)
@@ -101,6 +116,9 @@
                          C      ; PLACE -- what a command asks of the next layout (SCRN.MAC), cleared by it.
   0000                   C      PL_ASK	EQU	0		; the cursor only moved: is its line on the screen
                          C      				;   still, near it, or far off? (vim's rule)
+	MACRO-80 3.44	09-Dec-81	PAGE	1-2
+
+
   0001                   C      PL_SET	EQU	1		; the command set the lines above it (WINROW)
   0002                   C      PL_MID	EQU	2		; mid-screen, as the rows fall
                          C      
@@ -116,9 +134,6 @@
                          C      ;------------------------------------------------------------
                          C      ; EDITOR MODES (EDMODE)
                          C      ;------------------------------------------------------------
-	MACRO-80 3.44	09-Dec-81	PAGE	1-2
-
-
   0000                   C      EM_CMD	EQU	0		; command mode (default)
   0001                   C      EM_INS	EQU	1		; insert mode
   0002                   C      EM_REP	EQU	2		; replace mode ('R')
@@ -143,6 +158,14 @@
   0020                   C      KBRSIZ	EQU	32		; KEY.MAC's type-ahead ring (a power of two)
   0003                   C      MKMAX	EQU	3		; marks 'a'-'c' -- three is enough (COMMANDS.md)
   0004                   C      MKSIZ	EQU	4		; each: a 3-byte file position (the 4th is spare)
+  0024                   C      SREPMX	EQU	EXMAX-4		; ':s' replacement -- bounded by the ex line
+                         C      				;   itself, so SCOPY can never truncate a line
+                         C      				;   anyone is able to type: the shortest
+                         C      				;   substitute is 's' '/' + one pattern char +
+                         C      				;   '/' before the replacement starts, and
+                         C      				;   RDLINE stores at most EXMAX.  Tied to
+                         C      				;   EXMAX rather than written out, so the two
+                         C      				;   cannot drift apart.
                          C      
                                 
                                 	PUBLIC	VISTK			; VI.MAC   -- the stack
@@ -152,11 +175,15 @@
                                 	PUBLIC	KBRING			; KEY.MAC  -- type-ahead ring
                                 	PUBLIC	WRTYP, SECBUF		; PAGE.MAC -- saved type, sector stage
                                 	PUBLIC	UNDREC			; BUF.MAC  -- the captured change
+	MACRO-80 3.44	09-Dec-81	PAGE	1-3
+
+
                                 	PUBLIC	MKTAB			; CMD.MAC  -- the marks 'm' sets
                                 	PUBLIC	MKSAV			; CMD.MAC  -- ... as a refused 'dd' found them
                                 	PUBLIC	MKUND			; CMD.MAC  -- ... as the last change found them
                                 	PUBLIC	HTAB			; SCRN.MAC -- the rows of the lines about the
                                 					;             screen, for the scrolls
+                                	PUBLIC	RSVZ, RSVZN		; BUF.MAC  -- ZINIT: the cells to clear
                                 	PUBLIC	RSVTOP			; BUF.MAC  -- PBEGMEM, the arena base
                                 
                                 ;--- Sizes ------------------------------------------------------------------
@@ -175,9 +202,6 @@
   0080                          RVSECN	EQU	128		; SECBUF:  one CP/M sector
   00FF                          RVHTN	EQU	255		; HTAB:    a byte a line; SCRN.MAC HTPUT drops
                                 				;          a 256th
-	MACRO-80 3.44	09-Dec-81	PAGE	1-3
-
-
                                 ;MKSAV is a copy of MKTAB that CMD.MAC makes and restores with COPY12.
                                 ;CHECK VI.INC MKMAX*MKSIZ = 12
                                 
@@ -199,7 +223,7 @@
   0317                          RVMKS	EQU	RVMKT+MKMAX*MKSIZ
   0323                          RVMKU	EQU	RVMKS+MKMAX*MKSIZ
   032F                          RVHTB	EQU	RVMKU+MKMAX*MKSIZ
-  042E                          RVSIZE	EQU	RVHTB+RVHTN
+  042E                          RVSIZE	EQU	RVHTB+RVHTN	; ... and the cells that start at zero follow
                                 
   0000'                         	CSEG
   0000'                         RSVBAS:				; the top of the linked image -- no bytes here
@@ -210,6 +234,9 @@
   0180'                         FNAME	EQU	RSVBAS+RVFNM
   018C'                         ZTOP	EQU	RSVBAS+RVZTP
   018F'                         PLUSB	EQU	RSVBAS+RVPLS
+	MACRO-80 3.44	09-Dec-81	PAGE	1-4
+
+
   0195'                         EXBUF	EQU	RSVBAS+RVEXB
   01BE'                         KBRING	EQU	RSVBAS+RVKBR
   01DE'                         WRTYP	EQU	RSVBAS+RVWRT
@@ -219,43 +246,537 @@
   0317'                         MKSAV	EQU	RSVBAS+RVMKS
   0323'                         MKUND	EQU	RSVBAS+RVMKU
   032F'                         HTAB	EQU	RSVBAS+RVHTB
-  042E'                         RSVTOP	EQU	RSVBAS+RVSIZE		; BUF.MAC's PBEGMEM: the arena base
+                                ;============================================================
+                                ; THE CELLS THAT START AT ZERO -- RSVZ to RSVTOP, cleared by BUF.MAC's ZINIT.
+                                ;------------------------------------------------------------
+                                ; CELL names the next SIZE bytes and makes the name PUBLIC; the module that
+                                ; owns the cell declares it EXTRN.  RZ is the running offset from the image
+                                ; top.  A byte with no name of its own is passed over with a bare RZ SET.
+                                ;============================================================
+                                CELL	MACRO	NAME,SIZE
+                                	PUBLIC	NAME
+                                NAME	EQU	RSVBAS+RZ
+                                RZ	SET	RZ+SIZE
+                                	ENDM
+                                
+  042E                          RZ	SET	RVSIZE
+  042E'                         RSVZ	EQU	RSVBAS+RZ
+                                
+                                ;--- SCRN.MAC ---------------------------------------------------------------
+                                	CELL	TCOK,1		; TCPOS is where the terminal's cursor is
+                                	CELL	TCPOS,2		; SCOL, SROW as SCURS last sent them
+                                ;What SCPRE keeps of the frame before: SCRN.MAC's frame row (WINROW to NXTR,
+                                ;which stays in the image), copied whole, so in that row's order.
+                                	CELL	OLDWR,2	
+                                	CELL	OLDSK,2	
+                                	CELL	OLDSC,2	
+                                	CELL	OLDTX,2		; (TXEND, and FILCH)
+                                	CELL	OLDBOT,1
+                                	CELL	OLDAB,2	
+                                	CELL	OLDCS,1	
+                                	CELL	OLDCR,1	
+                                	CELL	OLDNR,1	
+                                	CELL	OPN,1		; SCDRAW: rows the screen gave up at the top
+                                	CELL	OPM,1		; ... or gained there
+                                	CELL	EDA,1		; the edit: the rows it had
+                                	CELL	EDB,1		; ... and has
+                                	CELL	EDR,1		; ... its first row
+                                	CELL	EDP,1		; ... the first of them to draw
+                                	CELL	PEND,1		; PRNG: the row to stop before
+                                	CELL	TALLF,1		; 1 = the top line is taller than the screen
+                                	CELL	SCRLN,2		; lines the text moved up this frame (signed)
+                                	CELL	LYOK,1		; 1 = the row table is the screen's, as it stands
+                                	CELL	LQKC,1		; LYQK: the cells before the cursor on its row
+                                	CELL	LYTOP,2		; ... the bytes in memory before the top line then
+                                	CELL	HTTOPC,2	; HTBLD: the bytes from the table's first line to
+                                				;   the cursor
+                                	CELL	LYPG,2		; ... and PGTOPM
+                                	CELL	FORCEF,1	; 1 = a full frame is not finished -> repaint in full
+                                	CELL	OEDMOD,1	; the mode the bottom row last showed (0FFH: unknown)
+	MACRO-80 3.44	09-Dec-81	PAGE	1-5
+
+
+                                	CELL	SCEOF,1		; 1 = the end of the file is on the screen
+                                	CELL	SCBOF,1		; 1 = the top row is the file's first line
+                                	CELL	PLACE,1		; the command's request of the next layout (VI.INC
+                                				;   PL_ASK / PL_SET / PL_MID)
+                                	CELL	CSUB,1		; the row of its line the cursor is on (0 = first)
+                                	CELL	TOPLEN,2	; bytes from the top line's start to the cursor
+                                	CELL	CBOL,2		; bytes from the cursor line's start to the cursor
+                                	CELL	CURDCL,2	; cursor display column (0-based, tabs expanded)
+                                	CELL	LYDLT,2		; LAYOUT: LNDLT taken for this frame
+                                	CELL	LYROW,1		; LAYOUT: working row
+                                	CELL	LYIB,2		; LYMID: -> the entry of the next line below
+                                	CELL	LYVB,1		; LAYOUT: the column its current row starts at (low
+                                				;   byte: TAB stops)
+                                	CELL	LYLIM,2		; HTBLD: bytes back to pin while reading down
+                                	CELL	LYUSE,1		; LYMID: rows taken
+                                	CELL	LYMAB,1		; LYMID: ... of them above the cursor's line
+                                	CELL	LYMBL,1		; LYMID: ... and below it ('~' rows too)
+                                	CELL	LYND,1		; LYMID: lines under the last one shown (LYFAR)
+                                	CELL	LYPRF,1		; LYMID: 1 = a line above first when rows are even
+                                	CELL	LYSVR,1		; LAYOUT: LYROW as CURRW gave it
+                                	CELL	HTLIM,1		; HTBLD: rows still to gather
+                                	CELL	LYXE,1		; HTBLD: 1 when the cursor has a row to itself
+                                	CELL	LYLAST,1	; LAYOUT: last byte read forward
+                                	CELL	SVCNT,2		; LAYOUT: saved CMDCNT
+                                	CELL	SVAUX,2		; LAYOUT: saved AUXCNT
+                                	CELL	SVDIR,1		; LAYOUT: saved DIRFLG
+                                	CELL	RDP,2		; reader: next before-gap byte
+                                	CELL	RDN,2		; reader: before-gap bytes left
+                                	CELL	RDHL,2		; reader: RGET pointer
+                                	CELL	RDBC,2		; reader: RGET count
+                                	CELL	RDSEG,1		; reader: 1 once reading after the gap
+                                	CELL	SKPN,1		; RDSKIP line count
+                                	CELL	PROWN,1		; screen row being painted (0-based)
+                                	CELL	PSKN,2		; PROW: rows of the line to pass over first
+                                	CELL	DCOL,1		; column in the line while painting (low byte)
+                                	CELL	XC,1		; cells used in the row being painted
+                                	CELL	TMPR,2		; DSR parse: rows
+                                	CELL	TMPC,2		; DSR parse: cols
+                                
+                                ;--- CMD.MAC ----------------------------------------------------------------
+                                	CELL	EDMODE,1
+                                	CELL	CMDCNT,2	; count prefix (0 = none)
+                                	CELL	QUITF,1		; set 1 by :q / :wq
+                                	CELL	MODF,1		; 1 = unsaved changes
+                                	CELL	RINTENT,1	; render intent for the last key (SCRN.MAC reads)
+                                	CELL	ICHAPP,1	; 1 = the R_ICH char went at the row's end, so
+                                				;   nothing follows it to shift: no ICH needed
+                                	CELL	DCHBS,1		; 1 = they went left of the cursor (insert's BS)
+                                	CELL	LNALL,1		; 1 = this R_LINE is drawn from the line's first
+                                				;   row, not the cursor's (SCRN.MAC clears it)
+                                	CELL	ILABOV,1	; 1 = the row above an R_ILIN's opened rows lost
+                                				;   text to them and must be redrawn too
+                                	CELL	WBIG,1		; word motion: 0 = w/b/e, 1 = W/B/E
+                                	CELL	WPULL,1		; w/W ended off a line's end and was pulled back
+                                	CELL	HFAMT,1		; ^D/^U: rows (vim's 'scroll'); 0 = NEDIT/2
+                                	CELL	HFN,1		; ^D/^U: the rows this one goes
+	MACRO-80 3.44	09-Dec-81	PAGE	1-6
+
+
+                                	CELL	HFTP,2		; ^D/^U: -> the new top line's entry
+                                	CELL	HTN,1		; row table: its entries
+                                	CELL	HTCUR,1		; ... the cursor line's
+                                	CELL	HTTP,1		; ... the top line's
+                                	CELL	HTEOF,1		; ... 1 = its last is the file's last line
+                                	CELL	HTBOF,1		; ... 1 = its first is the file's first
+                                	CELL	RWR,2		; ^F/^B: rows still to go
+                                	CELL	RWMV,1		; ^F/^B: 1 = the table was made again on the way
+                                	CELL	OVDIR,1		; OVLAP: 0 = h2.. are above h1 in the table
+                                	CELL	JKCNT,2		; j/k: count
+                                	CELL	JKN,2		; j/k: lines scanned for (min(count, limit))
+                                	CELL	JKMOV,2		; j: lines moved
+                                	CELL	JKBK,2		; k: scan position, bytes back from GAPBEG
+                                	CELL	JKPHN,1		; j: 1 = moved may be one less (last LF ends the file)
+                                	CELL	JKLST,1		; j: last byte of the scan
+                                	CELL	JKVC,2		; j/k landing: screen column
+                                	CELL	JKLS,2		; j/k landing: last content char (0FFFFH = none)
+                                ;'.' (repeat): see CMD.MAC's '.' section for how these are driven.
+                                	CELL	DOTCHG,1	; 1 = the command being typed changed the text
+                                	CELL	DOTRPL,1	; 1 = '.' is replaying, so nothing is recorded
+                                	CELL	DOTOVF,1	; 1 = the change outgrew the scratch
+                                	CELL	DOTLK,1		; the last key recorded, encoded
+                                	CELL	DOTLEN,1	; keys in DOTBUF (0 = nothing to repeat)
+                                	CELL	DOTIX,1		; the replay's read index into DOTBUF
+                                	CELL	DOTNCT,2	; the count typed on the '.' (0 = none)
+                                	CELL	GPEND,1		; pending 'g' / 'Z' / 'r' (gg / ZZ / r{char})
+                                	CELL	GSAVE,1		; the pending snapshot for the current command
+                                	CELL	PENDOP,1	; pending operator ('d' for dd)
+                                	CELL	PSAVE,1		; pending-op snapshot for the current command
+                                	CELL	DDSNG,1		; 1 = the current dd deletes a single line (DL paint)
+                                	CELL	OPCLSV,1	; operator: motion class (0 excl, 1 incl, 2 linewise,
+                                				;   3 excl but a jump -- no end-of-line clamp)
+                                	CELL	CWEOL,1		; operator: the motion is 'cw' rewritten to 'ce',
+                                				;   and its first word is yet to be stepped
+                                	CELL	OPSTA,2		; operator: span start (cursor before the motion)
+                                	CELL	OPEND2,2	; operator: span end (cursor after the motion)
+                                	CELL	OPSFP,3		; operator: the start as a place in the file
+                                	CELL	OPSLO,3		; ... where its line starts
+                                	CELL	OPSHI,3		; ... where the next line does (OPPGD: the span's
+                                				;   high end, whichever line that turned out to be)
+                                	CELL	OPTOGO,3	; OPPGD: bytes still to take
+                                	CELL	OPLO,2		; operator: low offset of the delete range
+                                	CELL	OPHI,2		; operator: high offset of the delete range
+                                	CELL	CNTV,2		; motion repeat counter
+                                	CELL	TTI,2		; TAILTAB scan index
+                                	CELL	WKI,2		; scan index
+                                	CELL	WKTERM,2	; line terminator offset
+                                	CELL	WKBOL,2		; EOLC scratch: line BOL
+                                	CELL	WKCLS,1		; word motion: class of the current run
+                                	CELL	VRCH,1		; 'r' / R: the char being stored
+                                	CELL	RPDEL,2		; R: chars overwritten, still in the gap (BS puts back)
+                                	CELL	RPAPP,2		; R: chars appended past the line end (BS deletes)
+                                	CELL	RPGE,2		; R: GAPEND as the last overwrite left it
+                                	CELL	RLPTR,2		; RDLINE: write pointer
+                                	CELL	RLLEN,1		; RDLINE: chars stored
+                                	CELL	RLMAX,1		; RDLINE: capacity
+	MACRO-80 3.44	09-Dec-81	PAGE	1-7
+
+
+                                	CELL	EXOP,1		; ex: the command (EO_xx)
+                                	CELL	EXARG,1		; ex: 0 = no file name given
+                                	CELL	EXBAK,1		; ex: the write keeps a backup
+                                	CELL	EXCMD,2		; ex: text shown after a message
+                                	CELL	WPROW,1		; :w -- the cursor's row
+                                	CELL	WPBYT,1		; :w -- the cursor's byte in its record
+                                	CELL	WPREC,2		; :w -- the cursor's record in the file
+                                	CELL	ZDIF,2		; G/gg: target - top (low 16 bits)
+                                	CELL	ZLF,1		; G/gg: lines from the target up to the top
+                                	CELL	ZSVCNT,2	; G/gg: CMDCNT around LINPSB
+                                	CELL	ZSVAUX,2	; G/gg: AUXCNT around LINPSB
+                                	CELL	ZSVDIR,1	; G/gg: DIRFLG around LINPSB
+                                	CELL	MSGWHT,1	; the message the bottom row still owes (MW_xxx)
+                                	CELL	MSGNEW,1	; the file was not there when it was opened ('[New]')
+                                	CELL	EXBANG,1	; ex: 0 = '!' given
+                                	CELL	ROFLAG,1	; command line: '-R' / '/R' was given
+                                	CELL	PLUSF,1		; command line: '+' was given
+                                	CELL	YMODF,1		; yy: MODF across the delete + put back
+                                	CELL	YDCHG,1		; yy: DOTCHG across it too (see '.')
+                                	CELL	YURPL,1		; yy: UNDRPL across it too (see 'u')
+                                	CELL	YOFF,2		; yy: the cursor, which a yank leaves alone
+                                	CELL	YPT,2		; yy: where the lines came from
+                                	CELL	PCNT,2		; p/P: copies still to put
+                                	CELL	PPFP,3		; p/P: the first line put, a file position
+                                	CELL	PLFS,2		; p/P: the lines in the register
+                                	CELL	PCPY,1		; p/P: the copies, kept for the paint
+                                	CELL	YLDLT,2		; yy: LNDLT across the delete + put back
+                                	CELL	SDIR,1		; the last '/' or '?' direction (FFH = back)
+                                	CELL	SDIRE,1		; ... the direction THIS search runs in ('N')
+                                	CELL	SHAVE,1		; nonzero once a pattern has been entered
+                                	CELL	FNDKND,1	; f/F/t/T: which find ';' repeats (0 = none yet)
+                                	CELL	FNDCH,1		; ... and the character it looked for
+                                	CELL	FNDRUN,1	; the find THIS command is running (',' reverses)
+                                	CELL	FNDSTP,1	; how far along it starts: 2 for a 't' repeat
+                                	CELL	FNDN,2		; occurrences still to count off
+                                	CELL	FNDCUR,2	; the cursor it started from
+                                	CELL	FNDLIM,2	; ... and the end of the line it may not pass
+                                	CELL	GPKEEP,1	; GPLACE: keep the column (a search) not FNBLNK
+                                	CELL	MKVAL,3		; marks: nonzero once 'm' has set that one.  It
+                                				;   is a cell and not part of MKTAB because
+                                				;   it must start at zero, and a reserve need not
+                                	CELL	MKEDIT,3	; MKSHFT: where in the file the edit is
+                                	CELL	MKN,2		; ... how long it is
+                                	CELL	MKTYP,1		; ... and which way: 1 text went in, 2 came out
+                                	CELL	MKPOS,3		; MKJMP: the file position being jumped to
+                                	CELL	MKWHAT,1	; which of 'm' / '`' / ''' is running
+                                	CELL	MKHOLD,1	; set across YKGO's delete + put back (a yank
+                                				;   that could not copy): MKSHFT must leave the
+                                				;   marks alone through it
+                                	CELL	YACT,2		; how this yank takes its lines (VD_DD / YSPAN)
+                                	CELL	YTGT,2		; YSPAN: the text's length once the span is out
+                                	CELL	YWAS,2		; ... and its length BEFORE the lines came out
+                                	CELL	YCOL,2		; ... how far into them the cursor sat
+                                	CELL	YPFP,3		; ... and where in the file they start
+                                	CELL	YNPG,2		; the window the yank started in (YNDONE's paint)
+                                	CELL	YNCNT,2		; YNLINE: the lines it still wants
+	MACRO-80 3.44	09-Dec-81	PAGE	1-8
+
+
+                                	CELL	SCNT,2		; searches still to do (the count)
+                                	CELL	SOFF,3		; BRKON: where in the FILE the command began
+                                	CELL	SLDLT,2		; ... and LNDLT: for a search that fails, and
+                                				;   any move an ESC stops
+                                	CELL	BRKARM,1	; nonzero: CNTTST looks for an ESC
+                                	CELL	BRKHIT,1	; nonzero: one was found, and the count spent
+                                	CELL	SSKIP,1		; skip the character under the cursor (not
+                                				;   on the wrapped pass)
+                                	CELL	SRNGF,1		; ex: a line range was given
+                                	CELL	SRNG1,2		; ex: its first line
+                                	CELL	SRNG2,2		; ... and its last (FFFFH = the file's last)
+                                	CELL	SDELIM,1	; ':s' the delimiter typed
+                                	CELL	SGFLAG,1	; ':s' the 'g' flag
+                                	CELL	SANY,1		; ':s' something in the range has changed
+                                	CELL	SLCHG,1		; ':s' this line changed
+                                	CELL	SBACK,2		; ':s' lines walked past the last change
+                                	CELL	SLINES,2	; ':s' / ':N,Mw' lines of the range still to do
+                                	CELL	RWPTR,1		; ':N,Mw' the next free byte of the record at
+                                				;   0080H, as that address's low byte
+                                	CELL	RWERR,1		; ':N,Mw' a record would not go: the disk is full
+                                	CELL	RDANY,1		; ':r' something has been read in
+                                	CELL	RDBRK,1		; ':r' the line above wants a line end first
+                                	CELL	SOFFS,3		; ':s' the cursor's place in the file, for one that
+                                	CELL	SLDLTS,2	;   changes nothing, and its LNDLT
+                                ;SREPLN sits just below SREPL: WM's RDSTR layout, so INSSTR can splice it.
+                                	CELL	SREPLN,1	; ':s' the replacement's length, kept
+                                	CELL	SREPL,SREPMX+1	; ... and the replacement
+                                
+                                ;--- KEY.MAC ----------------------------------------------------------------
+                                	CELL	KBHEAD,1	; ring read index (oldest byte)
+                                	CELL	KBTAIL,1	; ring write index (next free slot)
+                                
+                                ;--- PAGE.MAC ---------------------------------------------------------------
+                                ;Each FCB is preceded by two flag bytes: [FCB-2] = WRREC/CLOSEC's per-file
+                                ;open flag, [FCB-1] = the file's has-data flag (WM layout: OUTACT before
+                                ;OUTFCB, BAKRDY before BAKFCB; the source uses 005BH before the CCP's FCB at
+                                ;005CH).
+                                ;WM's marks OUTPOS (0x26CD) and BAKPOS (0x26F3) are NOT separate cells -- the
+                                ;authoritative wm_map.py addresses show they ARE FCB random-record fields:
+                                ;OUTPOS = OUTFCB(0x26AB)+22H and BAKPOS = BAKFCB(0x26D1)+22H.  They advance
+                                ;with the file automatically: RECINC/RECDEC/WRRECP step FCB+22H, so OUTPOS is
+                                ;OUTFCB's current write position and PAGEOUT's "OUTREC vs OUTPOS" compare
+                                ;skips exactly the records REWIND already pulled back.  A separate static
+                                ;cell would never advance, and the save would stop after its first record.
+  0581                          RZ	SET	RZ+1		; OUTFCB-2 : WRREC/CLOSEC open flag
+                                	CELL	OUTACT,1	; OUTFCB-1 : out-side active flag
+                                	CELL	OUTFCB,36	; output file (name.$$$)
+  058B'                         OUTTYP	EQU	OUTFCB+9	; OUTFCB type field ('$$$' / briefly 'BAK')
+                                	PUBLIC	OUTTYP
+  05A4'                         OUTPOS	EQU	OUTFCB+22H	; OUTFCB random-record word (write position)
+                                	PUBLIC	OUTPOS
+  05A7                          RZ	SET	RZ+1		; BAKFCB-2 : WRREC/CLOSEC open flag
+                                	CELL	BAKRDY,1	; BAKFCB-1 : backup-has-data flag
+                                	CELL	BAKFCB,36	; backup file (VIBACKUP$$$)
+  05CA'                         BAKPOS	EQU	BAKFCB+22H	; BAKFCB random-record word (RECBASE input base)
+                                	PUBLIC	BAKPOS
+	MACRO-80 3.44	09-Dec-81	PAGE	1-9
+
+
+                                	CELL	PGTOPM,2	; (appended) times the pager moved TXTBEG --
+                                				;   the window signature 'u' checks (see BUF.MAC)
+                                	CELL	OUTREC,2	; output write high-water (record)
+                                	CELL	OUTHI,2		; (appended) most records name.$$$ has held
+                                	CELL	SRCREC,2	; source read low-water (record)
+                                	CELL	BAKREC,2	; backup read low-water (record)
+                                	CELL	INLEN,1		; last input record byte count
+                                	CELL	DSTDRV,1	; nonzero if output is on a different drive
+                                	CELL	NEWFIL,1	; nonzero if the source did not exist
+                                	CELL	AUXCNT,2	; WM L271E -- must follow NEWFIL: GOLINE's
+                                				;   LHLD NEWFIL / DAD H tests its low byte
+                                	CELL	DIRFLG,1	; scroll/search direction (neg = backward)
+                                ;APPENDED (not WordMaster).  Kept clear of NEWFIL/AUXCNT: GOLINE reads the
+                                ;byte after NEWFIL as AUXCNT's low byte.
+                                	CELL	WRKMAD,1	; a work record has been written, so name.$$$ /
+                                				;   VIBACKUP$$$ may exist (DISCRD tests it)
+                                	CELL	SKREC,2		; SEEKTO: target record (APPENDED, not WM)
+                                	CELL	SKBYT,1		; SEEKTO: target byte in that record
+                                	CELL	TOPLF,2		; the line feeds behind the window: in output
+                                				;   records 0 to OUTPOS-1 (TLFADD / TLFSUB)
+                                	CELL	CLCNT,2		; CNTLF: line feeds counted
+  05E5                          RZ	SET	RZ+1		; TFCB-2 : WRREC/CLOSEC open flag (DELF clears)
+  05E6                          RZ	SET	RZ+1		; TFCB-1
+                                	CELL	TFCB,36		; WRTO / TEXIST: the target file
+                                	CELL	WRLIM,2		; PAGEOUT write limit (set to PGINIT / 81H)
+                                	CELL	RDLIM,2		; PAGEBOT read limit (set to PGINIT)
+                                	CELL	BUFLO,2		; buffer low-water reserve (PGCONST)
+                                	CELL	BUFHI,2		; buffer high-water fill target (PGCONST)
+                                	CELL	PGSCAL,1	; memory-scaled batch count (PGCONST)
+                                	CELL	PGSCL2,1	; = PGSCAL*2 (SPILL arithmetic)
+                                	CELL	MARGLO,1	; WM 272F: fixed 0 low byte so LHLD MARGLO = PGMARGN*256
+                                	CELL	PGMARGN,1	; paging low-water margin in pages
+                                	CELL	IOBATCH,1	; records per read-ahead / write-behind batch
+                                	CELL	PGSCRA,1	; (PGCONST scratch; nothing reads it)
+                                	CELL	SPLCNT,1	; SPILL batch counter
+                                
+                                ;--- BUF.MAC ----------------------------------------------------------------
+                                ;The (base,limit) pointer row (WM 6828-6871 layout).  The disassembly's DB
+                                ;values for these cells are aliased code bytes; only the order/adjacency is
+                                ;authoritative.  BINIT sets every cell at run time.
+                                	CELL	BUFBEG,2	; region-array base
+                                	CELL	QBEG,2		; ^Q scratch buffer begin
+                                	CELL	QEND,2		; ^Q scratch buffer end
+                                	CELL	HOLEQP,2
+                                	CELL	TXTBAS,2	; text base = PBEGMEM+1 (past the 0 sentinel)
+                                ;UBEG/UEND -- APPENDED: the undo region, a region of the arena like the Q
+                                ;buffer, with UEND its insertion point.  It goes HERE, between the slider and
+                                ;the text, so both of the row's interleaved walks stay aligned: the holes from
+                                ;BUFBEG are (BUFBEG,QBEG) (QEND,HOLEQP) (TXTBAS,UBEG) (UEND,TXTBEG)
+                                ;(GAPBEG,GAPEND) (TXTEND,BUFEND), and the data regions from QBEG are
+                                ;(QBEG,QEND) (HOLEQP,TXTBAS) (UBEG,UEND) (TXTBEG,GAPBEG) (GAPEND,TXTEND).
+                                ;NEXTPR, MOVGAP, BUFSUM, HOLEUP/HOLEDN, PRSPAN and INIBAS's count are all
+                                ;untouched by it; INIGAP empties it.
+                                	CELL	UBEG,2		; undo region begin
+                                	CELL	UEND,2		; undo region end = its insertion point
+                                	CELL	TXTBEG,2	; window start
+	MACRO-80 3.44	09-Dec-81	PAGE	1-10
+
+
+                                	CELL	GAPBEG,2	; cursor / gap start
+                                	CELL	GAPEND,2	; gap end / first char after cursor
+                                	CELL	TXTEND,2	; window end
+  062E'                         PRTERM	EQU	TXTEND+1	; NEXTPR terminator = high byte of TXTEND
+                                	PUBLIC	PRTERM
+                                	CELL	BUFEND,2	; top of usable text RAM
+  0630'                         MVGTOP	EQU	BUFEND+1	; MOVGAP upper bound = high byte of BUFEND
+                                	PUBLIC	MVGTOP
+                                	CELL	ERRFLG,1	; nonzero after ERRMSG fired (harness reads it)
+                                ;The search pattern, in WM's SRCHBUF layout (WM 6900): the length, then the
+                                ;string, 0-terminated.  CMD.MAC fills it from the '/' line and passes DE =
+                                ;SRCHST; FWDCNT reads the length from the byte below that, as WM does.
+                                ;CHECK BUF.MAC SRMAX+1 = 31
+                                	CELL	SRCHBF,1	; the pattern length
+                                	CELL	SRCHST,31	; the pattern, 0-terminated: BUF.MAC SRMAX+1
+                                	CELL	L2756,2		; WM L2756 -- GOLINE's last target position
+                                	CELL	QCPDON,2	; (appended) QCPYN: bytes already copied in
+                                ;'u' (undo): see BUF.MAC's UNDO section for how these are driven.
+                                	CELL	UNDN,1		; steps captured (0 = nothing to undo)
+                                	CELL	UNDST,1		; 0 none, 1 change applied ('u' undoes it),
+                                				;   2 already undone ('u' puts it back)
+                                	CELL	UNDBAD,1	; 1 = this change was too big to capture
+                                	CELL	UNDRPL,1	; 1 = 'u' replaying, so nothing is captured
+                                	CELL	UNDDIR,1	; the replay's direction (0 forward, 1 inverse)
+                                	CELL	UNDWHY,1	; 0 = nothing to undo, 1 = it has paged away
+                                	CELL	UNDTY,1		; the step / record type being handled
+                                	CELL	UNDOF,2		; ... its logical offset
+                                	CELL	UNDLN,2		; ... its length
+                                	CELL	UNDBO,2		; ... where its bytes lie in the region
+                                	CELL	UNDCL,2		; the length being captured (BC does not survive)
+                                	CELL	UNDLSA,2	; the last record's address (UNDEXT's scratch)
+                                	CELL	UNDPG,2		; PGTOPM when this change was captured
+                                	CELL	UNDPTR,2	; the region's write point, as an OFFSET
+                                	CELL	UNDB1,1		; the byte going in (PRSPAN wants BC)
+                                	CELL	UNDPCU,2	; the cursor as the current command began
+                                	CELL	UNDCUR,2	; ... as the command that made THIS change began
+                                	CELL	UNDLK,1		; the replay: 1 = whole lines put in, 2 = taken
+                                	CELL	UNDLC,1		;   out, 0FFH neither; how many; and LNDLT where
+                                	CELL	UNDLL0,2	;   they start (URLNQ)
+                                	CELL	UNDML,1		; the replay: 0 = every step on one line, no
+                                				;   line end put back or taken (0FFH: no step
+                                				;   yet, 1: not so)
+                                	CELL	UNDL0,2		; ... LNDLT with the cursor on that line
+                                	CELL	LNDLT,2		; (appended) lines the cursor moved since the last
+                                				;   screen layout (signed; SCRN.MAC consumes it)
+                                
+  024B                          RSVZN	EQU	RZ-RVSIZE		; bytes ZINIT clears
+  0679'                         RSVTOP	EQU	RSVBAS+RZ		; BUF.MAC's PBEGMEM: the arena base
                                 
                                 	END
 	MACRO-80 3.44	09-Dec-81	PAGE	S
 
 
 Macros:
+CELL            
 
 Symbols:
-0005 	BDOS            0007 	BEL             0001 	BF_CONIN        
-0002 	BF_CONOUT       000B 	BF_CONST        0019 	BF_CURDSK       
-0009 	BF_PRTSTR       0008 	BS              0080 	CMDTAIL         
-001A 	CPMEOF          000D 	CR              007F 	DEL             
-005C 	DFTFCB          0100I'	DOTBUF          0080 	DOTMAX          
-0080I'	DOTSCR          0000 	EM_CMD          0003 	EM_EX           
-0001 	EM_INS          0002 	EM_REP          001B 	ESC             
-0195I'	EXBUF           0028 	EXMAX           0180I'	FNAME           
-032FI'	HTAB            01BEI'	KBRING          0020 	KBRSIZ          
-000A 	LF              0003 	MKMAX           0317I'	MKSAV           
-0004 	MKSIZ           030BI'	MKTAB           0323I'	MKUND           
+05D9I'	AUXCNT          05A8I'	BAKFCB          05CAI'	BAKPOS          
+05A7I'	BAKRDY          05D4I'	BAKREC          0005 	BDOS            
+0007 	BEL             0001 	BF_CONIN        0002 	BF_CONOUT       
+000B 	BF_CONST        0019 	BF_CURDSK       0009 	BF_PRTSTR       
+053FI'	BRKARM          0540I'	BRKHIT          0008 	BS              
+0619I'	BUFBEG          062FI'	BUFEND          0610I'	BUFHI           
+060EI'	BUFLO           0459I'	CBOL            05E2I'	CLCNT           
+0487I'	CMDCNT          0080 	CMDTAIL         04D0I'	CNTV            
+001A 	CPMEOF          000D 	CR              0456I'	CSUB            
+045BI'	CURDCL          04BBI'	CWEOL           048DI'	DCHBS           
+0480I'	DCOL            04B9I'	DDSNG           007F 	DEL             
+005C 	DFTFCB          05DBI'	DIRFLG          0100I'	DOTBUF          
+04ADI'	DOTCHG          04B2I'	DOTIX           04B1I'	DOTLEN          
+04B0I'	DOTLK           0080 	DOTMAX          04B3I'	DOTNCT          
+04AFI'	DOTOVF          04AEI'	DOTRPL          0080I'	DOTSCR          
+05D7I'	DSTDRV          0441I'	EDA             0442I'	EDB             
+0486I'	EDMODE          0444I'	EDP             0443I'	EDR             
+0000 	EM_CMD          0003 	EM_EX           0001 	EM_INS          
+0002 	EM_REP          0631I'	ERRFLG          001B 	ESC             
+04E7I'	EXARG           04E8I'	EXBAK           04F9I'	EXBANG          
+0195I'	EXBUF           04E9I'	EXCMD           0028 	EXMAX           
+04E6I'	EXOP            0180I'	FNAME           0511I'	FNDCH           
+0516I'	FNDCUR          0510I'	FNDKND          0518I'	FNDLIM          
+0514I'	FNDN            0512I'	FNDRUN          0513I'	FNDSTP          
+0451I'	FORCEF          0629I'	GAPBEG          062BI'	GAPEND          
+04B5I'	GPEND           051AI'	GPKEEP          04B6I'	GSAVE           
+0492I'	HFAMT           0493I'	HFN             0494I'	HFTP            
+061FI'	HOLEQP          032FI'	HTAB            049AI'	HTBOF           
+0497I'	HTCUR           0499I'	HTEOF           046BI'	HTLIM           
+0496I'	HTN             044DI'	HTTOPC          0498I'	HTTP            
+048CI'	ICHAPP          048FI'	ILABOV          05D6I'	INLEN           
+0616I'	IOBATCH         04A5I'	JKBK            049FI'	JKCNT           
+04ABI'	JKLS            04A8I'	JKLST           04A3I'	JKMOV           
+04A1I'	JKN             04A7I'	JKPHN           04A9I'	JKVC            
+057EI'	KBHEAD          01BEI'	KBRING          0020 	KBRSIZ          
+057FI'	KBTAIL          0652I'	L2756           000A 	LF              
+048EI'	LNALL           0677I'	LNDLT           044AI'	LQKC            
+045DI'	LYDLT           0460I'	LYIB            046DI'	LYLAST          
+0463I'	LYLIM           0466I'	LYMAB           0467I'	LYMBL           
+0468I'	LYND            0449I'	LYOK            044FI'	LYPG            
+0469I'	LYPRF           045FI'	LYROW           046AI'	LYSVR           
+044BI'	LYTOP           0465I'	LYUSE           0462I'	LYVB            
+046CI'	LYXE            0614I'	MARGLO          051EI'	MKEDIT          
+0528I'	MKHOLD          0003 	MKMAX           0521I'	MKN             
+0524I'	MKPOS           0317I'	MKSAV           0004 	MKSIZ           
+030BI'	MKTAB           0523I'	MKTYP           0323I'	MKUND           
+051BI'	MKVAL           0527I'	MKWHAT          048AI'	MODF            
+04F8I'	MSGNEW          04F7I'	MSGWHT          0630I'	MVGTOP          
 0004 	MW_BIG          0003 	MW_CTG          0001 	MW_FIL          
-0000 	MW_NON          0002 	MW_WRT          0000 	NUL             
-018FI'	PLUSB           0000 	PL_ASK          0002 	PL_MID          
-0001 	PL_SET          0000'	RSVBAS          042EI'	RSVTOP          
-0100 	RVDOTB          0080 	RVDOTS          0195 	RVEXB           
-0180 	RVFNM           000C 	RVFNMN          032F 	RVHTB           
-00FF 	RVHTN           01BE 	RVKBR           0317 	RVMKS           
-030B 	RVMKT           0323 	RVMKU           018F 	RVPLS           
-0006 	RVPLSN          01E2 	RVSEC           0080 	RVSECN          
-042E 	RVSIZE          0000 	RVSTK           0080 	RVSTKN          
-0263 	RVUND           00A8 	RVUNDN          01DE 	RVWRT           
-0003 	RVWRTN          018C 	RVZTP           0003 	RVZTPN          
-0007 	R_DCH           0003 	R_DLIN          0000 	R_FULL          
-0004 	R_ICH           0005 	R_ILIN          0006 	R_JOIN          
-0002 	R_LINE          0001 	R_MOVE          01E2I'	SECBUF          
-0009 	TAB             0008 	TABWID          0263I'	UNDREC          
-0080I'	VISTK           0000 	WBOOT           01DEI'	WRTYP           
+0000 	MW_NON          0002 	MW_WRT          05D8I'	NEWFIL          
+0000 	NUL             0452I'	OEDMOD          043AI'	OLDAB           
+0439I'	OLDBOT          043DI'	OLDCR           043CI'	OLDCS           
+	MACRO-80 3.44	09-Dec-81	PAGE	S-1
+
+
+043EI'	OLDNR           0435I'	OLDSC           0433I'	OLDSK           
+0437I'	OLDTX           0431I'	OLDWR           04BAI'	OPCLSV          
+04BEI'	OPEND2          04CEI'	OPHI            04CCI'	OPLO            
+0440I'	OPM             043FI'	OPN             04C0I'	OPSFP           
+04C6I'	OPSHI           04C3I'	OPSLO           04BCI'	OPSTA           
+04C9I'	OPTOGO          0581I'	OUTACT          0582I'	OUTFCB          
+05D0I'	OUTHI           05A4I'	OUTPOS          05CEI'	OUTREC          
+058BI'	OUTTYP          049EI'	OVDIR           0503I'	PCNT            
+050AI'	PCPY            0445I'	PEND            04B7I'	PENDOP          
+0615I'	PGMARGN         0612I'	PGSCAL          0613I'	PGSCL2          
+0617I'	PGSCRA          05CCI'	PGTOPM          0455I'	PLACE           
+0508I'	PLFS            018FI'	PLUSB           04FBI'	PLUSF           
+0000 	PL_ASK          0002 	PL_MID          0001 	PL_SET          
+0505I'	PPFP            047DI'	PROWN           062EI'	PRTERM          
+04B8I'	PSAVE           047EI'	PSKN            061BI'	QBEG            
+0654I'	QCPDON          061DI'	QEND            0489I'	QUITF           
+0551I'	RDANY           0479I'	RDBC            0552I'	RDBRK           
+0477I'	RDHL            060CI'	RDLIM           0475I'	RDN             
+0473I'	RDP             047BI'	RDSEG           048BI'	RINTENT         
+04E4I'	RLLEN           04E5I'	RLMAX           04E2I'	RLPTR           
+04FAI'	ROFLAG          04DEI'	RPAPP           04DCI'	RPDEL           
+04E0I'	RPGE            0000'	RSVBAS          0679I'	RSVTOP          
+042EI'	RSVZ            024BI 	RSVZN           0100 	RVDOTB          
+0080 	RVDOTS          0195 	RVEXB           0180 	RVFNM           
+000C 	RVFNMN          032F 	RVHTB           00FF 	RVHTN           
+01BE 	RVKBR           0317 	RVMKS           030B 	RVMKT           
+0323 	RVMKU           018F 	RVPLS           0006 	RVPLSN          
+01E2 	RVSEC           0080 	RVSECN          042E 	RVSIZE          
+0000 	RVSTK           0080 	RVSTKN          0263 	RVUND           
+00A8 	RVUNDN          01DE 	RVWRT           0003 	RVWRTN          
+018C 	RVZTP           0003 	RVZTPN          0550I'	RWERR           
+049DI'	RWMV            054FI'	RWPTR           049BI'	RWR             
+0679 	RZ              0007 	R_DCH           0003 	R_DLIN          
+0000 	R_FULL          0004 	R_ICH           0005 	R_ILIN          
+0006 	R_JOIN          0002 	R_LINE          0001 	R_MOVE          
+0549I'	SANY            054BI'	SBACK           0454I'	SCBOF           
+0453I'	SCEOF           0538I'	SCNT            0447I'	SCRLN           
+0547I'	SDELIM          050DI'	SDIR            050EI'	SDIRE           
+01E2I'	SECBUF          0548I'	SGFLAG          050FI'	SHAVE           
+05DFI'	SKBYT           047CI'	SKPN            05DDI'	SKREC           
+054AI'	SLCHG           053DI'	SLDLT           0556I'	SLDLTS          
+054DI'	SLINES          053AI'	SOFF            0553I'	SOFFS           
+0618I'	SPLCNT          0632I'	SRCHBF          0633I'	SRCHST          
+05D2I'	SRCREC          0559I'	SREPL           0558I'	SREPLN          
+0024 	SREPMX          0543I'	SRNG1           0545I'	SRNG2           
+0542I'	SRNGF           0541I'	SSKIP           0470I'	SVAUX           
+046EI'	SVCNT           0472I'	SVDIR           0009 	TAB             
+0008 	TABWID          0446I'	TALLF           042EI'	TCOK            
+042FI'	TCPOS           05E6I'	TFCB            0484I'	TMPC            
+0482I'	TMPR            0457I'	TOPLEN          05E0I'	TOPLF           
+04D2I'	TTI             0621I'	TXTBAS          0627I'	TXTBEG          
+062DI'	TXTEND          0623I'	UBEG            0625I'	UEND            
+066BI'	UNDB1           0658I'	UNDBAD          0661I'	UNDBO           
+0663I'	UNDCL           066EI'	UNDCUR          065AI'	UNDDIR          
+0675I'	UNDL0           0671I'	UNDLC           0670I'	UNDLK           
+0672I'	UNDLL0          065FI'	UNDLN           0665I'	UNDLSA          
+	MACRO-80 3.44	09-Dec-81	PAGE	S-2
+
+
+0674I'	UNDML           0656I'	UNDN            065DI'	UNDOF           
+066CI'	UNDPCU          0667I'	UNDPG           0669I'	UNDPTR          
+0263I'	UNDREC          0659I'	UNDRPL          0657I'	UNDST           
+065CI'	UNDTY           065BI'	UNDWHY          0080I'	VISTK           
+04DBI'	VRCH            0490I'	WBIG            0000 	WBOOT           
+04D8I'	WKBOL           04DAI'	WKCLS           04D4I'	WKI             
+04D6I'	WKTERM          04ECI'	WPBYT           04EDI'	WPREC           
+04EBI'	WPROW           0491I'	WPULL           05DCI'	WRKMAD          
+060AI'	WRLIM           01DEI'	WRTYP           0481I'	XC              
+0529I'	YACT            052FI'	YCOL            04FDI'	YDCHG           
+050BI'	YLDLT           04FCI'	YMODF           0536I'	YNCNT           
+0534I'	YNPG            04FFI'	YOFF            0531I'	YPFP            
+0501I'	YPT             052BI'	YTGT            04FEI'	YURPL           
+052DI'	YWAS            04EFI'	ZDIF            04F1I'	ZLF             
+04F4I'	ZSVAUX          04F2I'	ZSVCNT          04F6I'	ZSVDIR          
 018CI'	ZTOP            
 
 

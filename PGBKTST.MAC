@@ -36,7 +36,7 @@
 
 WBOOT	EQU	0
 
-	EXTRN	BINIT
+	EXTRN	ZINIT
 	EXTRN	OPENFIL, SAVEFIL
 	EXTRN	PUTCUR, INSBLK
 	EXTRN	PAGEDIR, INRDY
@@ -51,7 +51,7 @@ INSN	EQU	200		; misaligning insert (NOT a 128 multiple)
 	PUBLIC	SNTXTA, SNTXTB, SNOUTR, SNOPOS, SNTXB2, SNOPO2
 	PUBLIC	NFW, NBK, SNBAK, SNBRDY, DONE
 	PUBLIC	CNTTST			; BUF.MAC PAGESTP count-test (resident stub)
-	PUBLIC	CMDCNT, KBPOLL		; BUF.MAC line-move EXTRNs (stubbed)
+	PUBLIC	KBPOLL			; BUF.MAC line-move EXTRN (stubbed)
 
 	CSEG
 
@@ -59,7 +59,7 @@ INSN	EQU	200		; misaligning insert (NOT a 128 multiple)
 ; The battery.
 ;============================================================
 START:	LXI	SP,STACK
-	CALL	BINIT
+	CALL	ZINIT		; the cells that start at zero, then BINIT
 ;--- WINCAP: shrink the window ---
 	LHLD	TXTBEG		; = TXTBAS just after BINIT
 	SHLD	SNTXTA		; remember the window base
@@ -156,11 +156,10 @@ BKDON:
 CNTTST:
 	XRA	A
 	RET
-;CMDCNT / KBPOLL -- stubs for BUF.MAC's line move (GOLINE/SCRLST): no command
-; count and no keyboard in this batch battery.
+;KBPOLL -- a stub for BUF.MAC's line move (GOLINE/SCRLST): no keyboard in this
+; batch battery.  (Its CMDCNT is RSV.MAC's, zero: no command count either.)
 KBPOLL:
 	RET
-CMDCNT: DW	0
 
 ;------------------------------------------------------------
 ; Data

@@ -24,7 +24,7 @@
                                 ; without a full repaint when the viewport did not move; the edits that can be
                                 ; drawn cheaper set their own R_* intent (RENDER.md).
                                 ;
-                                ; EXTRNS: BINIT (BUF); SCINIT/SCDRAW/SCDONE (SCRN); GETKEY (KEY);
+                                ; EXTRNS: ZINIT (BUF); SCINIT/SCDRAW/SCDONE (SCRN); GETKEY (KEY);
                                 ;         FOPEN/CMDDIS/QUITF (CMD).
                                 ;============================================================
                          C      	INCLUDE VI.INC
@@ -130,9 +130,17 @@
   0020                   C      KBRSIZ	EQU	32		; KEY.MAC's type-ahead ring (a power of two)
   0003                   C      MKMAX	EQU	3		; marks 'a'-'c' -- three is enough (COMMANDS.md)
   0004                   C      MKSIZ	EQU	4		; each: a 3-byte file position (the 4th is spare)
+  0024                   C      SREPMX	EQU	EXMAX-4		; ':s' replacement -- bounded by the ex line
+                         C      				;   itself, so SCOPY can never truncate a line
+                         C      				;   anyone is able to type: the shortest
+                         C      				;   substitute is 's' '/' + one pattern char +
+                         C      				;   '/' before the replacement starts, and
+                         C      				;   RDLINE stores at most EXMAX.  Tied to
+                         C      				;   EXMAX rather than written out, so the two
+                         C      				;   cannot drift apart.
                          C      
                                 
-                                	EXTRN	BINIT			; BUF.MAC -- stand up the arena
+                                	EXTRN	ZINIT			; BUF.MAC -- stand up the arena
                                 	EXTRN	ERRHK			; BUF.MAC -- where a fatal message goes
                                 	EXTRN	EDTHK			; BUF.MAC -- who hears of an edit
                                 	EXTRN	MKSHFT			; CMD.MAC  -- the marks do
@@ -152,9 +160,12 @@
                                 
   0000'                         START:
   0000'   31 0000*              	LXI	SP,VISTK
-  0003'   CD 0000*              	CALL	ARGSCN			; '+{n}' / '-R': FIRST, since the line
-                                					;   sits at the default DMA address
-  0006'   CD 0000*              	CALL	BINIT			; gap-buffer pointer row + arena bounds
+  0003'   CD 0000*              	CALL	ZINIT			; the cells that start at zero, then the
+                                					;   gap-buffer pointer row + arena bounds
+  0006'   CD 0000*              	CALL	ARGSCN			; '+{n}' / '-R': before any disk I/O,
+                                					;   since the line sits at the default
+                                					;   DMA address -- and after ZINIT, which
+                                					;   would clear what it finds
   0009'   CD 0000*              	CALL	SCINIT			; terminal geometry (DSR autodetect)
   000C'   21 0000*              	LXI	H,SCDONE		; a fatal message goes where a quit
   000F'   22 0000*              	SHLD	ERRHK			;   leaves the cursor: bottom left
@@ -164,6 +175,9 @@
   001B'   CD 0000*              	CALL	LAYOUT			; the screen the file opens on: '+{n}'
                                 					;   is a move from there, as in vim
   001E'   CD 0000*              	CALL	ARGGO			; '+{n}': the line to start on
+	MACRO-80 3.44	09-Dec-81	PAGE	1-3
+
+
   0021'   3E 00                 	MVI	A,R_FULL		; nothing is on the screen yet, and
   0023'   32 0000*              	STA	RINTENT			;   ARGGO dispatched real keys that
                                 					;   may have lowered the intent
@@ -175,9 +189,6 @@
   0032'   3E 00                 	MVI	A,R_FULL		; default: full repaint unless a motion lowers it
   0034'   32 0000*              	STA	RINTENT
   0037'   CD 0000*              	CALL	CMDDIS			; dispatch through the vi core (may set R_MOVE)
-	MACRO-80 3.44	09-Dec-81	PAGE	1-3
-
-
   003A'   3A 0000*              	LDA	QUITF
   003D'   B7                    	ORA	A
   003E'   C2 004D'              	JNZ	MQUIT			; quitting: do not repaint what we are leaving
@@ -196,28 +207,29 @@
 Macros:
 
 Symbols:
-001F*	ARGGO           0004*	ARGSCN          0005 	BDOS            
+001F*	ARGGO           0007*	ARGSCN          0005 	BDOS            
 0007 	BEL             0001 	BF_CONIN        0002 	BF_CONOUT       
 000B 	BF_CONST        0019 	BF_CURDSK       0009 	BF_PRTSTR       
-0007*	BINIT           0008 	BS              0038*	CMDDIS          
-0080 	CMDTAIL         001A 	CPMEOF          000D 	CR              
-007F 	DEL             005C 	DFTFCB          0080 	DOTMAX          
-0016*	EDTHK           0000 	EM_CMD          0003 	EM_EX           
-0001 	EM_INS          0002 	EM_REP          0010*	ERRHK           
-001B 	ESC             0028 	EXMAX           0019*	FOPEN           
-002D*	GETKEY          0020 	KBRSIZ          001C*	LAYOUT          
-000A 	LF              0003 	MKMAX           0013*	MKSHFT          
-0004 	MKSIZ           002C'	MLOOP           0045*	MODEMS          
-004D'	MQUIT           0048*	MSGPST          0004 	MW_BIG          
-0003 	MW_CTG          0001 	MW_FIL          0000 	MW_NON          
-0002 	MW_WRT          0000 	NUL             0000 	PL_ASK          
-0002 	PL_MID          0001 	PL_SET          003B*	QUITF           
-0035*	RINTENT         0007 	R_DCH           0003 	R_DLIN          
-0000 	R_FULL          0004 	R_ICH           0005 	R_ILIN          
-0006 	R_JOIN          0002 	R_LINE          0001 	R_MOVE          
-004E*	SCDONE          0042*	SCDRAW          000A*	SCINIT          
-0030*	SCPRE           0000'	START           0009 	TAB             
+0008 	BS              0038*	CMDDIS          0080 	CMDTAIL         
+001A 	CPMEOF          000D 	CR              007F 	DEL             
+005C 	DFTFCB          0080 	DOTMAX          0016*	EDTHK           
+0000 	EM_CMD          0003 	EM_EX           0001 	EM_INS          
+0002 	EM_REP          0010*	ERRHK           001B 	ESC             
+0028 	EXMAX           0019*	FOPEN           002D*	GETKEY          
+0020 	KBRSIZ          001C*	LAYOUT          000A 	LF              
+0003 	MKMAX           0013*	MKSHFT          0004 	MKSIZ           
+002C'	MLOOP           0045*	MODEMS          004D'	MQUIT           
+0048*	MSGPST          0004 	MW_BIG          0003 	MW_CTG          
+0001 	MW_FIL          0000 	MW_NON          0002 	MW_WRT          
+0000 	NUL             0000 	PL_ASK          0002 	PL_MID          
+0001 	PL_SET          003B*	QUITF           0035*	RINTENT         
+0007 	R_DCH           0003 	R_DLIN          0000 	R_FULL          
+0004 	R_ICH           0005 	R_ILIN          0006 	R_JOIN          
+0002 	R_LINE          0001 	R_MOVE          004E*	SCDONE          
+0042*	SCDRAW          000A*	SCINIT          0030*	SCPRE           
+0024 	SREPMX          0000'	START           0009 	TAB             
 0008 	TABWID          0001*	VISTK           0000 	WBOOT           
+0004*	ZINIT           
 
 
 

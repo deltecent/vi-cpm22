@@ -65,21 +65,14 @@ PGINIT	EQU	200H		; WM 20 -- cold WRLIM/RDLIM (no-spill window)
 	PUBLIC	PAGEDIR, PAGEWIN
 	PUBLIC	POLLBRK		; break poll (CNTTST tail-calls it)
 	PUBLIC	MOREIN		; WM 4743 -- GOLINE (BUF.MAC) tests it
-	PUBLIC	AUXCNT		; WM L271E -- after NEWFIL, as in WM
 ;--- data the harness reads to check state ---------------------------------
-	PUBLIC	NEWFIL, OUTFCB, BAKFCB
-	PUBLIC	OUTREC, SRCREC, BAKREC, DIRFLG
-	PUBLIC	PGTOPM		; (appended) times the pager moved TXTBEG
-	PUBLIC	OUTPOS		; OUTFCB read/write position (rewind progress)
 	PUBLIC	INRDY		; NZ while input remains (harness scroll loop)
-	PUBLIC	BAKRDY		; set FFH when a VIBACKUP$$$ record is written
 ;--- on-demand page-in (BUF.MAC RGET) and the renderer's spill guard ------------
 	PUBLIC	NEEDIN		; WM 4617 -- RGET pages input in
-	PUBLIC	WRLIM		; WM L2745 -- the screen sets it (WM MEASURE)
 ;--- APPENDED (NOT WordMaster): vi :w keeps editing (WM 'H' on the same file) ---
 	PUBLIC	REOPEN, SEEKTO, OPENZ
 ;--- APPENDED (NOT WordMaster): vi :w name, :e, a buffer with no name ---------
-	PUBLIC	TFCB, WRTO, TEXIST, DISCRD, CNTLF
+	PUBLIC	WRTO, TEXIST, DISCRD, CNTLF
 	EXTRN	BINIT		; BUF.MAC -- WM L02F2 gap-pointer reset
 	EXTRN	WRTYP, SECBUF	; RSV.MAC -- held above the image (see RSV.MAC)
 
@@ -1419,72 +1412,24 @@ POLLBRK:			; WM 6199
 	RET
 
 ;============================================================
-; DATA -- FCBs, sector buffer, pager marks and constants.
-; The disassembly renders these cells as aliased code bytes; only their layout
-; is authoritative.  OPENFIL sets the live ones at run time.  Each FCB is
-; preceded by two flag bytes: [FCB-2] = WRREC/CLOSEC per-file open flag,
-; [FCB-1] = the file's has-data flag (WM layout: OUTACT before OUTFCB, BAKRDY
-; before BAKFCB; source uses 005BH before the CCP FCB at 005CH).
+; DATA -- what the image carries: the two names and one flag.
 ;============================================================
-;WM's marks OUTPOS (0x26CD) and BAKPOS (0x26F3) are NOT separate cells -- the
-;authoritative wm_map.py addresses show they ARE FCB random-record fields:
-;OUTPOS = OUTFCB(0x26AB)+22H and BAKPOS = BAKFCB(0x26D1)+22H.  They advance with
-;the file automatically: RECINC/RECDEC/WRRECP step FCB+22H, so OUTPOS is OUTFCB's
-;current write position and PAGEOUT's "OUTREC vs OUTPOS" compare skips exactly the
-;records REWIND already pulled back.  A separate static cell would never
-;advance, and the save would stop after its first record.
-	DB	0		; OUTFCB-2 : WRREC/CLOSEC open flag
-OUTACT:	 DB	 0		 ; OUTFCB-1 : out-side active flag
-OUTFCB: DS	36		; output file (name.$$$)
-OUTTYP	EQU	OUTFCB+9	; OUTFCB type field ('$$$' / briefly 'BAK')
-OUTPOS	 EQU	 OUTFCB+22H	 ; OUTFCB random-record word (write position)
-
-	DB	0		; BAKFCB-2 : WRREC/CLOSEC open flag
-BAKRDY: DB	0		; BAKFCB-1 : backup-has-data flag
-BAKFCB: DS	36		; backup file (VIBACKUP$$$)
-BAKPOS	 EQU	 BAKFCB+22H	 ; BAKFCB random-record word (RECBASE input base)
+;The cells that start at zero are not in the image: RSV.MAC names them, in
+;the RAM just above it, and BUF.MAC's ZINIT clears them before anything runs.
+;Their order there is the order they had here, and code depends on it.
+;The three FCBs, each with its two flag bytes below it, the pager's marks and
+;its constants are there.
+	EXTRN	OUTACT, OUTFCB, OUTTYP, OUTPOS, BAKRDY, BAKFCB
+	EXTRN	BAKPOS, PGTOPM, OUTREC, OUTHI, SRCREC, BAKREC
+	EXTRN	INLEN, DSTDRV, NEWFIL, AUXCNT, DIRFLG, WRKMAD
+	EXTRN	SKREC, SKBYT, TOPLF, CLCNT, TFCB, WRLIM
+	EXTRN	RDLIM, BUFLO, BUFHI, PGSCAL, PGSCL2, MARGLO
+	EXTRN	PGMARGN, IOBATCH, PGSCRA, SPLCNT
 
 BAKNAM:	 DB	 'VIBACKUP$$$'	  ; WM 520 -- BAKFCB name (WM: WMBACKUP$$$)
 BAKTYP	EQU	BAKNAM+8	 ; the '$$$' substring (WM BAKTYP EQU 443H)
 BAKEXT: DB	'BAK'		; WM 5245 -- the .BAK rename type
 
-PGTOPM: DW	0		; (appended) times the pager moved TXTBEG --
-				;   the window signature 'u' checks (see BUF.MAC)
-OUTREC: DW	0		; output write high-water (record)
-OUTHI:	DW	0		; (appended) most records name.$$$ has held
-SRCREC: DW	0		; source read low-water (record)
-BAKREC: DW	0		; backup read low-water (record)
-INLEN:	DB	0		; last input record byte count
-DSTDRV: DB	0		; nonzero if output is on a different drive
-NEWFIL: DB	0		; nonzero if the source did not exist
-AUXCNT: DW	0		; WM L271E -- must follow NEWFIL: GOLINE's
-				;   LHLD NEWFIL / DAD H tests its low byte
-DIRFLG: DB	0		; scroll/search direction (neg = backward)
 CPMNEW: DB	0FFH		; nonzero = CP/M 2.x+ (tolerant rename)
-
-;--- APPENDED (NOT WordMaster).  Kept clear of NEWFIL/AUXCNT: GOLINE reads the
-;    byte after NEWFIL as AUXCNT's low byte.
-WRKMAD: DB	0		; a work record has been written, so name.$$$ /
-				;   VIBACKUP$$$ may exist (DISCRD tests it)
-SKREC:	DW	0		; SEEKTO: target record (APPENDED, not WM)
-SKBYT:	DB	0		; SEEKTO: target byte in that record
-TOPLF:	DW	0		; the line feeds behind the window: in output
-				;   records 0 to OUTPOS-1 (TLFADD / TLFSUB)
-CLCNT:	DW	0		; CNTLF: line feeds counted
-	DB	0		; TFCB-2 : WRREC/CLOSEC open flag (DELF clears)
-	DB	0		; TFCB-1
-TFCB:	DS	36		; WRTO / TEXIST: the target file
-
-WRLIM:	DW	0		; PAGEOUT write limit (set to PGINIT / 81H)
-RDLIM:	DW	0		; PAGEBOT read limit (set to PGINIT)
-BUFLO:	DW	0		; buffer low-water reserve (PGCONST)
-BUFHI:	DW	0		; buffer high-water fill target (PGCONST)
-PGSCAL:DB      0	       ; memory-scaled batch count (PGCONST)
-PGSCL2:DB      0	       ; = PGSCAL*2 (SPILL arithmetic)
-MARGLO: DB	0		; WM 272F: fixed 0 low byte so LHLD MARGLO = PGMARGN*256
-PGMARGN:DB	0		; paging low-water margin in pages
-IOBATCH:DB	0		; records per read-ahead / write-behind batch
-PGSCRA:	 DB	 0		 ; (PGCONST scratch; nothing reads it)
-SPLCNT:	 DB	 0		 ; SPILL batch counter
 
 	END

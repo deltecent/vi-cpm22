@@ -136,6 +136,14 @@
   0020                   C      KBRSIZ	EQU	32		; KEY.MAC's type-ahead ring (a power of two)
   0003                   C      MKMAX	EQU	3		; marks 'a'-'c' -- three is enough (COMMANDS.md)
   0004                   C      MKSIZ	EQU	4		; each: a 3-byte file position (the 4th is spare)
+  0024                   C      SREPMX	EQU	EXMAX-4		; ':s' replacement -- bounded by the ex line
+                         C      				;   itself, so SCOPY can never truncate a line
+                         C      				;   anyone is able to type: the shortest
+                         C      				;   substitute is 's' '/' + one pattern char +
+                         C      				;   '/' before the replacement starts, and
+                         C      				;   RDLINE stores at most EXMAX.  Tied to
+                         C      				;   EXMAX rather than written out, so the two
+                         C      				;   cannot drift apart.
                          C      
                                 
                                 	EXTRN	KBRING			; RSV.MAC -- the ring, above the image
@@ -167,17 +175,17 @@
                                 ; KBRDY - pump the ring, then A=0FFH if it holds a byte, else A=00H.  Peeks
                                 ; only (takes nothing), so the byte stays for the next KBGETB.  This is
                                 ; RPOLL: the paint loop calls it to yield to type-ahead.  Clobbers HL,DE,BC.
-  0011'                         KBRDY:
-  0011'   CD 005E'              	CALL	KBPUMP
-  0014'   3A 00B9'              	LDA	KBHEAD
-  0017'   47                    	MOV	B,A
-  0018'   3A 00BA'              	LDA	KBTAIL
-  001B'   B8                    	CMP	B
-  001C'   CA 0022'              	JZ	KR_NO
-  001F'   3E FF                 	MVI	A,0FFH
 	MACRO-80 3.44	09-Dec-81	PAGE	1-3
 
 
+  0011'                         KBRDY:
+  0011'   CD 005E'              	CALL	KBPUMP
+  0014'   3A 0000*              	LDA	KBHEAD
+  0017'   47                    	MOV	B,A
+  0018'   3A 0000*              	LDA	KBTAIL
+  001B'   B8                    	CMP	B
+  001C'   CA 0022'              	JZ	KR_NO
+  001F'   3E FF                 	MVI	A,0FFH
   0021'   C9                    	RET
   0022'                         KR_NO:
   0022'   AF                    	XRA	A
@@ -207,9 +215,9 @@
                                 ; ESC that ends it.  Clobbers HL,DE,BC.
   002F'                         KBBRK:
   002F'   CD 005E'              	CALL	KBPUMP
-  0032'   3A 00BA'              	LDA	KBTAIL
+  0032'   3A 0000*              	LDA	KBTAIL
   0035'   4F                    	MOV	C,A
-  0036'   3A 00B9'              	LDA	KBHEAD
+  0036'   3A 0000*              	LDA	KBHEAD
   0039'                         KBK_LP:
   0039'   B9                    	CMP	C
   003A'   C8                    	RZ			; looked at all of it: none
@@ -225,7 +233,10 @@
   0049'   78                    	MOV	A,B
   004A'   C2 0039'              	JNZ	KBK_LP
   004D'   79                    	MOV	A,C
-  004E'   32 00B9'              	STA	KBHEAD		; head = tail: empty
+  004E'   32 0000*              	STA	KBHEAD		; head = tail: empty
+	MACRO-80 3.44	09-Dec-81	PAGE	1-4
+
+
   0051'   F6 FF                 	ORI	0FFH
   0053'   C9                    	RET
                                 
@@ -233,11 +244,8 @@
                                 ; the BIOS still has waiting.  Clobbers HL,DE,BC,A.
   0054'                         KBFLSH:
   0054'   CD 005E'              	CALL	KBPUMP
-  0057'   3A 00BA'              	LDA	KBTAIL
-	MACRO-80 3.44	09-Dec-81	PAGE	1-4
-
-
-  005A'   32 00B9'              	STA	KBHEAD
+  0057'   3A 0000*              	LDA	KBTAIL
+  005A'   32 0000*              	STA	KBHEAD
   005D'   C9                    	RET
                                 
                                 ; KBPUMP - producer: move every byte the BIOS already has into the ring, without
@@ -258,24 +266,24 @@
                                 ; KBPUT - append the byte in A to the ring (caller guarantees not full).
   0071'                         KBPUT:
   0071'   F5                    	PUSH	PSW		; save the byte
-  0072'   3A 00BA'              	LDA	KBTAIL
+  0072'   3A 0000*              	LDA	KBTAIL
   0075'   5F                    	MOV	E,A
   0076'   16 00                 	MVI	D,0
   0078'   21 0000*              	LXI	H,KBRING
   007B'   19                    	DAD	D		; HL = &KBRING[tail]
   007C'   F1                    	POP	PSW
   007D'   77                    	MOV	M,A		; store
-  007E'   3A 00BA'              	LDA	KBTAIL
+  007E'   3A 0000*              	LDA	KBTAIL
   0081'   3C                    	INR	A
   0082'   E6 1F                 	ANI	KBRSIZ-1	; wrap (mask = size-1)
-  0084'   32 00BA'              	STA	KBTAIL
+  0084'   32 0000*              	STA	KBTAIL
   0087'   C9                    	RET
                                 
                                 ; KBTAKE - remove the oldest ring byte.  CY=1 (ring empty) or CY=0 with A=byte.
   0088'                         KBTAKE:
-  0088'   3A 00B9'              	LDA	KBHEAD
+  0088'   3A 0000*              	LDA	KBHEAD
   008B'   47                    	MOV	B,A
-  008C'   3A 00BA'              	LDA	KBTAIL
+  008C'   3A 0000*              	LDA	KBTAIL
   008F'   B8                    	CMP	B
   0090'   CA 00A4'              	JZ	KTK_EMP		; head == tail -> empty
   0093'   58                    	MOV	E,B
@@ -285,24 +293,24 @@
   009A'   4E                    	MOV	C,M		; C = byte
   009B'   78                    	MOV	A,B
   009C'   3C                    	INR	A
+	MACRO-80 3.44	09-Dec-81	PAGE	1-5
+
+
   009D'   E6 1F                 	ANI	KBRSIZ-1
-  009F'   32 00B9'              	STA	KBHEAD
+  009F'   32 0000*              	STA	KBHEAD
   00A2'   79                    	MOV	A,C		; A = byte, CY=0 (from ANI)
   00A3'   C9                    	RET
   00A4'                         KTK_EMP:
   00A4'   37                    	STC
   00A5'   C9                    	RET
                                 
-	MACRO-80 3.44	09-Dec-81	PAGE	1-5
-
-
                                 ; KBFULL - A=0FFH if the ring is full ((tail+1) wraps onto head), else A=00H.
   00A6'                         KBFULL:
-  00A6'   3A 00BA'              	LDA	KBTAIL
+  00A6'   3A 0000*              	LDA	KBTAIL
   00A9'   3C                    	INR	A
   00AA'   E6 1F                 	ANI	KBRSIZ-1
   00AC'   47                    	MOV	B,A
-  00AD'   3A 00B9'              	LDA	KBHEAD
+  00AD'   3A 0000*              	LDA	KBHEAD
   00B0'   B8                    	CMP	B
   00B1'   CA 00B6'              	JZ	KF_YES
   00B4'   AF                    	XRA	A
@@ -312,8 +320,9 @@
   00B8'   C9                    	RET
                                 
   00B9'                         	CSEG
-  00B9'   00                    KBHEAD: DB	0		; ring read index (oldest byte)
-  00BA'   00                    KBTAIL: DB	0		; ring write index (next free slot)
+                                ;The ring's two indexes start at zero, so RSV.MAC holds them, above the
+                                ;image, and BUF.MAC's ZINIT clears them.
+                                	EXTRN	KBHEAD, KBTAIL
                                 
                                 	END
 	MACRO-80 3.44	09-Dec-81	PAGE	S
@@ -331,9 +340,9 @@ Symbols:
 0001 	EM_INS          0002 	EM_REP          001B 	ESC             
 0028 	EXMAX           0000I'	GETKEY          002FI'	KBBRK           
 0054I'	KBFLSH          00A6'	KBFULL          0007'	KBGETB          
-00B9'	KBHEAD          0039'	KBK_LP          0024I'	KBPOLL          
+00AE*	KBHEAD          0039'	KBK_LP          0024I'	KBPOLL          
 005E'	KBPUMP          0071'	KBPUT           0011I'	KBRDY           
-0097*	KBRING          0020 	KBRSIZ          00BA'	KBTAIL          
+0097*	KBRING          0020 	KBRSIZ          00A7*	KBTAIL          
 0088'	KBTAKE          00B6'	KF_YES          005E'	KP_LP           
 0022'	KR_NO           00A4'	KTK_EMP         000A 	LF              
 0003 	MKMAX           0004 	MKSIZ           0004 	MW_BIG          
@@ -342,8 +351,8 @@ Symbols:
 0002 	PL_MID          0001 	PL_SET          0007 	R_DCH           
 0003 	R_DLIN          0000 	R_FULL          0004 	R_ICH           
 0005 	R_ILIN          0006 	R_JOIN          0002 	R_LINE          
-0001 	R_MOVE          0009 	TAB             0008 	TABWID          
-0000 	WBOOT           
+0001 	R_MOVE          0024 	SREPMX          0009 	TAB             
+0008 	TABWID          0000 	WBOOT           
 
 
 

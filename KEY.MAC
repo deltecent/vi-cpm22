@@ -197,7 +197,8 @@ KF_YES:
 	RET
 
 	CSEG
-KBHEAD: DB	0		; ring read index (oldest byte)
-KBTAIL: DB	0		; ring write index (next free slot)
+;The ring's two indexes start at zero, so RSV.MAC holds them, above the
+;image, and BUF.MAC's ZINIT clears them.
+	EXTRN	KBHEAD, KBTAIL
 
 	END

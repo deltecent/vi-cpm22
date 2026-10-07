@@ -26,25 +26,28 @@
 ;============================================================
 	INCLUDE VI.INC
 
-	EXTRN	BINIT			; BUF.MAC
+	EXTRN	ZINIT			; BUF.MAC
 	EXTRN	FOPEN			; CMD.MAC
 	EXTRN	CMDRUN, QSNAP		; QSN.MAC
 
 	PUBLIC	BCONST, BCONIN, BCONOU	; KEY.MAC's + CMD.MAC's console EXTRNs
 	PUBLIC	NEDIT, WINROW		; CMD.MAC's screen EXTRNs (no renderer here)
-	PUBLIC	SCBOT, SCEOF, SCBOF, PLACE
-	PUBLIC	SKIPR, TALLF
-	PUBLIC	TXEND, CSUB, HTBLD	; ... and its row table (never built here)
+	PUBLIC	SCBOT, SKIPR
+	PUBLIC	TXEND, HTBLD		; ... and its row table (never built here)
 	PUBLIC	EXPRM, EXRUB, OUTCH	; CMD.MAC's ':' line echo (no renderer here)
 	PUBLIC	EXMSG, OUTSTR		; CMD.MAC's ex message (no renderer here)
 	PUBLIC	SCURS			; CMD.MAC's '^G' cursor restore
-	PUBLIC	CBOL, CURDCL		; CMD.MAC's '^G' cursor column
+	EXTRN	SCEOF, SCBOF		; RSV.MAC -- the renderer's cells that start
+					;   at zero are there for every program:
+					;   PLACE CSUB TALLF CBOL CURDCL too
 	PUBLIC	DONE
 
 	CSEG
 
 START:	LXI	SP,STACK
-	CALL	BINIT
+	CALL	ZINIT		; the cells that start at zero, then BINIT
+	LXI	H,0101H		; the whole file is on the screen: SCEOF
+	SHLD	SCEOF		;   and SCBOF, which follows it
 	CALL	FOPEN		; load CMDIN.TXT (staged at 005CH by CP/M)
 	CALL	CMDRUN		; run the scripted session to :q
 	MVI	A,0FFH
@@ -69,9 +72,6 @@ EXRUB:
 OUTCH:
 BCONOU:				; CMD.MAC's miss bell -- swallowed headlessly
 	RET
-
-CBOL:	DW	0		; the renderer's cursor column, absent here
-CURDCL: DW	0		;   ... and the one a TAB expands it to
 
 BCONIN:
 	LHLD	KIDX
@@ -108,13 +108,8 @@ KIDX:	DW	0
 NEDIT:	DB	23		; CMD.MAC EXTRN stub (no screen motions scripted)
 WINROW: DW	0		; SCRN.MAC stubs: row 0 at the top of the file
 SCBOT:	DB	22		; last text row
-SCEOF:	DB	1		; the whole file is on the screen
-SCBOF:	DB	1
-PLACE:	DB	0
 TXEND:	DB	1
-CSUB:	DB	0
 SKIPR:	DW	0
-TALLF:	DB	0
 DONE:	DB	0
 
 	DS	64

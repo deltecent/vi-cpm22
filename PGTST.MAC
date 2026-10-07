@@ -20,7 +20,7 @@
 
 WBOOT	EQU	0
 
-	EXTRN	BINIT
+	EXTRN	ZINIT
 	EXTRN	OPENFIL, SAVEFIL
 	EXTRN	INSBLK, PUTCUR
 	EXTRN	TXTBEG, GAPBEG, GAPEND, TXTEND
@@ -29,7 +29,7 @@ EDITAT	EQU	150		; insert offset (mid record 1, crosses a boundary)
 
 	PUBLIC	LDCKS, LDLEN, DONE
 	PUBLIC	CNTTST			; BUF.MAC PAGESTP count-test (resident stub)
-	PUBLIC	CMDCNT, KBPOLL		; BUF.MAC line-move EXTRNs (stubbed)
+	PUBLIC	KBPOLL			; BUF.MAC line-move EXTRN (stubbed)
 
 	CSEG
 
@@ -37,7 +37,7 @@ EDITAT	EQU	150		; insert offset (mid record 1, crosses a boundary)
 ; The battery: load the file, checksum it, save it back.
 ;============================================================
 START:	LXI	SP,STACK
-	CALL	BINIT
+	CALL	ZINIT		; the cells that start at zero, then BINIT
 	CALL	OPENFIL		; read the command-tail file into the buffer
 	CALL	TMEASURE	; -> CKSUM, TLEN of the loaded logical text
 	LHLD	CKSUM
@@ -64,11 +64,10 @@ START:	LXI	SP,STACK
 CNTTST:
 	XRA	A
 	RET
-;CMDCNT / KBPOLL -- stubs for BUF.MAC's line move (GOLINE/SCRLST): no command
-; count and no keyboard in this batch battery.
+;KBPOLL -- a stub for BUF.MAC's line move (GOLINE/SCRLST): no keyboard in this
+; batch battery.  (Its CMDCNT is RSV.MAC's, zero: no command count either.)
 KBPOLL:
 	RET
-CMDCNT: DW	0
 
 ;------------------------------------------------------------
 ; TMEASURE -- order-sensitive checksum + length of the logical text.
