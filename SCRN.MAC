@@ -1481,7 +1481,14 @@ LYTP:
 	SUB	B
 	JC	LT_NO
 	MOV	C,A		; C = the lines the top is under the table's first
+	LHLD	TXTBEG		; ... if that line is in memory still: HTBLD
+	XCHG			;   pins a screenful back from the cursor and
+	LHLD	GAPBEG		;   no more, and reading down for the lines
+	CALL	SUBHD		;   under it may have paged the rest out
+	XCHG
 	LHLD	HTTOPC
+	CALL	CMP16		; CY iff fewer bytes are there than it is back
+	JC	LT_NO
 	CALL	G2P
 	XCHG
 	LHLD	GAPBEG
