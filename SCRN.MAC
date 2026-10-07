@@ -178,6 +178,8 @@ EMD_RT:
 
 ;GOTOXY -- CUP to (B=row, C=col), 1-based.  Preserves nothing of note.
 GOTOXY:
+	XRA	A
+	STA	TCOK		; the cursor is somewhere else now
 	MVI	A,ESC
 	CALL	OUTCH
 	MVI	A,'['
@@ -194,6 +196,8 @@ GOTOXY:
 ;--- the four things every paint does, each written once ------------------
 ;CHIDE -- hide the cursor (a paint brackets itself in CHIDE .. SCURS).
 CHIDE:
+	MVI	A,1
+	STA	CHID
 	LXI	H,SHIDE
 	JMP	OUTSTR
 ;CRGRS -- put the scroll region back to the whole screen.
@@ -608,7 +612,7 @@ SD_OM:
 	LHLD	SCRLN
 	MOV	A,H
 	ORA	L
-	JZ	SCURS		; it stood still: the cursor alone
+	JZ	SCSTL		; it stood still: the cursor alone
 	MOV	A,H
 	ORA	A
 	JZ	SO_UP
@@ -661,7 +665,7 @@ SD_GO:
 	JNZ	SD_PT
 	MOV	A,C		; nothing moves.  Nothing to draw either: the
 	CMP	B		;   cursor alone
-	JNC	SCURS
+	JNC	SCSTL
 	INR	A
 	CMP	B
 	JNZ	SD_PT
@@ -2704,14 +2708,44 @@ MD_DRW:
 	CALL	OUTSTR
 ;SCURS -- put the cursor back on the text, where SCDRAW left it.  Anything that
 ; writes the bottom row after a frame (MODEMS, CMD.MAC's messages) ends here.
+; The cursor is shown only if a paint hid it (CHID).
 SCURS:
 	LDA	SROW
 	MOV	B,A
 	LDA	SCOL
 	MOV	C,A
+	PUSH	B
 	CALL	GOTOXY
+	POP	H
+	SHLD	TCPOS		; where the terminal's cursor is, until the next
+	MVI	A,1		;   GOTOXY says otherwise
+	STA	TCOK
+	LXI	H,CHID
+	MOV	A,M
+	ORA	A
+	RZ
+	MVI	M,0
 	LXI	H,SSHOW
 	JMP	OUTSTR
+
+;SCSTL -- SCURS for a frame that drew nothing: when the terminal's cursor is
+; where SCURS last put it, and that is where it belongs, nothing is sent (a
+; count digit, an operator waiting for its motion, a key that failed).
+SCSTL:
+	LDA	TCOK
+	ORA	A
+	JZ	SCURS
+	LDA	CHID
+	ORA	A
+	JNZ	SCURS
+	LHLD	TCPOS
+	LDA	SCOL
+	CMP	L
+	JNZ	SCURS
+	LDA	SROW
+	CMP	H
+	JNZ	SCURS
+	RET
 
 ;============================================================
 ; TEARDOWN -- reset the scroll region, show the cursor, and leave the cursor at
@@ -2735,6 +2769,9 @@ SEK:	DB	ESC,'[','K',0
 SCSI:	DB	ESC,'[',0		; CSI -- the prefix a counted ESC[<n>X needs
 SICH:	DB	ESC,'[','1','@',0	; ICH -- insert one cell at the cursor
 SRGP:	DB	ESC,'[','1',';',0	; region prefix "ESC[1;" (EMITB + 'r' follow)
+TCOK:	DB	0		; TCPOS is where the terminal's cursor is
+CHID:	DB	1		; the cursor is hidden, or may be (the first frame)
+TCPOS:	DW	0		; SCOL, SROW as SCURS last sent them
 SHIDE:	DB	ESC,'[','?','2','5','l',0
 SSHOW:	DB	ESC,'[','?','2','5','h',0
 SREGRS: DB	ESC,'[','r',0

@@ -8937,10 +8937,10 @@ RESP = [
     ('L from the top row', ['G', 'gg'], 'L', 0.15),
     ('H from the bottom row', ['G', 'gg', 'L'], 'H', 0.13),
     ('M from the bottom row', ['G', 'gg', 'L'], 'M', 0.09),
-    ('5j', ['G', 'gg'], '5j', 0.12),
-    ('5k', ['G', 'gg', 'L'], '5k', 0.11),
-    ('22j', ['G', 'gg'], '22j', 0.22),
-    ('22k', ['G', 'gg', 'L'], '22k', 0.20),
+    ('5j', ['G', 'gg'], '5j', 0.09),
+    ('5k', ['G', 'gg', 'L'], '5k', 0.09),
+    ('22j', ['G', 'gg'], '22j', 0.15),
+    ('22k', ['G', 'gg', 'L'], '22k', 0.15),
 ]
 
 
@@ -8968,6 +8968,30 @@ def resp_cmds():
                       f'(took {took:.3f})', took <= budget)
             finally:
                 e.close()
+    # a key that leaves the cursor where it is sends nothing, and one that
+    # only moves it sends where to and no more: the cursor is shown already
+    e = Editor(resp_lines(60))
+    try:
+        for k in ('G', 'gg', '3j', '5w'):
+            e.s.send(k)
+            idle(e)
+        for name, key, most in (('a count digit', '5', 0), ("the 'j' after it", 'j', 8),
+                                ('a key that is no command', 'Q', 0),
+                                ("the 'd' of a 'dw'", 'd', 0), ('ESC', '\x1b', 0),
+                                ('l', 'l', 8), ('k', 'k', 8), ('M', 'M', 8)):
+            b = len(e.cap.getvalue())
+            e.s.send(key)
+            idle(e)
+            got = e.cap.getvalue()[b:]
+            check(f'resp: {name} sends no more than {most} bytes (sent {got!r})',
+                  len(got) <= most)
+        e.s.send('\x0c')
+        idle(e)
+        v = e.cap.getvalue()
+        check('resp: a repaint still ends with the cursor shown',
+              v.rindex('\x1b[?25h') > v.rindex('\x1b[?25l'))
+    finally:
+        e.close()
 
 
 def cell_paint():
