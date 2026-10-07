@@ -72,6 +72,12 @@ holds), and a change of more than 1024 bytes cannot be undone. ESC stops a
 move or a search that is taking too long and puts the cursor back where it
 was.
 
+One limit is accepted and not refused: a single line of about 13,000
+characters or more is over half the memory. A put into such a line can land in
+the middle of it, and going to the end of one of 26,000 or more exits to CP/M
+with the unwritten work lost. Lines that long are not what this editor is for,
+and a fix would slow the load of every file.
+
 The **LARGE FILES** section of [`VI.DOC`](VI.DOC) says which commands are
 quick, which are slow, which refuse, and what to use instead — `d{n}G` for a
 big delete, `:N,Mw` and `:r` to move a big block, `:e!` as the undo of last

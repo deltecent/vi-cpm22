@@ -6155,7 +6155,7 @@ VIM_WRAP = [
     # (No row shortens a line from 24 rows to 23 with the cursor on its last:
     # vim then shows all of it but reports winline() a row too high for one
     # key.  wrap_cmds checks that case against the screen itself.  And none
-    # moves along a line with a big counted 'l': that is slow, issue #26.)
+    # moves along a line with a big counted 'l': that is slow, and stays so.)
     ('w4', ['6G', '$', '0', '/A010\r', '/A020\r', '/A029\r', '80h', '?A021\r', '?A011\r', '?A001\r', '0', 'j', 'j', 'j', '$', 'k', 'k', 'k', 'k'],
      ['6 6 0 0', '6 6 22 2359', '6 6 0 0', '6 6 10 800', '6 6 20 1600', '6 6 22 2320',
       '6 6 21 2240', '6 6 14 1680', '6 6 4 880', '6 6 0 80', '6 6 0 0', '7 7 0 0', '8 7 1 0',
@@ -8532,6 +8532,15 @@ def still_open(issue, label, cond):
           f'is fixed: make it a check()', not cond)
 
 
+def accepted_limit(label, cond):
+    """A check of something the editor is known to get wrong and is not going
+    to be changed for (DESIGN.md, objective 5): one line that is most of the
+    arena.  It passes while *cond* is false and FAILS when it turns true, so
+    that a change in what happens there is seen: make it a check() then."""
+    check(f'{label}: an accepted limit -- if this fails the editor no longer '
+          f'does that: make it a check()', not cond)
+
+
 def after_cmds():
     """After any command the next one is its own: 'x' takes one character,
     'j' moves one line, '.' repeats the 'x', '2x' takes two, and the screen is
@@ -8610,7 +8619,8 @@ def after_cmds():
 # Limits (issue #3): every bounded thing just under, at and over its bound.
 # Five of the seven bugs in that issue were a command run past a limit no test
 # went near.  Over the limit the editor must still be running and must have
-# said or shown what it did -- or the check is a still_open() under an issue.
+# said or shown what it did -- or the check is a still_open() under an issue,
+# or an accepted_limit().
 def limits_cmds():
     """The ex line (40), the search pattern (30), the '.' recording (128
     keys), the undo region (1024 bytes), a count (65535), type-ahead (31 keys
@@ -8792,15 +8802,16 @@ def limits_cmds():
                   not PROMPT.search(e.cap.getvalue()[before:]))
             if 'p' in keys:
                 # ... but the put goes in where the RESIDENT text ends, not
-                # where the line does: the line is cut in two (issue #21)
+                # where the line does: the line is cut in two.  No byte is
+                # lost.  An accepted limit: a fix has every load pay for it.
                 e.key(':w\r')
                 got = [len(l) for l in saved_bytes(e).split(b'\r\n')]
-                still_open(21, f'a line of {n}, {keys}: three whole lines '
-                           f'written ({got})', got == [2, n, n, n, 2, 0])
+                accepted_limit(f'a line of {n}, {keys}: three whole lines '
+                               f'written ({got})', got == [2, n, n, n, 2, 0])
         finally:
             e.close()
     # Running to the end of a line the arena cannot hold still exits to CP/M
-    # with the work lost (issue #21).
+    # with the work lost.  The same accepted limit.
     # (The typed text is 2000 characters so that the line passes the arena by
     # a margin whatever the image's size has done to it: 400 sat on the edge,
     # and stopped overflowing when the arena moved by 74 bytes.)
@@ -8810,8 +8821,8 @@ def limits_cmds():
             before = len(e.cap.getvalue())
             e.s.send(keys)
             idle(e)
-            still_open(21, f'a line of {n}, {keys[:6]}: the editor keeps running',
-                       not PROMPT.search(e.cap.getvalue()[before:]))
+            accepted_limit(f'a line of {n}, {keys[:6]}: the editor keeps running',
+                           not PROMPT.search(e.cap.getvalue()[before:]))
         finally:
             e.close()
 

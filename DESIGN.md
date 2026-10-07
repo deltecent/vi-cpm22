@@ -39,7 +39,10 @@ When two of these pull against each other, the higher one wins.
    is kept as it is.
 5. **Lines that wrap work, and may be slower.** A line wider than the screen
    is shown, edited and written correctly however long it is. Nothing is built
-   only to make such lines quick.
+   only to make such lines quick. The one limit is a line that is most of the
+   arena, 13,000 characters and up: a put into it can land inside the line,
+   and running to the end of one of 26,000 exits with the work lost. That is
+   accepted. A fix would have every load of every file pay for it.
 6. **Size comes after those.** Every byte of program is a byte less of arena,
    so it still matters, and 20 K on disk is preferred; a responsive editor
    that needs the next 4 K is the better editor.
