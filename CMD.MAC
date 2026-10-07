@@ -5833,6 +5833,8 @@ RL_CAN:
 	MVI	A,0FFH		; cancelled
 	RET
 RL_DONE:
+	MVI	A,CR		; vim: the cursor waits under the prompt while
+	CALL	OUTCH		;   the command runs, not after its last char
 	XRA	A
 	RET
 

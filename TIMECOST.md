@@ -22,12 +22,12 @@ The seconds are the simulator's emulated clock (2 MHz 8080, 9600-baud console, t
 | `gg` from the end, after `x` there | 51.4 | 296 |  |
 | `'a` to line 100 from line 6000 | 14.3 | 298 |  |
 | `^G` at the end | 0.4 | 44 | "TEST.TXT" line 12800 col 1 |
-| `G` from the top, ESC 10 s into it | 17.5 | 52 | Interrupted |
-| `/zzzz` from line 6000, never found | 108.4 | 55 | Pattern not found: zzzz |
-| `/zzzz` from line 6000, ESC 10 s into it | 25.9 | 68 | Interrupted |
-| `/012000` from the top | 41.0 | 315 |  |
-| `/000100` from line 6000 (wraps) | 61.2 | 315 |  |
-| `?000100` from line 6000 | 13.8 | 315 |  |
+| `G` from the top, ESC 10 s into it | 17.7 | 52 | Interrupted |
+| `/zzzz` from line 6000, never found | 108.4 | 56 | Pattern not found: zzzz |
+| `/zzzz` from line 6000, ESC 10 s into it | 25.9 | 69 | Interrupted |
+| `/012000` from the top | 41.0 | 316 |  |
+| `/000100` from line 6000 (wraps) | 61.2 | 316 |  |
+| `?000100` from line 6000 | 13.8 | 316 |  |
 
 ## Editing at line 6000
 
@@ -63,30 +63,30 @@ The seconds are the simulator's emulated clock (2 MHz 8080, 9600-baud console, t
 
 | command | seconds | characters sent | message |
 |---|---|---|---|
-| `:6000,6100s/0/1/` | 2.3 | 324 |  |
-| `:%s/0/1/` (12800 lines) | 229.1 | 316 |  |
+| `:6000,6100s/0/1/` | 2.3 | 325 |  |
+| `:%s/0/1/` (12800 lines) | 229.1 | 317 |  |
 
 ## Files
 
 | command | seconds | characters sent | message |
 |---|---|---|---|
-| `:w`, nothing changed | 51.8 | 342 | "TEST.TXT" written |
-| `:w` after `x` at the top | 51.7 | 341 | "TEST.TXT" written |
-| `:w` after `x` at line 6000 | 48.3 | 344 | "TEST.TXT" written |
-| `:w` after `x` at the end | 53.4 | 344 | "TEST.TXT" written |
-| `:e!` after `x` at the top | 3.1 | 335 | "TEST.TXT" |
-| `:e!` after `x` at line 6000 | 25.4 | 338 | "TEST.TXT" |
-| `:6000,6100w T.TXT` (800 bytes) | 3.8 | 66 | "T.TXT" written |
-| `:6000,9000w T.TXT` (24 K) | 29.5 | 66 | "T.TXT" written |
-| `:r T.TXT` of 800 bytes, at line 3000 | 1.9 | 316 |  |
-| `:r T.TXT` of 24 K, at line 3000 | 27.0 | 316 |  |
+| `:w`, nothing changed | 51.8 | 343 | "TEST.TXT" written |
+| `:w` after `x` at the top | 51.7 | 342 | "TEST.TXT" written |
+| `:w` after `x` at line 6000 | 48.3 | 345 | "TEST.TXT" written |
+| `:w` after `x` at the end | 53.4 | 345 | "TEST.TXT" written |
+| `:e!` after `x` at the top | 3.1 | 336 | "TEST.TXT" |
+| `:e!` after `x` at line 6000 | 25.4 | 339 | "TEST.TXT" |
+| `:6000,6100w T.TXT` (800 bytes) | 3.8 | 67 | "T.TXT" written |
+| `:6000,9000w T.TXT` (24 K) | 29.5 | 67 | "T.TXT" written |
+| `:r T.TXT` of 800 bytes, at line 3000 | 1.9 | 317 |  |
+| `:r T.TXT` of 24 K, at line 3000 | 27.0 | 317 |  |
 
 ## Memory and work files
 
 | | |
 |---|---|
 | BDOS entry, the word at 0006H | B606H |
-| arena, from the top of the program to the BDOS | 23303 bytes (5AFEH-B605H) |
+| arena, from the top of the program to the BDOS | 23298 bytes (5B03H-B605H) |
 | text in memory when the file is opened | 2048 bytes |
 | undo region, taken out of the arena | 1024 bytes |
 | text in memory after `6000G` `G` `6000G` `gg` `G` | 12288, 10496, 20736, 20480, 18432 bytes |

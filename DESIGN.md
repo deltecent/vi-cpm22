@@ -63,7 +63,7 @@ back to one of them.
   between the top of the program and the BDOS (`BUFEND = [0006H] - 1`; WM's
   `INIT` stops 7 pages lower only when that vector's low byte is not 06H, which
   is something loaded under the BDOS, a debugger for one). With a 56 K CP/M it
-  is 23,303 bytes in this build. **Every byte of the image comes out of
+  is 23,298 bytes in this build. **Every byte of the image comes out of
   the arena**, so the binary is the scarce resource. Commands are priced in
   bytes before they are built, and a command that earns too little gets cut.
 - **The console is a 9600-baud serial line**, about 960 characters a second. A
