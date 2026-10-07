@@ -8919,6 +8919,9 @@ RESP = [
     ('<CR> typed mid-line', ['G', 'gg', '3j', '5w', 'i'], '\r', 0.40),
     ('J', ['G', 'gg', '3j'], 'J', 0.45),
     ('p of a line', ['G', 'gg', '3j', 'yy'], 'p', 0.45),
+    ('u of an x', ['3j', '5w', 'x'], 'u', 0.25),
+    ('u again (the redo)', ['3j', '5w', 'x', 'u'], 'u', 0.25),
+    ('u of a word changed', ['3j', '5w', 'cwNEW\x1b'], 'u', 0.30),
 ]
 
 
@@ -9014,6 +9017,72 @@ def cell_paint():
                 check(f'{name}: {sent} bytes sent, not the row ({budget})',
                       sent <= budget)
             e.key('u')
+    finally:
+        e.close()
+
+
+def undo_paint():
+    """'u' paints what it changed.  A change that stayed inside one line, with
+    the cursor still on that line, is that line and no more; and whatever
+    'u' puts back, the screen is then what a full repaint ('^L') draws --
+    for the undo and for the redo, on a wrapped line and beside TABs, with
+    the cursor moved along the line or off it first."""
+    lines = (['plain line %02d of ordinary text, nothing special about it' % i
+              for i in range(4)]
+             + ['W' * 70 + ' wide words ' * 12,
+                '\tMOV\tA,M\t\t; a comment after two tabs',
+                'LBL1:\tLXI\tH,BUFFER+1\t; point at it', 'x', '']
+             + ['tail %02d of the file, an ordinary line again' % i
+                for i in range(30)])
+    data = ''.join(l + '\r\n' for l in lines).encode()
+
+    def rows(v):
+        return [''.join(r).rstrip() for r in v.screen[:23]]
+
+    changes = ['x', '3x', 'X', 'dw', 'D', 'd0', 'rZ', '~', 'cwNEW\x1b',
+               'iin\x1b', 'Aend\x1b', 'R123\x1b', ':s/a/QQQ/\r', 'J', 'dd',
+               'otext\x1b', 'yyp', '2dd', 'i\r\x1b']
+    cases = []
+    for ln, tag, ats in ((2, 'plain', ('0w', '$')), (5, 'wrapped', ('0w', '$')),
+                         (6, 'tabs', ('0w',)), (8, 'one char', ('0',)),
+                         (9, 'empty', ('0',))):
+        for at in ats:
+            for ch in changes:
+                cases.append((ln, tag, at, ch, ''))
+            if tag in ('plain', 'wrapped') and at == '0w':
+                for ch in ('x', 'd0', 'cwNEW\x1b', 'dd'):
+                    for between in ('$', '0', 'j', '3k'):
+                        cases.append((ln, tag, at, ch, between))
+    e = Editor(data)
+    try:
+        for ln, tag, at, ch, between in cases:
+            e.key(f'{ln}G')
+            e.key(at)
+            for k in re.split('(\x1b)', ch):
+                if k:
+                    send_keys(e, k)
+            if between:
+                e.key(between)
+            for what in ('undo', 'redo'):
+                before = len(e.cap.getvalue())
+                e.key('u')
+                sent = len(e.cap.getvalue()) - before
+                v1 = e.screen()
+                s1 = rows(v1)
+                e.key('\x0c')
+                v2 = e.screen()
+                name = f'u {tag} at {at!r} {ch!r} {between!r} {what}'
+                check(f'{name}: the screen is what a full repaint draws '
+                      f'(cursor {v1.row},{v1.col}, ^L {v2.row},{v2.col})',
+                      rows(v2) == s1 and (v2.row, v2.col) == (v1.row, v1.col))
+                if (tag == 'plain' and between in ('', '$', '0')
+                        and ch in ('x', '3x', 'X', 'dw', 'D', 'rZ', '~',
+                                   'cwNEW\x1b', 'iin\x1b', 'Aend\x1b')):
+                    check(f'{name}: {sent} bytes sent, the line and not the '
+                          f'screen (120)', sent <= 120)
+            e.key('u')                  # (the text as it was, for the next)
+            if e.screen().row == 23:    # (a refusal on the bottom row)
+                e.key('\x1b')
     finally:
         e.close()
 
@@ -10094,6 +10163,9 @@ def main():
     if not args or 'vim' in args or 'cell' in args:
         print('\n=== a cell changed is a cell sent ===', flush=True)
         cell_paint()
+    if not args or 'vim' in args or 'upnt' in args:
+        print('=== u paints what it changed ===')
+        undo_paint()
     if not args or 'vim' in args or 'wrap' in args:
         print('\n=== long lines wrap ===', flush=True)
         wrap_like_vim()

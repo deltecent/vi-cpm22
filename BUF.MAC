@@ -85,6 +85,7 @@ RESVMEM EQU	0D80H		; WM 25: the arena QROOM keeps free past
 	PUBLIC	UNDWHY			 ; why UNDO refused (CMD.MAC's message)
 	PUBLIC	UNDNEW			 ; ... and the change it captured
 	PUBLIC	UNDCUR			 ; where 'u' puts the cursor back
+	PUBLIC	UNDML, UNDL0		 ; ... and whether it changed one line
 	PUBLIC	UBEG, UEND		 ; ... and the region's bounds
 
 ;--- Helpers PAGE.MAC (the file-I/O layer) links against. ---------------------
@@ -2074,6 +2075,8 @@ UND_OK:
 	CALL	CMP16
 	JNZ	UNDPGD		; the pager has moved the window's top since,
 				;   so every offset the records hold has shifted
+	MVI	A,0FFH
+	STA	UNDML		; (no step taken yet)
 	MVI	A,1
 	STA	UNDRPL		; the replay's own edits are not a new change
 	LDA	UNDST
@@ -2148,6 +2151,20 @@ URSTEP:
 	INX	H
 	MOV	A,M
 	STA	UNDBO+1
+	LHLD	UNDBO		; a line end among its bytes: more than one
+	XCHG			;   line changes (UNDML: CMD.MAC picks the
+	LHLD	UBEG		;   repaint by it)
+	DAD	D
+	XCHG
+	LHLD	UNDLN
+	DAD	D
+	CALL	LFCNT
+	MOV	A,D
+	ORA	E
+	JZ	URS_1L
+	MVI	A,1
+	STA	UNDML
+URS_1L:
 	LDA	UNDTY
 	MOV	B,A
 	LDA	UNDDIR
@@ -2163,16 +2180,14 @@ URS_AP:
 	JZ	URS_IN
 URS_DL:
 	;--- take the record's length back out at its offset ---
-	LHLD	UNDOF
-	CALL	GOTO
+	CALL	URGOTO
 	LHLD	UNDLN
 	CALL	DELFWD
 	POP	PSW
 	RET
 URS_IN:
 	;--- put the record's saved bytes back in at its offset ---
-	LHLD	UNDOF
-	CALL	GOTO
+	CALL	URGOTO
 	LHLD	UNDLN
 	MOV	B,H
 	MOV	C,L
@@ -2199,6 +2214,29 @@ URSILN:				;   whole-window rescan to find that out
 	ORA	C
 	JNZ	URSILP
 	POP	PSW
+	RET
+
+;URGOTO -- the cursor to the record's offset.  The line the first step is on
+;is the change's (UNDL0 = LNDLT there, which GOTO keeps up); a later step on
+;another line makes the change more than one line's (UNDML).
+URGOTO:
+	LHLD	UNDOF
+	CALL	GOTO
+	LHLD	LNDLT
+	XCHG
+	LDA	UNDML
+	INR	A
+	JNZ	URG_1
+	STA	UNDML		; (0: one line, so far)
+	XCHG
+	SHLD	UNDL0
+	RET
+URG_1:
+	LHLD	UNDL0
+	CALL	CMP16
+	RZ
+	MVI	A,1
+	STA	UNDML
 	RET
 
 ;---------------------------------------------------------------- the hooks
@@ -2353,6 +2391,10 @@ UNDPTR: DW	0		; the region's write point, as an OFFSET
 UNDB1:	DB	0		; the byte going in (PRSPAN wants BC)
 UNDPCU: DW	0		; the cursor as the current command began
 UNDCUR: DW	0		; ... as the command that made THIS change began
+UNDML:	DB	0		; the replay: 0 = every step on one line, no
+				;   line end put back or taken (0FFH: no step
+				;   yet, 1: not so)
+UNDL0:	DW	0		; ... LNDLT with the cursor on that line
 
 LNDLT:	DW	0		; (appended) lines the cursor moved since the last
 				;   screen layout (signed; SCRN.MAC consumes it)

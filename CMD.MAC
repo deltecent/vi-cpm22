@@ -33,6 +33,7 @@
 	PUBLIC	DCHN				; ... the cells an R_DCH deletes
 	PUBLIC	DCHBS				; ... 1 = left of the cursor (BS)
 	PUBLIC	ILABOV				; ... 1 = an R_ILIN's row above is stale
+	PUBLIC	LNALL				; ... 1 = an R_LINE from its first row
 	PUBLIC	CNTTST				; count-test (BUF.MAC PAGESTP reads)
 	PUBLIC	MKSHFT				; the marks follow an edit (VI.MAC hooks it)
 	PUBLIC	CURRW				; cursor's screen row (SCRN.MAC reads)
@@ -62,6 +63,7 @@
 	EXTRN	UNDHER				; ... where this change starts
 	EXTRN	INSBLK, UNDINS			; BUF.MAC -- a block in at the cursor (':r')
 	EXTRN	UNDCUR				; ... the cursor it restores
+	EXTRN	UNDML, UNDL0			; ... and whether one line changed
 	EXTRN	BCONOU				; SCRN.MAC -- console out (miss bell)
 	EXTRN	EXPRM, EXRUB, OUTCH		; SCRN.MAC -- ':' / '/' line echo
 	EXTRN	EXMSG, OUTSTR			; SCRN.MAC -- ex message
@@ -1117,7 +1119,17 @@ VC_UNDO:
 	MVI	A,1
 	STA	MODF		; undone past a ':w' still differs from the file
 	CALL	GLSTAL		; the cursor jumped to the change: no goal column
-	JMP	SETFUL		; whole spans moved: repaint rather than guess
+	LDA	UNDML		; every step on one line, no line end among
+	ORA	A		;   them, and the cursor back on that line:
+	JNZ	SETFUL		;   the line is the repaint -- all of it, the
+	LHLD	UNDL0		;   cursor need not be where the change began.
+	XCHG			;   Anything else, and whole spans moved:
+	LHLD	LNDLT		;   repaint rather than guess
+	CALL	CMP16
+	JNZ	SETFUL
+	MVI	A,1
+	STA	LNALL
+	JMP	SETLIN
 
 ;UCLAMP -- HL(off) -> HL, held inside its line: vi never sits on a terminator,
 ;so an offset at or past the line's content end comes back onto the last char.
@@ -7764,6 +7776,8 @@ ICHAPP:	DB	0		; 1 = the R_ICH char went at the row's end, so
 				;   nothing follows it to shift: no ICH needed
 DCHN:	DB	1		; the cells an R_DCH paint deletes (SCRN.MAC reads)
 DCHBS:	DB	0		; 1 = they went left of the cursor (insert's BS)
+LNALL:	DB	0		; 1 = this R_LINE is drawn from the line's first
+				;   row, not the cursor's (SCRN.MAC clears it)
 ILABOV:	DB	0		; 1 = the row above an R_ILIN's opened rows lost
 				;   text to them and must be redrawn too
 GOALCOL:DW	0FFFEH		; sticky goal screen column for j/k (0FFFFH = EOL, 0FFFEH = stale)

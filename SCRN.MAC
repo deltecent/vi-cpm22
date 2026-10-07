@@ -71,6 +71,7 @@
 	EXTRN	ILN			; CMD.MAC -- lines an R_ILIN paint opens
 	EXTRN	ICHAPP			; CMD.MAC -- 1 = an R_ICH needs no ICH
 	EXTRN	ILABOV			; CMD.MAC -- 1 = an R_ILIN's row above is stale
+	EXTRN	LNALL			; CMD.MAC -- 1 = an R_LINE from its first row
 	EXTRN	DCHN			; CMD.MAC -- cells an R_DCH deletes
 	EXTRN	DCHBS			; CMD.MAC -- 1 = left of the cursor
 	EXTRN	KBRDY			; KEY.MAC -- RPOLL: key waiting in the ring?
@@ -494,6 +495,15 @@ SCDRAW:
 	JC	SD_1
 	MOV	A,M
 SD_1:
+	MOV	C,A
+	LXI	H,LNALL		; ... or the line's first, when the change may
+	MOV	A,M		;   lie before both ('u')
+	MVI	M,0
+	ORA	A
+	MOV	A,C
+	JZ	SD_1A
+	XRA	A
+SD_1A:
 	ADD	B
 	MOV	C,A
 	LHLD	OLDCR		; E = the rows the line had (H: the line's under)
