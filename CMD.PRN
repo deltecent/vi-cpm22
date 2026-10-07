@@ -7378,7 +7378,7 @@
 
   27CE'   C9                    	RET
                                 
-  27CF'   56 31 2E 33           SVER:	DB	'V1.3',0
+  27CF'   56 31 2E 34           SVER:	DB	'V1.4',0
   27D3'   00                    
   27D4'   4E 6F 20 66           SNFN:	DB	'No file name',0
   27D8'   69 6C 65 20           

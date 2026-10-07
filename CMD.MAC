@@ -6897,7 +6897,7 @@ EXERR:
 	STC
 	RET
 
-SVER:	DB	'V1.3',0
+SVER:	DB	'V1.4',0
 SNFN:	DB	'No file name',0
 SNWR:	DB	'File changed',0
 SEXI:	DB	'File exists',0
