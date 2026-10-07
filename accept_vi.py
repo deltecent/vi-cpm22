@@ -8931,6 +8931,16 @@ RESP = [
     ('dw', ['3j', '5w'], 'dw', 0.20),
     ('D', ['3j', '5w'], 'D', 0.15),
     ('cw', ['3j', '5w'], 'cw', 0.25),
+    # the cursor to another line of the screen: the lines between are looked
+    # through once, and the cursor put there in one move
+    ('M from the top row', ['G', 'gg'], 'M', 0.11),
+    ('L from the top row', ['G', 'gg'], 'L', 0.15),
+    ('H from the bottom row', ['G', 'gg', 'L'], 'H', 0.13),
+    ('M from the bottom row', ['G', 'gg', 'L'], 'M', 0.09),
+    ('5j', ['G', 'gg'], '5j', 0.12),
+    ('5k', ['G', 'gg', 'L'], '5k', 0.11),
+    ('22j', ['G', 'gg'], '22j', 0.22),
+    ('22k', ['G', 'gg', 'L'], '22k', 0.20),
 ]
 
 

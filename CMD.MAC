@@ -2025,10 +2025,11 @@ JCORE:
 	XCHG			; DE = limit
 	LHLD	JKCNT
 	CALL	CMP16		; CY iff limit < count
-	JNC	JC_N
+	JNC	JC_QK
 	XCHG			; HL = limit
-JC_N:
 	SHLD	JKN		; N = min(count, limit)
+JC_SL:
+	LHLD	JKN
 	XCHG			; DE = LFs to find
 	CALL	RGET0
 JC_SC:
@@ -2060,6 +2061,42 @@ JC_AV:
 	SHLD	JKMOV
 	XRA	A
 	STA	JKPHN
+	JMP	JC_MV
+;--- the count is no more than the screen can show, and its lines are most
+;    times in memory: they are looked for where they lie, once, and the
+;    cursor put there in one move.  A line that starts where the window ends
+;    may be the file's end: that, and lines not here, go the long way ---
+JC_QK:
+	SHLD	JKN		; N = the count
+	CALL	RGET0		; HL = the text after the cursor, BC = its bytes
+	LDA	JKN
+	MOV	E,A		; E = LFs to find (the limit is under 256)
+	MVI	D,LF
+	INR	B
+	INR	C
+JQ_LP:
+	DCR	C
+	JNZ	JQ_CH
+	DCR	B
+	JZ	JC_SL
+JQ_CH:
+	MOV	A,M
+	INX	H
+	CMP	D
+	JNZ	JQ_LP
+	DCR	E
+	JNZ	JQ_LP
+	XCHG			; DE = the line's start
+	LHLD	TXTEND
+	CALL	CMP16		; CY iff it is inside the window
+	JNC	JC_SL
+	XCHG
+	CALL	PUTCUR
+	LXI	H,0
+	CALL	SETC0		; the count spent, forward: as MVLIND leaves it
+	LHLD	JKCNT
+	SHLD	JKMOV
+	JMP	JC_DN
 JC_MV:
 	LHLD	JKCNT
 	XRA	A
@@ -2104,10 +2141,11 @@ KCORE:
 	XCHG			; DE = limit
 	LHLD	JKCNT
 	CALL	CMP16		; CY iff limit < count
-	JNC	KC_N
+	JNC	KC_QK
 	XCHG			; HL = limit
-KC_N:
 	SHLD	JKN		; N = min(count, limit)
+KC_SL:
+	LHLD	JKN
 	XCHG			; DE = LFs to find
 	LXI	H,0
 	SHLD	JKBK		; scan position, as bytes back from GAPBEG
@@ -2170,6 +2208,56 @@ KC_AD:
 	CALL	SUBHD
 	SHLD	LNDLT
 	RET
+;--- as JC_QK, back: the line starts after the LF one past the count, or
+;    where the text does when that is the file's start and the count ends
+;    there.  Fewer lines than the count, or text paged out: the long way ---
+KC_QK:
+	SHLD	JKN		; N = the count
+	LHLD	TXTBEG
+	XCHG
+	LHLD	GAPBEG
+	PUSH	H
+	CALL	SUBHD
+	MOV	B,H
+	MOV	C,L		; BC = the bytes before the cursor
+	POP	H
+	LDA	JKN
+	INR	A
+	MOV	E,A		; E = LFs to find
+	MVI	D,LF
+	INR	B
+	INR	C
+KQ_LP:
+	DCR	C
+	JNZ	KQ_CH
+	DCR	B
+	JZ	KQ_TB
+KQ_CH:
+	DCX	H
+	MOV	A,M
+	CMP	D
+	JNZ	KQ_LP
+	DCR	E
+	JNZ	KQ_LP
+	INX	H
+KQ_GO:
+	CALL	PUTCUR
+	LXI	H,0
+	CALL	SETC0		; the count spent, backward: as SETBWD leaves it
+	MVI	A,0FFH
+	STA	DIRFLG
+	LHLD	JKCNT
+	XCHG			; DE = the lines moved
+	JMP	KC_AD
+KQ_TB:
+	DCR	E
+	JNZ	KC_SL
+	LHLD	OUTPOS
+	MOV	A,H
+	ORA	L
+	JNZ	KC_SL
+	LHLD	TXTBEG
+	JMP	KQ_GO
 
 ;ATEOF -- CY iff nothing follows the cursor (end of the file).  RGET pages in
 ; what is still on disk; RDGET also catches the stale-INRDY empty refill.
