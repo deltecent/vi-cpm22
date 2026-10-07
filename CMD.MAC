@@ -64,6 +64,7 @@
 	EXTRN	INSBLK, UNDINS			; BUF.MAC -- a block in at the cursor (':r')
 	EXTRN	UNDCUR				; ... the cursor it restores
 	EXTRN	UNDML, UNDL0			; ... and whether one line changed
+	EXTRN	UNDLK, UNDLC, UNDLL0		; ... or whole lines came or went
 	EXTRN	BCONOU				; SCRN.MAC -- console out (miss bell)
 	EXTRN	EXPRM, EXRUB, OUTCH		; SCRN.MAC -- ':' / '/' line echo
 	EXTRN	EXMSG, OUTSTR			; SCRN.MAC -- ex message
@@ -1121,7 +1122,7 @@ VC_UNDO:
 	CALL	GLSTAL		; the cursor jumped to the change: no goal column
 	LDA	UNDML		; every step on one line, no line end among
 	ORA	A		;   them, and the cursor back on that line:
-	JNZ	SETFUL		;   the line is the repaint -- all of it, the
+	JNZ	VU_LNS		;   the line is the repaint -- all of it, the
 	LHLD	UNDL0		;   cursor need not be where the change began.
 	XCHG			;   Anything else, and whole spans moved:
 	LHLD	LNDLT		;   repaint rather than guess
@@ -1130,6 +1131,41 @@ VC_UNDO:
 	MVI	A,1
 	STA	LNALL
 	JMP	SETLIN
+
+;VU_LNS -- more than a line changed.  Whole lines put back, the cursor on the
+; first of them, are rows opened there as a put opens them (R_ILIN; SCDRAW
+; wants them at the line the cursor was on or right under it).  One whole
+; line taken from under the cursor, a line coming up into its place, is 'dd'
+; (R_DLIN).  Anything else is the screen.
+VU_LNS:
+	CALL	SETFUL
+	LHLD	UNDLL0
+	XCHG
+	LHLD	LNDLT
+	CALL	CMP16
+	RNZ
+	LDA	UNDLC
+	ORA	A
+	RZ
+	MOV	B,A
+	LDA	UNDLK
+	CPI	1
+	JZ	VU_IN
+	CPI	2
+	RNZ
+	DCR	B
+	RNZ
+	MOV	A,H
+	ORA	L
+	RNZ
+	MVI	A,R_DLIN
+	STA	RINTENT
+	RET
+VU_IN:
+	CALL	SETILN
+	MOV	A,B
+	STA	ILN
+	RET
 
 ;UCLAMP -- HL(off) -> HL, held inside its line: vi never sits on a terminator,
 ;so an offset at or past the line's content end comes back onto the last char.

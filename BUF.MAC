@@ -86,6 +86,7 @@ RESVMEM EQU	0D80H		; WM 25: the arena QROOM keeps free past
 	PUBLIC	UNDNEW			 ; ... and the change it captured
 	PUBLIC	UNDCUR			 ; where 'u' puts the cursor back
 	PUBLIC	UNDML, UNDL0		 ; ... and whether it changed one line
+	PUBLIC	UNDLK, UNDLC, UNDLL0	 ; ... or put whole lines in, or took them
 	PUBLIC	UBEG, UEND		 ; ... and the region's bounds
 
 ;--- Helpers PAGE.MAC (the file-I/O layer) links against. ---------------------
@@ -2077,6 +2078,9 @@ UND_OK:
 				;   so every offset the records hold has shifted
 	MVI	A,0FFH
 	STA	UNDML		; (no step taken yet)
+	XRA	A
+	STA	UNDLK
+	STA	UNDLC
 	MVI	A,1
 	STA	UNDRPL		; the replay's own edits are not a new change
 	LDA	UNDST
@@ -2181,6 +2185,8 @@ URS_AP:
 URS_DL:
 	;--- take the record's length back out at its offset ---
 	CALL	URGOTO
+	MVI	A,2
+	CALL	URLNQ
 	LHLD	UNDLN
 	CALL	DELFWD
 	POP	PSW
@@ -2188,6 +2194,8 @@ URS_DL:
 URS_IN:
 	;--- put the record's saved bytes back in at its offset ---
 	CALL	URGOTO
+	MVI	A,1
+	CALL	URLNQ
 	LHLD	UNDLN
 	MOV	B,H
 	MOV	C,L
@@ -2237,6 +2245,79 @@ URG_1:
 	RZ
 	MVI	A,1
 	STA	UNDML
+	RET
+
+;URLNQ -- the step about to be taken at the cursor puts the record's bytes in
+;(A = 1) or takes them out (A = 2).  UNDLK stays that for as long as every
+;step does the same, with whole lines -- it starts at a line's start and the
+;bytes end in a line end -- and at the place the first one did (UNDLL0 =
+;LNDLT there); UNDLC counts the lines.  Anything else and UNDLK is 0FFH.
+;CMD.MAC opens the rows for lines put back, or closes them up, by these.
+URLNQ:
+	MOV	B,A
+	LDA	UNDLK
+	ORA	A
+	JZ	URL_1
+	CMP	B
+	JNZ	URL_NO
+	LHLD	UNDLL0
+	XCHG
+	LHLD	LNDLT
+	CALL	CMP16
+	JNZ	URL_NO
+	JMP	URL_2
+URL_1:
+	LHLD	LNDLT
+	SHLD	UNDLL0
+URL_2:
+	CALL	CUROFF
+	MOV	A,H
+	ORA	L
+	JZ	URL_3
+	LHLD	GAPBEG
+	DCX	H
+	MOV	A,M
+	CPI	LF
+	JNZ	URL_NO
+URL_3:
+	LHLD	UNDLN
+	MOV	A,H
+	ORA	L
+	JZ	URL_NO
+	XCHG
+	LHLD	UNDBO
+	DAD	D
+	XCHG
+	LHLD	UBEG
+	DAD	D		; HL = past the record's bytes
+	DCX	H
+	MOV	A,M
+	CPI	LF
+	JNZ	URL_NO
+	INX	H
+	PUSH	H
+	LHLD	UNDBO
+	XCHG
+	LHLD	UBEG
+	DAD	D
+	XCHG			; DE = their start
+	POP	H
+	PUSH	B
+	CALL	LFCNT
+	POP	B
+	MOV	A,D
+	ORA	A
+	JNZ	URL_NO
+	LDA	UNDLC
+	ADD	E
+	JC	URL_NO
+	STA	UNDLC
+	MOV	A,B
+	STA	UNDLK
+	RET
+URL_NO:
+	MVI	A,0FFH
+	STA	UNDLK
 	RET
 
 ;---------------------------------------------------------------- the hooks
@@ -2391,6 +2472,9 @@ UNDPTR: DW	0		; the region's write point, as an OFFSET
 UNDB1:	DB	0		; the byte going in (PRSPAN wants BC)
 UNDPCU: DW	0		; the cursor as the current command began
 UNDCUR: DW	0		; ... as the command that made THIS change began
+UNDLK:	DB	0		; the replay: 1 = whole lines put in, 2 = taken
+UNDLC:	DB	0		;   out, 0FFH neither; how many; and LNDLT where
+UNDLL0:	DW	0		;   they start (URLNQ)
 UNDML:	DB	0		; the replay: 0 = every step on one line, no
 				;   line end put back or taken (0FFH: no step
 				;   yet, 1: not so)

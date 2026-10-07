@@ -8922,6 +8922,9 @@ RESP = [
     ('u of an x', ['3j', '5w', 'x'], 'u', 0.25),
     ('u again (the redo)', ['3j', '5w', 'x', 'u'], 'u', 0.25),
     ('u of a word changed', ['3j', '5w', 'cwNEW\x1b'], 'u', 0.30),
+    # whole lines put back or taken again: rows open or close, as for 'P'
+    ('u of a dd', ['G', 'gg', '3j', 'dd'], 'u', 0.50),
+    ('u again (the dd redone)', ['G', 'gg', '3j', 'dd', 'u'], 'u', 0.35),
     # a span out of the line: the terminal closes the cells up
     ('dw', ['3j', '5w'], 'dw', 0.20),
     ('D', ['3j', '5w'], 'D', 0.15),
@@ -9053,7 +9056,8 @@ def undo_paint():
 
     changes = ['x', '3x', 'X', 'dw', 'D', 'd0', 'rZ', '~', 'cwNEW\x1b',
                'iin\x1b', 'Aend\x1b', 'R123\x1b', ':s/a/QQQ/\r', 'J', 'dd',
-               'otext\x1b', 'yyp', '2dd', 'i\r\x1b']
+               'otext\x1b', 'yyp', '2dd', 'i\r\x1b', 'yyP', '3dd',
+               'Onew\x1b', 'yy2P']
     cases = []
     for ln, tag, ats in ((2, 'plain', ('0w', '$')), (5, 'wrapped', ('0w', '$')),
                          (6, 'tabs', ('0w',)), (8, 'one char', ('0',)),
@@ -9092,6 +9096,15 @@ def undo_paint():
                                    'cwNEW\x1b', 'iin\x1b', 'Aend\x1b')):
                     check(f'{name}: {sent} bytes sent, the line and not the '
                           f'screen (120)', sent <= 120)
+                # whole lines put back or taken: the rows under them move,
+                # and the lines put back are all that is sent
+                lim = {('dd', 'undo'): 200, ('dd', 'redo'): 200,
+                       ('yyP', 'undo'): 200, ('yyP', 'redo'): 200,
+                       ('2dd', 'undo'): 300, ('3dd', 'undo'): 400,
+                       ('yy2P', 'redo'): 300}.get((ch, what))
+                if tag == 'plain' and between == '' and lim:
+                    check(f'{name}: {sent} bytes sent, the lines and not '
+                          f'the screen ({lim})', sent <= lim)
             e.key('u')                  # (the text as it was, for the next)
             if e.screen().row == 23:    # (a refusal on the bottom row)
                 e.key('\x1b')
