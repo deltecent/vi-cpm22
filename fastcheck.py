@@ -40,7 +40,7 @@ SANDBOX = os.path.join(HERE, "_fastcheck")
 # whichever single group is longest, so that is what to split next.
 GROUPS = ['ops', 'opmx', 'after', 'limits', 'srch', 'subst', 'marks', 'ins', 'put', 'file', 'ndd', 'dot', 'undo', '100k',
           'find', 'wrap', 'pgop', 'qfull', 'lnum', 'rdwr', 'brk',
-          'ctrlg', 'resp',
+          'ctrlg', 'resp', 'cell',
           'bs', 'goto', 'arg', 'mot', '40k', 'scrolls', '2k', 'hml', 'one',
           'full', 'jk', 'empty', 'ex']
 

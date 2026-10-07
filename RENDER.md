@@ -106,8 +106,15 @@ therefore asks `LYQK` first, and when
 the layout is arithmetic: `WINROW` and `HTCUR` move by `LNDLT`, `LYABV` is a sum down the
 table, the top line is as far into the text in memory as it was (`LYTOP`), and the one
 thing read is the cursor's own line from its start to the cursor, for `CBOL` and `CURDCL`.
-`SCRLN` is 0, so `SCDRAW` sends the cursor and nothing else. Any other key takes the full
-layout, which makes the table the screen's again.
+`SCRLN` is 0, so `SCDRAW` sends the cursor and nothing else.
+
+**An edit of one line measures that line.** A key that changed the cursor's line and no
+other (`R_ICH`, `R_DCH`, `R_LINE`, with `LNDLT` 0; a move in insert mode goes this way
+too) takes the same road, and then reads the rest of the cursor's line as `HTBLD` does
+(`LM_FL`). If the line takes the rows the table has for it, and the cursor has not a row
+to itself (`LYXE`), that is the layout. If not (the char typed wrapped the line, say)
+`LYQK` gives up and the full layout runs. Any other key takes the full layout, which makes
+the table the screen's again.
 
 `LINPSB` runs WM's `SETCNT`, so `LAYOUT` saves and restores `CMDCNT`, `AUXCNT` and `DIRFLG`
 around itself.
@@ -150,8 +157,8 @@ dispatch, so a handler that says nothing gets a full repaint.
 | `R_FULL` | default; `SETFUL` | the edit area may be stale |
 | `R_MOVE` | `SETMOV`, `GP_ONS`, `EXERR`, `^G` | the cursor moved; nothing was edited |
 | `R_LINE` | `SETLIN` | only the cursor's line changed |
-| `R_ICH` | insert of a printable char (+ `ICHAPP`) | one char went in at the cursor |
-| `R_DCH` | `x` (+ `DCHN` = cells) | chars went at the cursor; no TAB or control char after it |
+| `R_ICH` | insert of a printable char (+ `ICHAPP`); `r`, replace mode (`SETCEL`) | one char went in at the cursor, or took one cell's place |
+| `R_DCH` | `x`, insert BS (+ `DCHN` = cells, `DCHBS`) | chars went at the cursor (BS: left of it); no TAB or control char after it |
 | `R_DLIN` | single `dd` | the cursor's line was deleted |
 | `R_ILIN` | `SETILN` (+ `ILN` = lines, `ILABOV`) | lines opened at the cursor |
 | `R_JOIN` | `SETJON` | the line below joined onto the cursor's |
@@ -220,8 +227,13 @@ range sends nothing.
   is already on the cell, and is left where insert mode wants it. **`ICHAPP`** (the char
   went at the line's end — `CMD.MAC`'s `ATCEND`) drops the `ESC[1@` too, there being nothing
   after the cursor to shift: one byte on the wire, on the commonest keystroke there is.
+  A char that took another's cell (`SETCEL`: both one cell wide) is sent the same way,
+  with no `ESC[1@`: replace mode leaves the cursor past it (`ICHAPP` = 1), `r` leaves it
+  on it (`ICHAPP` = 2: the char, then the cursor addressed back).
 - **Delete char (`SC_DCH`).** `ESC[<DCHN>P`: the terminal draws the rest of the row up.
   The cursor is addressed only if the delete took the line's last char from under it.
+  Insert's BS deletes the cell left of the cursor (`DCHBS`): a `BS` first, which also
+  leaves the cursor where it belongs.
 
 The two cell operations work on one row, so they are used only on a line's last row. An
 insert or `x` higher up a wrapped line redraws from the cursor's row to the line's end;
@@ -238,7 +250,9 @@ there is no row-by-row ripple, and no special path for long lines (the target is
 | … landing off the screen | `R_FULL` (`GP_SET`) | full — the window may have paged |
 | Count digits, `m`, a pending `d`/`c`/`y`, a key that is no command, `^G`, an ex error | `R_MOVE` | cursor only |
 | `x`, no TAB or control char after the cursor, on the line's last row | `R_DCH` | DCH |
-| `x` otherwise, `~` `r{c}`, `R` overwrite, insert BS within a line | `R_LINE` | the line, from the cursor's row down |
+| Insert BS over a printable char, no TAB or control char after the cursor | `R_DCH` + `DCHBS` | BS + DCH |
+| `r{c}`, `R` typing, a printable char for a printable one (or at the line's end) | `R_ICH` + `ICHAPP` | the char (`r`: + the cursor address) |
+| `x`, `r{c}`, `R` typing, insert BS otherwise; `~` | `R_LINE` | the line, from the cursor's row down |
 | `i` `a` `A` `I` `R`, and the `ESC` leaving insert | `R_MOVE` (`SETINM`, `VI_ACT`) | cursor only — they change no text |
 | Insert printable, no tab after the cursor, on the line's last row | `R_ICH` | ICH + char |
 | … typed at the line's end | `R_ICH` + `ICHAPP` | the char, nothing else |

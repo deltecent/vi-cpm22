@@ -72,6 +72,7 @@
 	EXTRN	ICHAPP			; CMD.MAC -- 1 = an R_ICH needs no ICH
 	EXTRN	ILABOV			; CMD.MAC -- 1 = an R_ILIN's row above is stale
 	EXTRN	DCHN			; CMD.MAC -- cells an R_DCH deletes
+	EXTRN	DCHBS			; CMD.MAC -- 1 = left of the cursor
 	EXTRN	KBRDY			; KEY.MAC -- RPOLL: key waiting in the ring?
 	EXTRN	HTN, HTCUR		; CMD.MAC -- the row table: entries / cursor's
 	EXTRN	HTEOF, HTBOF		; ... and whether it reaches the file's ends
@@ -742,8 +743,17 @@ SB_3:
 ; the char fills it; appended at the row's end (ICHAPP) the cell is blank and
 ; nothing follows it, so the char alone is the whole frame.  Either way the
 ; terminal leaves the cursor at SCOL, where insert mode wants it.
+; ICHAPP = 2 is 'r': the char took the place of the one under the cursor and
+; is under it still, so it is sent and the cursor put back on it.
 SC_ICH:
 	LDA	ICHAPP
+	CPI	2
+	JNZ	SC_IC1
+	LHLD	GAPEND
+	MOV	A,M
+	CALL	OUTCH
+	JMP	SCURS
+SC_IC1:
 	ORA	A
 	JNZ	SC_ICC
 	LXI	H,SICH		; ESC[1@ -- open one cell, shift the tail right
@@ -758,13 +768,22 @@ SC_ICC:
 ; where the terminal's cursor still is: delete-character (ESC[<n>P) there
 ; draws the rest of the row up, and the cursor is moved only if the delete
 ; took the line's last char from under it.
+; DCHBS: the cell was the one left of the cursor (insert's BS).  The cursor
+; steps back onto it first, and is then where it belongs.
 SC_DCH:
+	LDA	DCHBS
+	ORA	A
+	MVI	A,BS
+	CNZ	OUTCH
 	LXI	H,SCSI
 	CALL	OUTSTR
 	LDA	DCHN
 	CALL	EMITB
 	MVI	A,'P'
 	CALL	OUTCH
+	LDA	DCHBS
+	ORA	A
+	RNZ
 	LHLD	OLDSC
 	XCHG
 	LHLD	SROW
@@ -1190,28 +1209,44 @@ LY_TC:
 	STA	DIRFLG
 	RET
 
-;LYQK -- the layout of a key that only moved the cursor, in command mode, to
-; a line the screen shows whole already: the text on every row is what it
-; was, so the row table is too, and none of it is read again.  What moves
-; with the cursor is found from the cursor: the lines above it (WINROW), the
-; table's entry for its line (HTCUR), the rows over it (LYABV), where the top
-; line is from here (TOPLEN, WRLIM), and its column, for which its own line is
-; measured as far as the cursor and no farther.
-;   out: CY when that was the layout; NC, and nothing changed, when the screen
-;        has to be measured: the table is not the screen's (LYOK), the pager
-;        moved the text (PGTOPM), the key did more than move (RINTENT), the command placed the line (PLACE), the
-;        cursor's line is off the screen or cut, or the top line is taller
-;        than the screen.
+;LYQK -- the layout of a key that left every line on the screen the rows it
+; had: the row table stands, and the screen is not read again.
+; A key that only moved the cursor, in command mode, to a line the screen
+; shows whole already: what moves with the cursor is found from the cursor --
+; the lines above it (WINROW), the table's entry for its line (HTCUR), the
+; rows over it (LYABV), where the top line is from here (TOPLEN, WRLIM), and
+; its column, for which its own line is measured as far as the cursor and no
+; farther.
+; A key that changed the cursor's line and no other (R_ICH, R_DCH, R_LINE; a
+; move in insert mode goes this way too, the cursor there being free to stand
+; past the line's end): that one line is measured whole, and if it takes the
+; rows it took, that is the layout.
+;   out: CY when that was the layout; NC when the screen has to be measured:
+;        the table is not the screen's (LYOK), the pager moved the text
+;        (PGTOPM), the key did more than that (RINTENT), the command placed
+;        the line (PLACE), the cursor's line is off the screen or cut, the top
+;        line is taller than the screen, or the line changed takes other rows
+;        than it did.  (What is set by then LAYOUT sets again.)
 LYQK:
 	LDA	LYOK
 	ORA	A
 	RZ
+	CALL	LQMV
+	JZ	LQK_G
+	LHLD	LNDLT		; an edit: of the line the cursor was on
+	MOV	A,H
+	ORA	L
+	JNZ	LQK_N
 	LDA	RINTENT
 	CPI	R_MOVE
+	JZ	LQK_G
+	CPI	R_LINE
+	JZ	LQK_G
+	CPI	R_ICH
+	JZ	LQK_G
+	CPI	R_DCH
 	JNZ	LQK_N
-	LDA	EDMODE
-	CPI	EM_CMD
-	JNZ	LQK_N
+LQK_G:
 	LHLD	SKIPR
 	LDA	PLACE
 	ORA	H
@@ -1265,6 +1300,7 @@ LYQK:
 	XCHG
 	SHLD	CURDCL
 	CALL	DIVN
+	STA	LQKC		; (the cells before it on that row)
 	MOV	A,C
 	STA	CSRAW		; the row of its line the cursor is on
 	LDA	WINROW
@@ -1287,11 +1323,48 @@ LYQK:
 LQK_1:
 	STA	NXTR
 	CALL	RGET0		; the char under the cursor in memory (TABCUR)
+	PUSH	H
+	CALL	LQMV
+	POP	H
+	JNZ	LQK_E
 	CALL	RDGET
+	STC
+	RET
+	;--- the line changed: the rest of it, as HTBLD reads it ---
+LQK_E:
+	LDA	LQKC
+	MOV	E,A
+	LDA	CURDCL
+	SUB	E
+	STA	LYVB
+	LDA	CSRAW
+	MOV	D,A
+	CALL	LM_FL		; D = its last row
+	CPI	1
+	JZ	LQK_N		; more rows than the screen has
+	MOV	A,E
+	ORA	A
+	JNZ	LQK_2
+	ORA	D
+	JNZ	LQK_N		; the cursor has a row to itself (LYXE)
+LQK_2:
+	LDA	LYTSH
+	DCR	A
+	CMP	D
+	JNZ	LQK_N		; other rows than it had
 	STC
 	RET
 LQK_N:
 	XRA	A
+	RET
+
+;LQMV -- Z iff the key only moved the cursor, in command mode.  Keeps BC, DE.
+LQMV:
+	LDA	RINTENT
+	CPI	R_MOVE
+	RNZ
+	LDA	EDMODE
+	CPI	EM_CMD
 	RET
 
 ;LYMQ -- Z iff the cursor's line is to be placed afresh: mid-screen (PLACE =
@@ -2237,6 +2310,7 @@ PEND:	DB	0		; PRNG: the row to stop before
 TALLF:	DB	0		; 1 = the top line is taller than the screen
 SCRLN:	DW	0		; lines the text moved up this frame (signed)
 LYOK:	DB	0		; 1 = the row table is the screen's, as it stands
+LQKC:	DB	0		; LYQK: the cells before the cursor on its row
 LYTOP:	DW	0		; ... the bytes in memory before the top line then
 LYPG:	DW	0		; ... and PGTOPM
 FORCEF: DB	0		; 1 = a full frame is not finished -> repaint in full

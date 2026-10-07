@@ -47,9 +47,9 @@ When two of these pull against each other, the higher one wins.
    That includes time: `accept_vi.py` group `resp` runs each everyday key on a
    full screen of ordinary lines and fails when one takes longer than its
    budget, in a 3 K file and a 116 K one alike. A key joins that group when it
-   meets objective 2. The cursor keys are in it; a typed char, `x`, the
-   one-line scroll and the single-line edits are not yet, and are the work in
-   hand.
+   meets objective 2. The cursor keys, a typed char, `x`, `r` and insert's BS
+   are in it; the one-line scroll, `dd`, `o` and `J` are not yet, and are the
+   work in hand.
 
 ---
 
@@ -204,13 +204,13 @@ move would break:
               pointer row, text + gap, Q-buffer (the yank register), undo region
     BUFEND  = BDOS base - 1   (B605H with a 56 K CP/M; see section 1)
 
-In this build: the image is 18460 bytes, the `.COM` file 18560 bytes (145
-records), the reserve block 815 bytes (`491CH`–`4C4AH`), and the stack 128
-bytes. **The size that matters is a 4 K BLOCK BOUNDARY**, because that is what
-the 8 MB disk allocates in: 16384 bytes occupy four blocks and one byte more
-occupies five. This build is past that line by design (`f F t T ; ,` would not
-fit under it) and the next boundary is **20480 bytes**, so everything between
-here and there costs the same 20 K on disk.
+In this build the `.COM` file is 20608 bytes (161 records). **The size that
+matters is a 4 K BLOCK BOUNDARY**, because that is what the 8 MB disk
+allocates in: 20480 bytes occupy five blocks and one byte more occupies six.
+This build is past that line by 128 bytes, by decision (objective 6: the
+bytes went on keys that answer at once), and the next boundary is **24576
+bytes**, so everything between here and there costs the same 24 K on disk.
+What each byte does cost is arena: the yank register and the room to edit in.
 
 **Why a reserve block.** L80 writes every byte up to the top of the image into
 the `.COM`, `DS` included, and fills that space with its own leftovers rather
@@ -480,6 +480,11 @@ Detail is in `RENDER.md`. The design decisions:
   from the end of one full layout (`LYOK`) until anything else measures into
   it; the top line is kept as its distance from the start of the text in
   memory, which holds until the pager moves the window (`PGTOPM`).
+- **A key that changes one line measures one line.** A typed char, `x`, `r`,
+  insert's BS, `dw` and the like leave every other line its rows, so the
+  same path reads the cursor's line whole and, if it still takes the rows
+  the table has for it, stops there; a line that gained or lost a row gets
+  the full layout. A typed char went from 0.25 s to 0.05 s by it.
 - **Where vim counts screen rows, so does this.** Once lines differ in height
   vim's `^F ^B ^D ^U`, its `M`, and its choice between scrolling up to a line
   below the screen and centring it are all sums of rows, and they are

@@ -8876,13 +8876,21 @@ RESP = [
     ('0', ['5j', '$'], '0', 0.10),
     ('j, eight lines down the screen', ['12j'], 'j', 0.10),
     ('k, on the bottom row', ['L'], 'k', 0.10),
+    ('a char typed mid-line', ['5j', 'w', 'i'], 'Z', 0.10),
+    ('a char typed at the line end', ['5j', 'A'], 'Z', 0.10),
+    ('a second char typed', ['5j', 'w', 'iQ'], 'Z', 0.10),
+    ('x', ['5j', 'w'], 'x', 0.10),
+    ('r', ['5j', 'w'], 'rZ', 0.12),
+    ('BS in insert', ['5j', 'w', 'iQQ'], '\x08', 0.10),
+    ('ESC from insert', ['5j', 'w', 'iQ'], '\x1b', 0.10),
 ]
 
 
 def resp_cmds():
     """A key answers in the time its own work takes -- not the time it takes
-    to read the screen over again, and not longer in a big file.  Every key
-    here leaves the text and the window where they were."""
+    to read the screen over again, and not longer in a big file.  The moves
+    leave the text and the window where they were; the edits change one line
+    and none of its rows."""
     for label, data in (('3 K', resp_lines(60)), ('116 K', resp_lines(2100))):
         for name, setup, key, budget in RESP:
             e = Editor(data)
@@ -8902,6 +8910,60 @@ def resp_cmds():
                       f'(took {took:.3f})', took <= budget)
             finally:
                 e.close()
+
+
+def cell_paint():
+    """The one-cell paints: 'r', a char typed over another in replace mode,
+    and insert's BS send the cell and no more -- and what they leave on the
+    screen is what a full repaint ('^L') draws, at the right edge of the
+    screen, on a wrapped line and beside a TAB as well as mid-line."""
+    lines = (['plain line %02d of ordinary text, nothing special about it' % i
+              for i in range(4)]
+             + ['E' * 78, 'F' * 79, 'G' * 80, 'H' * 81, 'W' * 200,
+                '\tMOV\tA,M\t\t; a comment after two tabs', 'x', '']
+             + ['tail %02d' % i for i in range(30)])
+    data = ''.join(l + '\r\n' for l in lines).encode()
+
+    def rows(v):
+        return [''.join(r).rstrip() for r in v.screen[:23]]
+
+    cases = []
+    for ln, tag in ((2, 'plain'), (5, '78 wide'), (6, '79 wide'), (7, '80 wide'),
+                    (8, '81 wide'), (9, 'wrapped'), (10, 'tabs'), (11, 'one char'),
+                    (12, 'empty')):
+        for at in ('0', '$', '0w', '078l', '079l'):
+            cases += [(ln, tag, at, 'rZ', 32),
+                      (ln, tag, at, 'RZYX\x1b', 96),
+                      (ln, tag, at, 'RZY\x08\x08\x1b', None),
+                      (ln, tag, at, 'iZY\x08\x1b', None),
+                      (ln, tag, at, 'aZY\x08\x08\x1b', None)]
+    e = Editor(data)
+    try:
+        for ln, tag, at, keys, budget in cases:
+            e.key(f'{ln}G')
+            e.key(at)
+            before = len(e.cap.getvalue())
+            for k in re.split('(\x1b)', keys):
+                if k == '\x1b':
+                    send_keys(e, k)
+                elif k:
+                    for ch in k:
+                        e.key(ch)
+            sent = len(e.cap.getvalue()) - before
+            v1 = e.screen()
+            s1 = rows(v1)
+            e.key('\x0c')
+            v2 = e.screen()
+            name = f'cell {tag} at {at!r} {keys!r}'
+            check(f'{name}: the screen is what a full repaint draws '
+                  f'(cursor {v1.row},{v1.col}, ^L {v2.row},{v2.col})',
+                  rows(v2) == s1 and (v2.row, v2.col) == (v1.row, v1.col))
+            if budget and tag == 'plain':
+                check(f'{name}: {sent} bytes sent, not the row ({budget})',
+                      sent <= budget)
+            e.key('u')
+    finally:
+        e.close()
 
 
 def brk_cmds():
@@ -9873,6 +9935,9 @@ def main():
     if not args or 'vim' in args or 'resp' in args:
         print('\n=== a key answers at once ===', flush=True)
         resp_cmds()
+    if not args or 'vim' in args or 'cell' in args:
+        print('\n=== a cell changed is a cell sent ===', flush=True)
+        cell_paint()
     if not args or 'vim' in args or 'wrap' in args:
         print('\n=== long lines wrap ===', flush=True)
         wrap_like_vim()

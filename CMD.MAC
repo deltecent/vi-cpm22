@@ -31,6 +31,7 @@
 	PUBLIC	ILN				; ... and the lines an R_ILIN opens
 	PUBLIC	ICHAPP				; ... 1 = an R_ICH needs no ICH
 	PUBLIC	DCHN				; ... the cells an R_DCH deletes
+	PUBLIC	DCHBS				; ... 1 = left of the cursor (BS)
 	PUBLIC	ILABOV				; ... 1 = an R_ILIN's row above is stale
 	PUBLIC	CNTTST				; count-test (BUF.MAC PAGESTP reads)
 	PUBLIC	MKSHFT				; the marks follow an edit (VI.MAC hooks it)
@@ -1555,6 +1556,31 @@ SETMOV:
 SETLIN:
 	MVI	A,R_LINE
 	STA	RINTENT
+	RET
+
+;SETCEL -- one cell of the cursor's row was written over and nothing else
+; changed: the char alone is the paint (R_ICH with no cell opened), provided
+; the char that was there (A) and the one that is (VRCH) are each one cell
+; wide.  B = ICHAPP's value: 1 the cursor went past the char, 2 it is on it.
+SETCEL:
+	CALL	PLAINQ
+	RNC
+	LDA	VRCH
+	CALL	PLAINQ
+	RNC
+	MOV	A,B
+	STA	ICHAPP
+	MVI	A,R_ICH
+	STA	RINTENT
+	RET
+
+;PLAINQ -- CY iff the char in A takes one cell: printable ASCII.  Keeps all
+; but the flags.
+PLAINQ:
+	CPI	' '
+	CMC
+	RNC
+	CPI	DEL
 	RET
 
 ;SETILN -- mark the current command an opened line (R_ILIN): exactly ONE line
@@ -4301,6 +4327,8 @@ VX_DEL:
 	JNZ	VX_D1
 	MOV	A,L
 	STA	DCHN
+	XRA	A
+	STA	DCHBS
 	MVI	A,R_DCH
 	STA	RINTENT
 VX_D1:
@@ -4626,6 +4654,8 @@ VR_DO:
 	JZ	SETMOV		; the line's end: nothing to replace
 	CPI	LF
 	JZ	SETMOV
+	MVI	B,2		; a cell for a cell: the char is the paint
+	CALL	SETCEL
 	CALL	MARKMOD
 	LXI	H,1
 	CALL	DELFWD		; the old char goes first: a delete never pages
@@ -5324,6 +5354,9 @@ VIREP:
 	CALL	ATCEND		; the line's end: nothing there to overwrite
 	JZ	VP_APP
 	;--- overwrite: the new char in, the old one into the gap ---
+	CALL	CURCHR
+	MVI	B,1
+	CALL	SETCEL
 	LDA	VRCH
 	CALL	PUTGAP		; may have had to relocate the text
 	LHLD	RPDEL
@@ -5347,6 +5380,9 @@ VP_OVW:
 	SHLD	RPDEL
 	RET
 VP_APP:
+	MVI	A,' '		; (the cell there is blank)
+	MVI	B,1
+	CALL	SETCEL
 	LDA	VRCH
 	CALL	PUTGAP		; past the line's end: vim appends
 	LHLD	RPAPP
@@ -5459,8 +5495,20 @@ VI_BS:
 	RC			; start of the file: nothing to delete
 	CPI	LF		; a LF behind the cursor: this BS joins the line
 	JZ	VI_BSJ		;   onto the one above, so the line count changes
-	CALL	SETLIN		;   and the screen repaints in full.  Any other
-VI_BSJ:				;   char is inside the row -- redraw just that row
+	MOV	B,A		;   and the screen repaints in full.  Any other
+	CALL	SETLIN		;   char is inside the row -- redraw just that row
+	MOV	A,B
+	CALL	PLAINQ		; ... or, when it is one cell and no TAB follows
+	JNC	VI_BSJ		;   to be drawn up short, let the terminal close
+	CALL	TAILTAB		;   the cell up (R_DCH, from the left of the
+	ORA	A		;   cursor)
+	JNZ	VI_BSJ
+	INR	A
+	STA	DCHN
+	STA	DCHBS
+	MVI	A,R_DCH
+	STA	RINTENT
+VI_BSJ:
 	CALL	MARKMOD
 	JMP	DELPRV
 ;VI_ESC -- ESC: back to command mode.  Nothing is inserted and nothing is
@@ -7618,6 +7666,7 @@ ILN:	DB	1		; lines an R_ILIN paint opens (SCRN.MAC reads)
 ICHAPP:	DB	0		; 1 = the R_ICH char went at the row's end, so
 				;   nothing follows it to shift: no ICH needed
 DCHN:	DB	1		; the cells an R_DCH paint deletes (SCRN.MAC reads)
+DCHBS:	DB	0		; 1 = they went left of the cursor (insert's BS)
 ILABOV:	DB	0		; 1 = the row above an R_ILIN's opened rows lost
 				;   text to them and must be redrawn too
 GOALCOL:DW	0FFFEH		; sticky goal screen column for j/k (0FFFFH = EOL, 0FFFEH = stale)
