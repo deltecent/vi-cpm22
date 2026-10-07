@@ -149,6 +149,13 @@ WordMaster. The engine changes only for a stated reason.
   removing the record from the buffer, so paging to the bottom, back to the top
   and saving wrote that record twice. `FILLBUF` now stores 80H for a full
   record.
+- **A fix in `SAVCLO`.** Text that was paged out to `name.$$$`, rewound and then
+  cut short leaves the old records after the new last one, and CP/M 2.2 cannot
+  drop them. A part-filled last record hides them behind its `^Z` padding. A
+  full one has no `^Z`, and the old records were read back as the end of the
+  text. `OUTHI` now follows the most records `name.$$$` has held, and `SAVCLO`
+  writes a record of `^Z` over the first old one. The file keeps its old length
+  on disk until the next save writes it afresh.
 - `SECBUF` has a guard byte on each side, because `STAGSEC` writes one byte past
   each end.
 - The backup work file is `VIBACKUP.$$$`, where WordMaster names it

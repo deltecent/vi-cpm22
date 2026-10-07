@@ -148,6 +148,7 @@ OPRD:				; cold-start the pager state.  WM does this by
 	SHLD	BAKREC
 	SHLD	BAKPOS
 	SHLD	OUTPOS
+	SHLD	OUTHI		; (appended) name.$$$ holds no record yet
 	SHLD	TOPLF		; (appended) no line is behind the window yet
 	CALL	FILLBUF		; WM 518 -- read the file into the buffer
 	RET
@@ -518,6 +519,14 @@ POFRSH:				 ; WM 4454 -- write a fresh output record
 	LHLD	OUTREC
 	INX	H
 	SHLD	OUTREC
+	PUSH	D		; (appended) OUTHI follows the most records
+	LHLD	OUTHI		;   name.$$$ has ever held; OUTREC cannot
+	XCHG			;   say, an edit behind it brings it down
+	LHLD	OUTPOS
+	CALL	CMP16
+	JNC	POHI
+	SHLD	OUTHI
+POHI:	POP	D
 	XCHG
 	INR	B
 POADV:				; WM 4463 -- advance TXTBEG past the sector
@@ -776,7 +785,16 @@ SAVLP:				; WM 4849 -- flush all, refill, repeat
 	CALL	STAGSEC
 	LXI	D,OUTFCB
 	CALL	WRRECP
-	JMP	CLOSEF
+	LHLD	OUTPOS		; DEVIATION (not WM): WM closes here.  Text
+	XCHG			;   that was paged out, rewound and then cut
+	LHLD	OUTHI		;   short leaves the old records after the
+	CALL	CMP16		;   last one, and CP/M cannot drop them.  A
+	LXI	D,OUTFCB	;   part-filled last record hides them behind
+	JNC	CLOSEF		;   its ^Z padding; a full one has none, and
+	XRA	A		;   the old text was read back as the file's
+	CALL	STAGSEC		;   end.  So a record of ^Z goes over the
+	CALL	WRRECP		;   first of them.  It is there already:
+	JMP	CLOSEF		;   this write cannot fill the disk.
 
 ;CKWRLIM -- WM 4863: CY if GAPBEG is below the PAGEOUT write limit.
 CKWRLIM:			; WM 4863
@@ -1448,6 +1466,7 @@ BAKEXT: DB	'BAK'		; WM 5245 -- the .BAK rename type
 PGTOPM: DW	0		; (appended) times the pager moved TXTBEG --
 				;   the window signature 'u' checks (see BUF.MAC)
 OUTREC: DW	0		; output write high-water (record)
+OUTHI:	DW	0		; (appended) most records name.$$$ has held
 SRCREC: DW	0		; source read low-water (record)
 BAKREC: DW	0		; backup read low-water (record)
 INLEN:	DB	0		; last input record byte count

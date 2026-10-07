@@ -7112,8 +7112,6 @@ def ndd(label, n):
     e = Editor(make(n))
     try:
         cnt = min(2900, register_lines(e))      # (as many as will fit)
-        if cnt % 16 == 0:                       # a whole number of records
-            cnt -= 1                            #   left is issue #27's
         e.key('G'); e.key('3000k'); e.key('%ddd' % cnt)
         cur = n - 3000
         want = make(n)[:(cur - 1) * 8] + make(n)[(cur + cnt - 1) * 8:]
@@ -7126,19 +7124,25 @@ def ndd(label, n):
         e.close()
 
     # Issue #27: back from the end, a delete that leaves a whole number of
-    # records, and the save keeps old records after them.
+    # records.  G wrote more records to name.$$$ than the text now has, and
+    # with no ^Z in a full last record the save kept the old ones as text.
+    # 800dd is the same with the last record in another extent.
     if n != 5120:
         return
-    e = Editor(make(n))
-    try:
-        e.key('G'); e.key('3000k'); e.key('1600dd')
-        cur = n - 3000
-        want = make(n)[:(cur - 1) * 8] + make(n)[(cur + 1600 - 1) * 8:]
-        e.key(':w\r')
-        still_open(27, f'{label}: G 3000k 1600dd :w byte-exact',
-                   saved_bytes(e) == want)
-    finally:
-        e.close()
+    for cnt in (1600, 800):
+        e = Editor(make(n))
+        try:
+            e.key('G'); e.key('3000k'); e.key('%ddd' % cnt)
+            cur = n - 3000
+            want = make(n)[:(cur - 1) * 8] + make(n)[(cur + cnt - 1) * 8:]
+            e.key(':w\r')
+            e.key('G')
+            check(f'{label}: G 3000k {cnt}dd :w, the text read back ends '
+                  f'at the last line', rows(e)[e.screen().row] == txt(n))
+            check(f'{label}: G 3000k {cnt}dd :w byte-exact',
+                  saved_bytes(e) == want)
+        finally:
+            e.close()
 
 
 def quit_semantics(label, n):
