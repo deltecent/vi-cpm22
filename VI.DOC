@@ -1,4 +1,5 @@
 VI -- a vi-style screen editor for CP/M 2.2            Altair 8800 / VT100
+Version V1.4
 
     VI                      start with an empty buffer
     VI FILE.TXT             edit FILE.TXT (created on :w if it is new)
@@ -322,7 +323,6 @@ is as that :w left it.
 
 NOT IN THIS VI -------------------------------------------------------------
 
-    f F t T ; ,     character search on a line
     %               matching bracket
     << >>           shift a line
     s S cc          substitute / change the whole line
@@ -333,4 +333,4 @@ NOT IN THIS VI -------------------------------------------------------------
 
 A count before an insert (3ix) is ignored: it inserts once.  So is a count
 on r and ~.
-
+

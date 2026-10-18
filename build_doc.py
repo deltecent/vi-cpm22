@@ -55,6 +55,7 @@ EOF_ = 0x1A
 DOC = r"""
 
 VI -- a vi-style screen editor for CP/M 2.2            Altair 8800 / VT100
+Version @VER@
 
     VI                      start with an empty buffer
     VI FILE.TXT             edit FILE.TXT (created on :w if it is new)
@@ -251,7 +252,6 @@ then says so rather than doing half of it.  A :w clears the undo.
 
 NOT IN THIS VI -------------------------------------------------------------
 
-    f F t T ; ,     character search on a line
     %               matching bracket
     << >>           shift a line
     s S cc          substitute / change the whole line
@@ -291,6 +291,15 @@ def equate(name):
     if not m:
         raise ValueError(f"BUF.MAC has no `{name} EQU ...H`")
     return int(m.group(1), 16)
+
+
+def version():
+    """The string :ve shows, from SVER in CMD.MAC."""
+    with open(os.path.join(HERE, "CMD.MAC"), newline="") as f:
+        m = re.search(r"^SVER:\s*DB\s*'([^']+)'", f.read(), re.M)
+    if not m:
+        raise ValueError("CMD.MAC has no SVER")
+    return m.group(1)
 
 
 def symbol(name):
@@ -517,6 +526,7 @@ def render():
     large, sizes = large_files()
     text = DOC.replace("@LARGE@", large).replace("@REGK@",
                                                  sizes["REGK"].split()[0])
+    text = text.replace("@VER@", version())
     lines = [l.rstrip() for l in text.strip("\n").split("\n")]
     bad = []
     for n, l in enumerate(lines, 1):
