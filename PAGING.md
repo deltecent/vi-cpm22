@@ -398,7 +398,12 @@ a change carries.
 python3 pagerprobe.py --list          # the scenarios
 python3 pagerprobe.py browse midedit  # some of them
 python3 pagerprobe.py browse --trace  # every disk call, in runs, with the window size
+python3 pagerprobe.py browse --log=F.jsonl  # every disk call, timed, for pagermodel.py
 ```
+
+`pagermodel.py` (issue #29) replays the logged calls, `pagertrace.jsonl.gz`,
+onto an Altair 8" floppy and compares them with a piece table on the same
+drive. Re-record the log whenever the figures here are re-measured.
 
 Build first (`python3 build_vi.py VI`), and never run it beside a test
 battery. Each scenario takes one to four minutes of wall time. Separate

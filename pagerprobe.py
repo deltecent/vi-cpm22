@@ -4,6 +4,7 @@
     python3 pagerprobe.py              # every scenario
     python3 pagerprobe.py top mid      # only scenarios whose name matches
     python3 pagerprobe.py --list       # the scenario names
+    python3 pagerprobe.py --log=F.json # also record every disk call, timed
     python3 pagerprobe.py browse --trace   # every disk call, in runs
 
 PAGING.md's figures are this script's output, transcribed.  Each scenario is a fresh editor
@@ -16,6 +17,8 @@ have made.
 
 The seconds are the simulator's clock, less what finding the guest idle
 costs; the simulated drive has no seek or rotation time, so they are a floor.
+`--log` writes, per key, each disk call with the simulator time it was made
+at, the file and the record: `pagermodel.py` prices those on a floppy.
 
 Build first: python3 build_vi.py VI.  Never run this beside a test battery.
 """
@@ -40,6 +43,7 @@ from smoke_vi import Editor, SYM                           # noqa: E402
 
 CLOCK_HZ = 2e6
 TRACE = "--trace" in sys.argv
+LOG = next((a[6:] for a in sys.argv if a.startswith("--log=")), None)
 ESC, CR = "\x1b", "\r"
 
 
@@ -54,6 +58,21 @@ SMALL = lines(1280)             # 10,240 bytes, 80 records
 FN = {0x0F: "open", 0x10: "close", 0x13: "delete", 0x14: "read",
       0x15: "write", 0x16: "make", 0x17: "rename", 0x21: "rread",
       0x22: "rwrite", 0x23: "size", 0x24: "setrr"}
+
+
+def fcbfile(f):
+    """The 8.3 name an FCB's 36 bytes name, as 'NAME.TYP'."""
+    n = bytes(b & 0x7F for b in f[1:9]).decode().strip()
+    t = bytes(b & 0x7F for b in f[9:12]).decode().strip()
+    return n + "." + t
+
+
+def fcbrec(fn, f):
+    """The record a read or write names: the random record for 21H-24H, else
+    the sequential position S2/EX/CR."""
+    if fn >= 0x21:
+        return f[33] | f[34] << 8 | f[35] << 16
+    return (f[14] & 0x3F) * 4096 + (f[12] & 0x1F) * 128 + f[32]
 
 
 def fcbname(de):
@@ -73,6 +92,8 @@ class Probe:
         self.e = Editor(content)
         self.io = {}
         self.trace = []
+        self.t = 0                      # T-states run since the key was typed
+        self.events = []
         self.mon("BREAK 0005 IF C >= 00F && C <= 024 && C != 01A")
         t = self.clock()
         self.settle()
@@ -94,6 +115,24 @@ class Probe:
         r = self.e.s._tool("regs")["registers"]
         key = (FN.get(r["C"], "%02XH" % r["C"]), fcbname(r["DE"]))
         self.io[key] = self.io.get(key, 0) + 1
+        if LOG:
+            f = self.e.s.mem(r["DE"], 36)
+            ev = [self.t, r["C"], fcbfile(f), fcbrec(r["C"], f)]
+            # Run the call to its return, so the log separates the time the
+            # editor spends between calls from the time BDOS and the BIOS take.
+            m = self.e.s.mem(r["SP"], 2)
+            ret, t0 = m[0] | m[1] << 8, self.t
+            bp = re.search(r"breakpoint (\d+)", self.mon("BREAK %04X" % ret)).group(1)
+            while True:
+                q = self.e.s._run()
+                self.t += q.get("t_states", 0)
+                if q.get("stopped") == "breakpoint" and q.get("pc") == ret:
+                    break
+            self.mon("NOBREAK " + bp)
+            ev.append(self.t - t0)
+            if r["C"] == 0x17:                      # rename: the new name too
+                ev.append(fcbfile(f[16:]))
+            self.events.append(ev)
         if TRACE:
             m = self.e.s.mem(SYM["TXTBEG"], 8)
             tb, gb, ge, te = (m[i] | m[i + 1] << 8 for i in (0, 2, 4, 6))
@@ -103,6 +142,7 @@ class Probe:
         idle = 0
         for _ in range(slices):
             r = self.e.s._run()
+            self.t += r.get("t_states", 0)
             if r.get("stopped") == "breakpoint":
                 self._bdos()
                 idle = 0
@@ -121,6 +161,8 @@ class Probe:
         """Type k and wait; (seconds, disk calls) it cost."""
         self.io = {}
         self.trace = []
+        self.events = []
+        self.t = 0
         was = self.bottom() if k == ESC else None
         t = self.clock()
         self.e.s.send(k)
@@ -235,6 +277,17 @@ def show_trace(tr):
         i = j + 1
 
 
+def logged(name, label, took, events):
+    """One key's disk calls, as a JSON line: [seconds into the key, BDOS
+    function, file, record, seconds the call took, (rename) new name]."""
+    import json
+    with open(LOG, "a") as f:
+        f.write(json.dumps({"scenario": name, "key": label, "seconds": took,
+                            "events": [[e[0] / CLOCK_HZ] + e[1:4] + [e[4] / CLOCK_HZ] + e[5:]
+                                       for e in events]})
+                + "\n")
+
+
 def run(scn):
     name, title, content, keys, want = scn
     data = b"".join(content)
@@ -250,6 +303,8 @@ def run(scn):
             took, io = p.key(k)
             s = p.state() if not k.startswith(":q") else {}
             label = repr(k)[1:-1].replace("\\x1b", "<Esc>").replace("\\r", "")
+            if LOG:
+                logged(name, label, took, p.events)
             print("  %-22s %.1f s | io: %s" % (label, took, show_io(io)), flush=True)
             if TRACE:
                 show_trace(p.trace)
