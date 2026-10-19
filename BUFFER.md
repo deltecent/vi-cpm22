@@ -144,12 +144,12 @@ side.
 
 `TXTBEG..TXTEND` is only a window. Text above `TXTBEG` has been spilled to the
 work file `name.$$$` (`OUTFCB`); text below `TXTEND` is still on the input side
-— the unread rest of the original file, plus `VIBACKUP$$$` for anything
+— the unread rest of the original file, plus `VIBACKUP.$$$` for anything
 `PAGEBOT` has pushed back down.
 
 ```
    spilled (above)        │   RAM window: R1 [gap] R2   │   input side (below)
-   name.$$$  (OUTFCB)     │   TXTBEG ......... TXTEND    │   the file + VIBACKUP$$$
+   name.$$$  (OUTFCB)     │   TXTBEG ......... TXTEND    │   the file + VIBACKUP.$$$
         REWIND reads back ▲                              ▼ FILLBUF / NEEDIN read in
 ```
 
@@ -159,14 +159,24 @@ work file `name.$$$` (`OUTFCB`); text below `TXTEND` is still on the input side
   runs on past the window's edge.
 * `NEEDIN` pages in when a read (`RGET`) runs past `TXTEND`; `LINPOSB`/`PAGEWIN`
   page back when the renderer needs text above `TXTBEG`. `PGNEED`/`PAGEWIN` keep
-  `PGMARGN` pages of text resident on the active edge.
+  `PGMARGN` × 256 bytes of text resident on the active edge.
 * `UPDMARK` keeps three record marks (`OUTREC`, `SRCREC`, `BAKREC`) so the
-  pager can tell a record already on disk from one it must transfer: nothing is
-  written twice, and nothing is lost.
+  pager can tell a record already on disk from one it must transfer. A record
+  still valid in a work file is not written again, and an unchanged record
+  below every edit goes back to the source without a transfer. An edit makes
+  the records after it invalid, and those are written again (`PAGING.md` §2).
 
 Paging moves `TXTBEG`, and with it every resident offset. `PAGE.MAC` counts
 those moves in `PGTOPM` — the only true "the window has paged" signature
-(`OUTREC`/`SRCREC` move on every edit). Undo and the marks key on it.
+(`OUTREC`/`SRCREC` move on every edit). Undo keys on it.
+
+### What it does, scenario by scenario
+
+`PAGING.md` shows the pager at work, measured in the running editor:
+`G` and `gg` through a file bigger than memory, with and without edits, at
+the top, the middle and the end of the file; saves, a big delete, a big
+insert and undo after paging. For each key it gives the disk transfers to
+each file and what is left in memory. `pagerprobe.py` measures it all again.
 
 ---
 
@@ -223,10 +233,13 @@ either way. See `COMMANDS.md` for its limits.
 
 ### Marks
 
-Marks live in `CMD.MAC`, not here: a logical offset plus the `PGTOPM` it was
-taken under. A mark is **dropped, never shifted** — any edit at or above it,
-or the window paging, invalidates it (`MKDROP`, called from `MARKMOD`, which
-every edit passes through).
+Marks live in `CMD.MAC`, not here. A mark is a 3-byte position in the
+**file**: the records paged out ahead of the window plus an offset into it.
+Paging does not affect it, and a jump to it pages until the window holds it
+(`MKPAGE`). It **follows its text**: the undo capture (`UNDCHG`) calls
+`EDTHK`, which `VI.MAC` points at `MKSHFT`, from all six edit primitives, and
+`MKSHFT` moves every mark past the edit by the bytes that went in or came out.
+A mark inside a deleted span closes up to where the delete was.
 
 ---
 
