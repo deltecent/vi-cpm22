@@ -24,12 +24,18 @@
 ; INSREPL (WM 1836; ':s' splices through INSSTR) and WM's screen/command init
 ; (WM 365-377).  WM's PGCONST (WM 412) runs from PAGE.MAC's OPENFIL.
 ;
-; DEVIATION FROM WM: ERRMSG's TAIL.  WM's ERRMSG (WM 664) prints its inline
-; message then longjmps to its own command loop.  Here only the tail differs:
-; print the WM message, set ERRFLG, and warm-boot to CP/M, so an error that
-; fires surfaces loudly.  The editor is left the way a quit leaves it: the
-; message goes on the bottom row (ERRHK, the editor's screen teardown) and no
-; work file stays on the disk (PAGE.MAC's DISCRD).
+; DEVIATIONS FROM WM (each is also flagged where it is):
+;   1. ERRMSG's TAIL.  WM's ERRMSG (WM 664) prints its inline message then
+;      longjmps to its own command loop.  Here only the tail differs: print
+;      the WM message, set ERRFLG, and warm-boot to CP/M, so an error that
+;      fires surfaces loudly.  The editor is left the way a quit leaves it:
+;      the message goes on the bottom row (ERRHK, the editor's screen
+;      teardown) and no work file stays on the disk (PAGE.MAC's DISCRD).
+;   2. PUTGAP calls UPDMARK BEFORE it stores the byte (WM bug, issue #31).
+;      WM's PUTGAP (WM 1744) stores, steps GAPBEG past the byte and only then
+;      reaches UPDMARK through SETGAPB, so a byte stored in the LAST byte of
+;      a 128-byte record leaves that record counted as unchanged; after a
+;      page back the save then keeps its old copy on disk.  See PUTGAP.
 ;
 ; APPENDED (non-WM), each section tagged where it starts:
 ;   * the LOGICAL-OFFSET API (CUROFF/LOGLEN/CHARAT/GOTO/LFCNT, DELFWD, UNDELF,
@@ -188,9 +194,27 @@ INITOP:				 ; WM 386
 
 ;PUTGAP -- WM 1744: ensure a free gap byte (GAPRSV), store A at the gap,
 ;advance and record GAPBEG (SETGAPB -> UPDMARK).
+;
+;DEVIATION 2 (WM bug, issue #31): the CALL UPDMARK before the store is not
+;WordMaster's.  UPDMARK lowers OUTREC -- the first record of the work file the
+;save must write again -- to OUTPOS plus the WHOLE records between TXTBEG and
+;GAPBEG.  Called only after GAPBEG has stepped past the new byte (WM's order),
+;a byte stored in the last byte of a record makes that record whole, so it is
+;counted as unchanged.  After a move that pages back, the records read in are
+;still in the work file (OUTREC above OUTPOS) and the save skips every record
+;below OUTREC: it kept the old copy, losing the inserted byte from the file
+;while the screen showed it.  Measured on the 100 K file: OUTPOS 0, the cursor
+;at offset 1279 (10 x 128 - 1), 'iX' then ':w' saved the old '6' there.
+;Marked here, after GAPRSV (which may page, moving TXTBEG and OUTPOS) and
+;before the store, GAPBEG still points AT the byte about to change, so its
+;record is the first one counted as changed -- the order INSBLK already uses
+;(INSCOM's MARKGB before it copies).  The later UPDMARK in SETGAPB still runs
+;and changes nothing.  UPDMARK keeps every register.  Test: accept_vi.py
+;insert_record_end (the size groups).
 PUTGAP:				; WM 1744
 	PUSH	PSW
 	CALL	GAPRSV
+	CALL	UPDMARK		; DEVIATION 2 (#31): mark before the store
 	CALL	LDHLI
 	POP	PSW
 	MOV	M,A

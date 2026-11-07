@@ -274,6 +274,88 @@ def edit_deep(label, n):
         e.close()
 
 
+def record_end(content, k):
+    """The file offset of the last byte of a 128-byte record, at or after
+    record *k*, that the cursor can stand on (text, not a line end), or None."""
+    for r in range(k, len(content) // 128 + 1):
+        t = 128 * r - 1
+        if 0 <= t < len(content) and content[t:t + 1] not in b'\r\n':
+            return t
+    return None
+
+
+def place(content, t):
+    """Keys that put the cursor on file offset *t*: its line, then its column."""
+    ln = content.count(b'\n', 0, t) + 1
+    col = t - (content.rfind(b'\n', 0, t) + 1)
+    return f'{ln}G0' + (f'{col}l' if col else '')
+
+
+def insert_record_end(label, n):
+    """#31: the first byte an insert puts in must be saved even when it lands on
+    the LAST byte of a 128-byte record of the work file, after a move that paged
+    back.  The page back leaves the records it read in still on disk (OUTREC
+    above OUTPOS), so the save skips every record below OUTREC; an insert must
+    lower OUTREC to the record it changed BEFORE the save.  WordMaster's PUTGAP
+    stored the byte, stepped GAPBEG past it and only then asked UPDMARK, which
+    counted the record holding the new byte as whole and left it out: the save
+    wrote that record's old copy.
+
+    The offsets are derived from the file, not written down: the record end
+    must be a byte the cursor can stand on, which an 8-byte-line file never
+    has (every 128th byte is a line feed), so the numbered files here start
+    with a 3-byte line.  One byte before and after the record end are the
+    controls; a line break is the issue's own `i<CR>` row.  The state is
+    asserted, not assumed: the record holding the insert is resident and
+    below OUTREC when the insert is typed."""
+    if n < 1:
+        return
+    numbered = b'H\r\n' + make(n)
+    paged = len(numbered) > 30000
+    cases = []                          # (tag, content, moves, offset, insert)
+    t = record_end(numbered, 10)
+    if t is not None:
+        back = ['G', 'gg'] if paged else []
+        cases += [('G gg, iX', numbered, back, t, 'X'),
+                  ('G gg, i<CR>', numbered, back, t, '\r')]
+        if paged:
+            cases += [('G gg, iX a byte before', numbered, back, t - 1, 'X'),
+                      ('G gg, iX a byte after', numbered, back, t + 1, 'X')]
+            far = record_end(numbered, len(numbered) * 3 // 5 // 128)
+            cases.append(('G then back to a line, iX', numbered,
+                          ['G', place(numbered, far).split('G')[0] + 'G'], far, 'X'))
+    if n >= 12800:
+        wide = make_wide()
+        tw = record_end(wide, 10)
+        cases.append(('wide lines, G gg, iX', wide, ['G', 'gg'], tw, 'X'))
+    for tag, content, moves, t, ins in cases:
+        e = Editor(content)
+        try:
+            for k in moves:
+                e.key(k)
+            e.key(place(content, t))
+            if moves:
+                rec, lo, hi = t // 128, word(e, 'OUTPOS'), word(e, 'OUTREC')
+                check(f'{label}: #31 {tag}: record {rec} of the insert is resident '
+                      f'and still on disk (OUTPOS {lo} <= {rec} < OUTREC {hi})',
+                      lo <= rec < hi)
+            send_keys(e, 'i' + ins)
+            send_keys(e, '\x1b')
+            e.key(':w\r')
+            add = b'\r\n' if ins == '\r' else ins.encode()
+            got = saved_bytes(e)
+            want = content[:t] + add + content[t:]
+            bad = next((i for i in range(min(len(got), len(want)))
+                        if got[i] != want[i]), None)
+            check(f'{label}: #31 {tag} at offset {t} saved byte-exact'
+                  + ('' if got == want else
+                     f' (first difference at {bad}: {got[bad:bad+1]!r} for '
+                     f'{want[bad:bad+1]!r}; {len(got)} bytes for {len(want)})'),
+                  got == want)
+        finally:
+            e.close()
+
+
 def send_keys(e, k):
     """Type *k*.  After an ESC keep running until the editor is back in
     command mode.  Long text goes in 400-byte bursts."""
@@ -10134,6 +10216,7 @@ def main():
         nav_and_save(label, n)
         if n >= 1:
             edit_deep(label, n)
+            insert_record_end(label, n)
             hl_x_deep(label, n)
             wide_tabs(label, n)
         insert_bs(label, n)
