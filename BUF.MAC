@@ -1655,7 +1655,8 @@ UNDELF:
 ; TXTBEG, so spilling a record out from under it (PAGEOUT) or reading one back
 ; in (REWIND) shifts every offset, while FILLBUF and PAGEBOT growing TXTEND at
 ; the bottom shift none.  The OUTREC/SRCREC water marks look like the same
-; thing and are not: UPDMARK raises them on every edit.
+; thing and are not: UPDMARK moves them on every edit (OUTREC down,
+; SRCREC up).
 ;============================================================
 
 UR_INS	EQU	1		; text went IN  (undoing takes it back out)

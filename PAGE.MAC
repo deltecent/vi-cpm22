@@ -138,7 +138,7 @@ OPRD:				; cold-start the pager state.  WM does this by
 	STA	DIRFLG		;   region, so its true cold value is ZERO.  With
 	LXI	H,0H		;   the real UPDMARK maintaining them (below), no
 	SHLD	OUTREC		;   bias is needed: at cold OUTPOS=0 and UPDMARK
-	SHLD	SRCREC		;   raises OUTREC to track each record spilled.
+	SHLD	SRCREC		;   lowers it on an edit; PAGEOUT raises it.
 	SHLD	BAKREC
 	SHLD	BAKPOS
 	SHLD	OUTPOS
@@ -997,9 +997,15 @@ MARKGB:				; WM 4886
 	CALL	CMP16
 	POP	D
 	RNZ
-;UPDMARK -- WM 4898: after the gap moves, recompute the record marks that say
-;which records are in RAM: OUTREC (TXTBEG/output side, only rises) and SRCREC /
-;BAKREC (GAPEND/input side, only fall), via PTRREC + RECBASE.
+;UPDMARK -- WM 4898: after an edit, move the record marks that say which
+;records must be written again.  Each mark only ever moves one way here:
+;  OUTREC (TXTBEG/output side) is LOWERED to OUTPOS + the whole records from
+;  TXTBEG to GAPBEG, when that is lower (stored on CMP16's carry).  UPDMARK
+;  never raises it; only PAGEOUT (POFRSH) does.
+;  SRCREC and BAKREC (GAPEND/input side) are RAISED to RECBASE less the whole
+;  records from GAPEND to TXTEND, when that is not lower (stored on no carry).
+;CMP16 sets carry when DE < HL.  (The comment here used to say the opposite
+;for both sides -- issue #37.)
 UPDMARK:			; WM 4898
 	PUSH	B
 	PUSH	D

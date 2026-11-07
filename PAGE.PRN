@@ -147,7 +147,7 @@
   007A'   32 0000*              	STA	DIRFLG		;   region, so its true cold value is ZERO.  With
   007D'   21 0000               	LXI	H,0H		;   the real UPDMARK maintaining them (below), no
   0080'   22 0000*              	SHLD	OUTREC		;   bias is needed: at cold OUTPOS=0 and UPDMARK
-  0083'   22 0000*              	SHLD	SRCREC		;   raises OUTREC to track each record spilled.
+  0083'   22 0000*              	SHLD	SRCREC		;   lowers it on an edit; PAGEOUT raises it.
   0086'   22 0000*              	SHLD	BAKREC
   0089'   22 0000*              	SHLD	BAKPOS
   008C'   22 0000*              	SHLD	OUTPOS
@@ -1058,12 +1058,18 @@
   059F'   CD 0000*              	CALL	CMP16
   05A2'   D1                    	POP	D
   05A3'   C0                    	RNZ
-                                ;UPDMARK -- WM 4898: after the gap moves, recompute the record marks that say
-                                ;which records are in RAM: OUTREC (TXTBEG/output side, only rises) and SRCREC /
+                                ;UPDMARK -- WM 4898: after an edit, move the record marks that say which
+                                ;records must be written again.  Each mark only ever moves one way here:
 	MACRO-80 3.44	09-Dec-81	PAGE	1-18
 
 
-                                ;BAKREC (GAPEND/input side, only fall), via PTRREC + RECBASE.
+                                ;  OUTREC (TXTBEG/output side) is LOWERED to OUTPOS + the whole records from
+                                ;  TXTBEG to GAPBEG, when that is lower (stored on CMP16's carry).  UPDMARK
+                                ;  never raises it; only PAGEOUT (POFRSH) does.
+                                ;  SRCREC and BAKREC (GAPEND/input side) are RAISED to RECBASE less the whole
+                                ;  records from GAPEND to TXTEND, when that is not lower (stored on no carry).
+                                ;CMP16 sets carry when DE < HL.  (The comment here used to say the opposite
+                                ;for both sides -- issue #37.)
   05A4'                         UPDMARK:			; WM 4898
   05A4'   C5                    	PUSH	B
   05A5'   D5                    	PUSH	D
@@ -1113,15 +1119,15 @@
   05FA'   19                    	DAD	D
   05FB'   D1                    	POP	D
   05FC'   C9                    	RET
+	MACRO-80 3.44	09-Dec-81	PAGE	1-19
+
+
                                 
                                 ;PTRREC -- WM 4951: DE = record number (128-byte) for the pointer pair at HL.
   05FD'                         PTRREC:				; WM 4951
   05FD'   CD 0000*              	CALL	PRSPAN
   0600'   60                    	MOV	H,B
   0601'   69                    	MOV	L,C
-	MACRO-80 3.44	09-Dec-81	PAGE	1-19
-
-
   0602'   29                    	DAD	H
   0603'   5C                    	MOV	E,H
   0604'   16 00                 	MVI	D,0H
@@ -1172,15 +1178,15 @@
                                 ;FATAL -- WM 5429 (deviation 2): share ERRMSG's tail.
   062D'                         FATAL:				; WM 5429
   062D'   C3 0000*              	JMP	ERRMSG
+	MACRO-80 3.44	09-Dec-81	PAGE	1-20
+
+
                                 
                                 ;============================================================
                                 ; FILE PRIMITIVES -- WM 5436-5566.
                                 ;============================================================
                                 
                                 ;OPENF -- WM 5438: BDOS-open the FCB at DE, then zero its random-record bytes.
-	MACRO-80 3.44	09-Dec-81	PAGE	1-20
-
-
   0630'                         OPENF:				; WM 5438
   0630'   CD 0616'              	CALL	BDOSFN
   0633'   0F                    	DB	0FH
@@ -1231,15 +1237,15 @@
   066D'   C3 06EF'              	JMP	IOEOF
                                 
                                 ;DELRST -- WM 5492: delete the FCB's file, then ZERORR (prep a fresh file).
+	MACRO-80 3.44	09-Dec-81	PAGE	1-21
+
+
   0670'                         DELRST:				; WM 5492
   0670'   CD 0664'              	CALL	DELF
   0673'   CD 0635'              	CALL	ZERORR
                                 ;MAKEF -- WM 5497: BDOS-create the file; FATAL 'DIRECTORY FULL' on failure.
   0676'                         MAKEF:				; WM 5497
   0676'   CD 0616'              	CALL	BDOSFN
-	MACRO-80 3.44	09-Dec-81	PAGE	1-21
-
-
   0679'   16                    	DB	16H
   067A'   3C                    	INR	A
   067B'   C0                    	RNZ
@@ -1290,15 +1296,15 @@
                                 ;CPYBAK/CPYTYP -- WM 5178/5182: copy a 3-byte file type from [HL] to [DE].
   06CA'                         CPYBAK:				; WM 5178
   06CA'   21 07DF'              	LXI	H,BAKEXT
+	MACRO-80 3.44	09-Dec-81	PAGE	1-22
+
+
   06CD'                         CPYTYP:				; WM 5182
   06CD'   01 0003               	LXI	B,3H
   06D0'   C3 0000*              	JMP	MEMCPY
                                 
                                 ;============================================================
                                 ; RANDOM-RECORD ENGINE -- WM 5568-5789.
-	MACRO-80 3.44	09-Dec-81	PAGE	1-22
-
-
                                 ;============================================================
                                 
                                 ;RDNEXT -- WM 5569: RDSEC, then advance the record number.
@@ -1349,15 +1355,15 @@
   070A'   C0                    	RNZ
   070B'   F5                    	PUSH	PSW
   070C'   E5                    	PUSH	H
+	MACRO-80 3.44	09-Dec-81	PAGE	1-23
+
+
   070D'   21 0000*              	LXI	H,BAKFCB
   0710'   CD 0000*              	CALL	CMP16
   0713'   E1                    	POP	H
   0714'   CA 0726'              	JZ	DSKFUL
   0717'   3A 0000*              	LDA	BAKRDY
   071A'   B7                    	ORA	A
-	MACRO-80 3.44	09-Dec-81	PAGE	1-23
-
-
   071B'   D5                    	PUSH	D
   071C'   CC 065E'              	CZ	KILLBAK
   071F'   D1                    	POP	D
@@ -1408,15 +1414,15 @@
   075F'   12                    	STAX	D
   0760'   21 0023               	LXI	H,23H
   0763'   19                    	DAD	D
+	MACRO-80 3.44	09-Dec-81	PAGE	1-24
+
+
   0764'   E5                    	PUSH	H
   0765'   CD 0000*              	CALL	LDHLI
   0768'   09                    	DAD	B
   0769'   7C                    	MOV	A,H
   076A'   A5                    	ANA	L
   076B'   3C                    	INR	A
-	MACRO-80 3.44	09-Dec-81	PAGE	1-24
-
-
   076C'   CA 0778'              	JZ	RECWRP
   076F'   EB                    	XCHG
   0770'   E1                    	POP	H
@@ -1467,15 +1473,15 @@
   07AD'   3C                    	INR	A
   07AE'   C2 07BA'              	JNZ	SETRCR
   07B1'   78                    	MOV	A,B
+	MACRO-80 3.44	09-Dec-81	PAGE	1-25
+
+
   07B2'   B7                    	ORA	A
   07B3'   37                    	STC
   07B4'   CA 07C3'              	JZ	SETDMA
   07B7'   CD 0676'              	CALL	MAKEF
   07BA'                         SETRCR:				; WM 5771 -- extent already open: set CR + DMA
   07BA'   21 0020               	LXI	H,20H
-	MACRO-80 3.44	09-Dec-81	PAGE	1-25
-
-
   07BD'   19                    	DAD	D
   07BE'   71                    	MOV	M,C
   07BF'   23                    	INX	H
@@ -1526,6 +1532,9 @@
   07DC'   24 24 24              
   07DC'                         BAKTYP	EQU	BAKNAM+8	 ; the '$$$' substring (WM BAKTYP EQU 443H)
   07DF'   42 41 4B              BAKEXT: DB	'BAK'		; WM 5245 -- the .BAK rename type
+	MACRO-80 3.44	09-Dec-81	PAGE	1-26
+
+
                                 
   07E2'   FF                    CPMNEW: DB	0FFH		; nonzero = CP/M 2.x+ (tolerant rename)
                                 
