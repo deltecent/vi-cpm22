@@ -356,6 +356,79 @@ def insert_record_end(label, n):
             e.close()
 
 
+def arena_free(e):
+    """The arena's free bytes, as BUFSUM adds them: the six holes of the
+    pointer row (BUFBEG,QBEG) (QEND,HOLEQP) (TXTBAS,UBEG) (UEND,TXTBEG)
+    (GAPBEG,GAPEND) (TXTEND,BUFEND)."""
+    row = [word(e, r) for r in ('BUFBEG', 'QBEG', 'QEND', 'HOLEQP', 'TXTBAS',
+                                'UBEG', 'UEND', 'TXTBEG', 'GAPBEG', 'GAPEND',
+                                'TXTEND', 'BUFEND')]
+    return sum(row[i + 1] - row[i] for i in range(0, 12, 2))
+
+
+def yank_span_paging(label, n):
+    """#32: `y'a` must put the whole span in the register even when taking it
+    pages the window.  A span the arena has no room to copy is taken out line
+    by line (YSPAN) and put straight back.  YSPAN used to stop when the text in
+    RAM was the span's length shorter -- but with under 256 bytes free, the
+    first line's MKGAP pages a batch of records off the window's top, and those
+    records alone took the text past that mark: the register kept ONE line of
+    24, and the `p` after it put one line.
+
+    The state is built, not hoped for: an insert above the cursor fills the
+    arena until fewer than 256 bytes are free (derived from the arena as it
+    stands, not written down), and both are asserted -- the free space before
+    the yank, and that the yank paged.  The span lies just ABOVE the insert, in
+    text the window already holds whole (below it, a wide-line file has too
+    little resident and the move to the mark pages the arena free again), so
+    the take is the whole question."""
+    if n < 5120:
+        return
+    cases = [('mark above', make(n), n // 2, 30, 7)]   # lines above the insert
+    if n >= 12800:
+        cases += [('mark below', make(n), n // 2, 7, 30),
+                  ('wide lines, mark above', make_wide(), 700, 30, 7)]
+    for tag, content, at, ma, cur in cases:
+        lines = content.split(b'\r\n')[:-1]
+        e = Editor(content)
+        try:
+            e.key(f'{at}G')
+            m = (arena_free(e) - 100) // 8      # 8-byte lines, ~100 bytes left
+            new = [b'I%05d' % i for i in range(m)]
+            send_keys(e, 'O' + '\r'.join(x.decode() for x in new))
+            send_keys(e, '\x1b')
+            lines[at - 1:at - 1] = new
+            a, c = at - ma, at - cur
+            e.key(f'{a}G'); e.key('ma'); e.key(f'{c}G')
+            free, op = arena_free(e), word(e, 'OUTPOS')
+            check(f'{label}: #32 {tag}: under 256 bytes free before the yank '
+                  f'({free})', free < 256)
+            e.key("y'a")
+            e.s.run_until_quiet(quiet=1.5, timeout=240)
+            lo, hi = min(a, c), max(a, c)
+            span = b''.join(x + b'\r\n' for x in lines[lo - 1:hi])
+            q0, q1 = word(e, 'QBEG'), word(e, 'QEND')
+            check(f'{label}: #32 {tag}: the yank paged (OUTPOS {op} -> '
+                  f'{word(e, "OUTPOS")})', word(e, 'OUTPOS') != op)
+            check(f'{label}: #32 {tag}: y\'a holds the {hi - lo + 1} lines '
+                  f'({q1 - q0} bytes for {len(span)})',
+                  bytes(e.s.mem(q0, q1 - q0)) == span)
+            e.key('100G'); e.key('p')
+            e.s.run_until_quiet(quiet=1.5, timeout=240)
+            e.key(':w\r'); ex_settled(e)
+            lines[100:100] = lines[lo - 1:hi]
+            want = b''.join(x + b'\r\n' for x in lines)
+            got = saved_bytes(e)
+            bad = next((i for i in range(min(len(got), len(want)))
+                        if got[i] != want[i]), None)
+            check(f'{label}: #32 {tag}: 100Gp puts them all, saved byte-exact'
+                  + ('' if got == want else
+                     f' (first difference at {bad}; {len(got)} bytes for '
+                     f'{len(want)})'), got == want)
+        finally:
+            e.close()
+
+
 def send_keys(e, k):
     """Type *k*.  After an ESC keep running until the editor is back in
     command mode.  Long text goes in 400-byte bursts."""
@@ -10217,6 +10290,7 @@ def main():
         if n >= 1:
             edit_deep(label, n)
             insert_record_end(label, n)
+            yank_span_paging(label, n)
             hl_x_deep(label, n)
             wide_tabs(label, n)
         insert_bs(label, n)

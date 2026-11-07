@@ -5208,8 +5208,18 @@ QRF_Y:
 
 ;YSPAN -- the lines of [OPLO,OPHI) out of the file and into the register, one at
 ; a time as 'dd' does it.  There is no line COUNT to drive the loop with here --
-; the span is a pair of offsets -- so it runs until the text is exactly the
-; span's length shorter than it was, and asks for ONE line a pass.
+; the span is a pair of offsets -- so it runs until the REGISTER holds the
+; span's length, and asks for ONE line a pass.
+;
+; The register, not the text: this loop used to stop when the text in RAM was
+; the span's length shorter than at the start (issue #32).  But QPUTLN's MKGAP
+; can page the window's top out to make room, and every record that goes takes
+; 128 bytes off the text that this loop never took.  With the arena nearly
+; full the page-outs alone went past that target, and the loop stopped after a
+; line, or partway through one (GOLINE stops short when the window pages): the
+; register held 49 bytes of a 631-byte 'y''a', and YKGO put back only those.
+; The register starts empty (QKILL below) and only this loop fills it, so its
+; length is exactly what has been taken, whatever the pager did meanwhile.
 ;
 ; That one line is not decoration: QPUTLN goes through WM's GOLINE, which takes
 ; its count from CMDCNT and its DIRECTION from DIRFLG, and on a count of zero
@@ -5221,13 +5231,7 @@ QRF_Y:
 YSPAN:
 	CALL	GLSTAL
 	CALL	OPSPNL		; HL = the span's length
-	SHLD	YTGT
-	CALL	LOGLEN		; HL = the text's length
-	XCHG			; DE = it
-	LHLD	YTGT
-	XCHG			; HL = the text's, DE = the span's
-	CALL	SUBHD
-	SHLD	YTGT		; what the text is left at when the span is out
+	SHLD	YTGT		; what the register holds when the span is out
 	LHLD	OPLO
 	CALL	GOTO
 	CALL	QKILL		; these lines become the register, not the last
@@ -5236,13 +5240,14 @@ YS_LP:
 	CALL	SETC0
 	CALL	QPUTLN		; WM 3355 / QPUT: that line, into the register
 	JC	QREFUS		; ... which has no room for it
-	CALL	LOGLEN
-	XCHG			; DE = what is left
+	LHLD	QBEG
+	XCHG
+	LHLD	QEND
+	CALL	SUBHD
+	XCHG			; DE = what the register holds
 	LHLD	YTGT
-	CALL	CMP16		; Z iff it is down to the target
-	JC	YS_END		; below it -- cannot happen over whole lines,
-	JNZ	YS_LP		;   but never spin here if it ever did
-YS_END:
+	CALL	CMP16		; CY iff it is short of the span: another pass
+	JC	YS_LP		;   (never more than the span over whole lines)
 	JMP	MARKMOD
 
 ;============================================================

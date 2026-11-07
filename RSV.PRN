@@ -464,7 +464,7 @@
                                 				;   that could not copy): MKSHFT must leave the
                                 				;   marks alone through it
                                 	CELL	YACT,2		; how this yank takes its lines (VD_DD / YSPAN)
-                                	CELL	YTGT,2		; YSPAN: the text's length once the span is out
+                                	CELL	YTGT,2		; YSPAN: the span's length, the register's goal
                                 	CELL	YWAS,2		; ... and its length BEFORE the lines came out
                                 	CELL	YCOL,2		; ... how far into them the cursor sat
                                 	CELL	YPFP,3		; ... and where in the file they start
