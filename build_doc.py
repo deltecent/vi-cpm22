@@ -163,7 +163,9 @@ special case, and it is kept here.  dd, yy, D and C are the short spellings
 of the common ones.  cc and S are not here, and cc does nothing at all.
 The register holds whole lines, so y`a and yf, -- part of a line -- are
 refused.  f and t take the character they land on; F and T stop short of
-it, so df, deletes the comma and dF, leaves it.
+it, so df, deletes the comma and dF, leaves it.  A search is not a motion
+for an operator yet: d/, c?, yn and the like ring the bell and change
+nothing (the / or ? line is read and thrown away).
 
 
 YANK AND PUT ---------------------------------------------------------------

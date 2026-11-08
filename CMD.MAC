@@ -3909,7 +3909,7 @@ OPP_NG:
 	JZ	OPLINE
 	MOV	A,C		; (OPCLS classifies the key)
 	CALL	OPCLS		; classify the motion: CY = not a motion (cancel)
-	JC	OPABRT		;   -- and not a mark, so nothing is owed below
+	JC	OPP_NM		;   -- and not a mark, so nothing is owed below
 	STA	OPCLSV
 	MOV	B,A		; B = the class
 	LDA	PSAVE
@@ -3935,6 +3935,29 @@ OPP_NO:
 	JNZ	OPABRT		;   motions only, so the find is dropped here)
 OPP_SW:
 	CALL	MKGETK
+	JMP	OPABRT
+;OPP_NM -- not a motion.  A search ('/' '?' 'n' 'N') is one in vim, but not
+; here yet (issue #44), and it is the one drop that cannot be silent: a '/' or
+; '?' left to the next dispatch reads no line, so 'd/QJQK<CR>' would run the
+; pattern as commands ('J' joins two lines).  So the line is read the way a
+; search reads it, and thrown away, and the bell says nothing was done.
+OPP_NM:
+	MOV	A,C
+	CPI	'/'
+	JZ	OPP_SL
+	CPI	'?'
+	JZ	OPP_SL
+	ANI	0DFH		; 'n' -> 'N'
+	CPI	'N'
+	JNZ	OPABRT		; any other key: dropped, as before
+	JMP	OPP_BL
+OPP_SL:
+	LXI	D,EXBUF		; the ':' line's buffer, free between commands;
+	MVI	B,EXMAX		;   C is the key, and so the prompt.  A cancel
+	CALL	RDLINE		;   (ESC, or BS on an empty line) rings too
+OPP_BL:
+	MVI	C,BEL
+	CALL	BCONOU
 	JMP	OPABRT
 OPP_GO:
 	XRA	A

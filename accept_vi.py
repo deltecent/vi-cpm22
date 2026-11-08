@@ -5669,6 +5669,93 @@ def srch_cmds():
                       f'srch miss from {start}')
     finally:
         e.close()
+    opsrch_cmds()
+
+
+def opsrch_cmds():
+    """d c y over / ? n N are not built (issue #44).  Until they are, the
+    operator refuses: it rings, reads a '/' or '?' line to its end and throws it
+    away, and changes nothing.  Before this the operator and the motion key
+    were dropped without a word, so 'd/QJQK<CR>' ran the pattern as commands:
+    its 'J' joined two lines.  The count goes with the refusal, as with any
+    dropped operator: the next 'x' deletes one character, not three."""
+    pat = 'QJQK'
+    wide = [('w%03d' % i) + 'y' * 115 for i in range(1, 7)]   # no blank:
+    wide[1] = wide[1][:100] + pat     #   '4G' lands on column 0 every time + wide[1][104:]
+    files = {
+        'small': [b'a', b'x' + pat.encode(), b'b', b'cdefghijklmnopqrstu', b'd'],
+        'wide': [s.encode() for s in wide],
+    }
+    cases = [(op + m) for op in 'dcy' for m in ('/' + pat + '\r',
+                                                 '?' + pat + '\r', 'n', 'N')]
+    for name, lines in files.items():
+        model = list(lines)
+        e = Editor(b''.join(s + b'\r\n' for s in model))
+        try:
+            e.key('/' + pat + '\r')             # 'n' and 'N' have a pattern
+            for keys in cases:
+                tag = f'#44 {name}: 4G 3{keys!r}'
+                e.key('4G')
+                v = e.screen(); before = (v.row, v.col)
+                scr0 = [''.join(r) for r in v.screen[:23]]
+                n = len(e.cap.getvalue())
+                e.key('3' + keys)
+                idle(e)
+                out = e.cap.getvalue()[n:]
+                v = e.screen()
+                check(f'{tag} rings', '\x07' in out)
+                check(f'{tag} keeps the cursor ({v.row},{v.col})',
+                      (v.row, v.col) == before)
+                check(f'{tag} keeps the text',
+                      [''.join(r) for r in v.screen[:23]] == scr0)
+                g = ctrlg(e)
+                check(f'{tag} stays on line 4 ({g!r})', 'line 4 ' in g)
+                if keys == cases[0]:
+                    check(f'{tag} changes nothing ({g!r})', 'Modified' not in g)
+                e.key('x')                       # one character, not three
+                model[3] = model[3][1:]
+            # 'y/' leaves the register as it was
+            e.key('1G'); e.key('yy'); e.key('4G'); e.key('y/' + pat + '\r')
+            idle(e); e.key('p')
+            model.insert(4, model[0])
+            e.key(':w\r'); ex_settled(e)
+            got = saved_bytes(e)                 # leaves the editor: last
+            want = b''.join(s + b'\r\n' for s in model)
+            check(f'#44 {name}: each refusal changed nothing, each x took one '
+                  f'character and y/ kept the register', got == want)
+            if got != want:
+                for i, (g, w) in enumerate(zip(got.split(b'\n'),
+                                               want.split(b'\n'))):
+                    if g != w:
+                        print(f'   line {i + 1} got  {g!r}')
+                        print(f'   line {i + 1} want {w!r}')
+        finally:
+            e.close()
+
+    # 100 K: the refusal reads no file -- it is back at once, line 6000 untouched
+    big = make(12800)
+    e = Editor(big)
+    try:
+        e.key('/000100\r'); idle(e)
+        for keys in ('d/000100\r', 'c?006100\r', 'y/zzzz\r', 'dn', 'cN'):
+            e.key('6000G'); idle(e)
+            v = e.screen(); before = (v.row, v.col)
+            n = len(e.cap.getvalue())
+            e.key(keys)
+            idle(e)
+            out = e.cap.getvalue()[n:]
+            v = e.screen()
+            tag = f'#44 100k: 6000G {keys!r}'
+            check(f'{tag} rings', '\x07' in out)
+            check(f'{tag} keeps the cursor ({v.row},{v.col})',
+                  (v.row, v.col) == before)
+            g = ctrlg(e)
+            check(f'{tag} changes nothing ({g!r})',
+                  'Modified' not in g and 'line 6000 ' in g)
+        e.key(':w\r'); ex_settled(e); idle(e)
+        check('#44 100k: the file is saved as it was', saved_bytes(e) == big)
+    finally:
+        e.close()
 
 
 # ---------------------------------------------------------------------------
