@@ -160,6 +160,18 @@ WordMaster. The engine changes only for a stated reason.
   then only in the register.
 - WordMaster's `GETKEY` is replaced by `KBPOLL` (KEY.MAC) in `RDSEC` and
   `POLLBRK`, so the long engine loops drain type-ahead into VI's ring.
+- **The copy loops read the keyboard** (issues #30, #33). WordMaster's
+  `MEMCPY` and `MCPYR` copy a byte a pass, 39 T-states each, and read no key:
+  paging slides the whole window, up to 20 K (0.4 s), once per 2 K batch. On a
+  2SIO with no flow control a second key typed in that time is lost. Now the
+  odd bytes go one at a time, then eight a pass (about 26 T-states a byte),
+  and `KBPOLL` takes a waiting key into the ring after every 2 K (27 ms). On
+  the 100 K test file `gg` from the end went from 35.6 s to 30.8 s (TIMECOST.md).
+  `stretch.py` measures the time between console reads; after this change no
+  stretch over 50 ms is in a copy. The long ones left are disk calls (a BDOS
+  Open of the next extent searches the 8 MB drive's directory, about 0.65 s
+  in the simulator), which no program can break into, and a few loops in the
+  editor's own code (`GOLINE`, `CNTLF`, `LFCNT`).
 - `OPENFIL` wraps WordMaster's inline open sequence as a callable routine
   (`SAVEFIL`, in `PSV.MAC`, does the same for `ENDEDIT`). They keep one drive
   and user 0.
@@ -559,8 +571,9 @@ Detail is in `RENDER.md`. The design decisions:
   `BIOSC`.
 - **Type-ahead ring**: 32 bytes, 31 usable. `KBPUMP` drains whatever the BIOS
   has waiting.
-  - The engine's long loops (`GOLINE`, `RDSEC`, `POLLBRK`) call `KBPOLL`, so keys
-    typed during a long operation are kept rather than lost.
+  - The engine's long loops (`GOLINE`, `RDSEC`, `POLLBRK`, and the copy loops
+    `MEMCPY`/`MCPYR` every 2 K) call `KBPOLL`, so keys typed during a long
+    operation are kept rather than lost.
   - The full repaint checks the ring between rows (`KBRDY`) and abandons the frame
     when a key is waiting. `FORCEF` makes the next frame a full one.
   - ESC abandons a search or a long move. Every loop that pages asks `CNTTST`

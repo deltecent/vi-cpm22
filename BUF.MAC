@@ -44,6 +44,14 @@
 ;      They now call MEMERR, which goes where MEMHK points: ERRMSG (as
 ;      before) until the editor points it at its own recovery (CMD.MAC's
 ;      MEMABT), which abandons the key and empties the register.
+;   4. THE COPY LOOPS, MEMCPY and MCPYR (issues #30, #33).  WM copies one
+;      byte a pass, 39 T-states a byte, and reads no key while it does: a
+;      20 K slide of the window is 0.4 s, and a paging move makes dozens of
+;      them.  On a 2SIO with no flow control a key typed in that time is
+;      lost.  Here the odd bytes go first, one at a time, then eight a pass
+;      (about 26 T-states a byte), and KBPOLL takes a waiting key into the
+;      ring after every 2 K.  The bytes, their order, and HL, DE and BC on
+;      return are WM's; A and the flags are not, and no caller reads them.
 ;
 ; APPENDED (non-WM), each section tagged where it starts:
 ;   * the LOGICAL-OFFSET API (CUROFF/LOGLEN/CHARAT/GOTO/LFCNT, DELFWD, UNDELF,
@@ -1193,7 +1201,8 @@ RECOUNT:			; WM 4037
 ; 16-BIT HELPER LIBRARY -- WM.ASM 5186-5391
 ;============================================================
 
-;MEMCPY -- WM 5186: copy BC bytes [HL]->[DE] forward.
+;MEMCPY -- WM 5186: copy BC bytes [HL]->[DE] forward.  The loop is
+; DEVIATION 4 (see header): eight bytes a pass, KBPOLL every 2 K.
 MEMCPY:				; WM 5186
 	CALL	CKCOPY
 	CALL	CMP16
@@ -1203,23 +1212,66 @@ MEMCPY:				; WM 5186
 	DAD	B
 	LXI	B,0H
 	RET
-MCPYSU:				 ; WM 5196
-	INR	B
-	INR	C
-	JMP	MCPYCT
-MCPYBO:				 ; WM 5201
+MCPYSU:				; DEVIATION 4: the odd bytes, one at a time
+	MOV	A,C
+	ANI	7
+	JZ	MCPY8
 	MOV	A,M
 	STAX	D
 	INX	H
 	INX	D
-MCPYCT:				 ; WM 5207
+	DCX	B
+	JMP	MCPYSU
+MCPY8:
+	CALL	BCDIV8		; BC = the passes of eight
+	RZ
+	INR	B
+	INR	C
+	JMP	MCPYCT
+MCPYKB:
+	CALL	KBPOLL		; 2 K copied: take a waiting key (#30)
+MCPYBO:
+	MOV	A,M
+	STAX	D
+	INX	H
+	INX	D
+	MOV	A,M
+	STAX	D
+	INX	H
+	INX	D
+	MOV	A,M
+	STAX	D
+	INX	H
+	INX	D
+	MOV	A,M
+	STAX	D
+	INX	H
+	INX	D
+	MOV	A,M
+	STAX	D
+	INX	H
+	INX	D
+	MOV	A,M
+	STAX	D
+	INX	H
+	INX	D
+	MOV	A,M
+	STAX	D
+	INX	H
+	INX	D
+	MOV	A,M
+	STAX	D
+	INX	H
+	INX	D
+MCPYCT:
 	DCR	C
 	JNZ	MCPYBO
 	DCR	B
-	JNZ	MCPYBO
+	JNZ	MCPYKB
 	RET
 
-;MCPYR -- WM 5215: copy BC bytes [HL]->[DE] backward.
+;MCPYR -- WM 5215: copy BC bytes [HL]->[DE] backward.  The loop is
+; DEVIATION 4 (see header), as in MEMCPY.
 MCPYR:			      ; WM 5215
 	CALL	CKCOPY
 	CALL	CMP16
@@ -1230,20 +1282,85 @@ MCPYR:			      ; WM 5215
 	DAD	B
 	LXI	B,0H
 	RET
-MCPRSU:				 ; WM 5226
-	INR	B
-	INR	C
-	JMP	MCPRCT
-MCPRBO:				 ; WM 5231
+MCPRSU:				; DEVIATION 4: the odd bytes, one at a time
+	MOV	A,C
+	ANI	7
+	JZ	MCPR8
 	DCX	H
 	DCX	D
 	MOV	A,M
 	STAX	D
-MCPRCT:				 ; WM 5237
+	DCX	B
+	JMP	MCPRSU
+MCPR8:
+	CALL	BCDIV8		; BC = the passes of eight
+	RZ
+	INR	B
+	INR	C
+	JMP	MCPRCT
+MCPRKB:
+	CALL	KBPOLL		; 2 K copied: take a waiting key (#30)
+MCPRBO:
+	DCX	H
+	DCX	D
+	MOV	A,M
+	STAX	D
+	DCX	H
+	DCX	D
+	MOV	A,M
+	STAX	D
+	DCX	H
+	DCX	D
+	MOV	A,M
+	STAX	D
+	DCX	H
+	DCX	D
+	MOV	A,M
+	STAX	D
+	DCX	H
+	DCX	D
+	MOV	A,M
+	STAX	D
+	DCX	H
+	DCX	D
+	MOV	A,M
+	STAX	D
+	DCX	H
+	DCX	D
+	MOV	A,M
+	STAX	D
+	DCX	H
+	DCX	D
+	MOV	A,M
+	STAX	D
+MCPRCT:
 	DCR	C
 	JNZ	MCPRBO
 	DCR	B
-	JNZ	MCPRBO
+	JNZ	MCPRKB
+	RET
+
+;BCDIV8 -- DEVIATION 4: BC := BC / 8, for a BC whose low three bits are 0;
+; Z if that is 0.  Each byte is rotated right three times: C's low bits are
+; 0, so it is exact; B's go to its top, and from there to the top of C.
+BCDIV8:
+	MOV	A,C
+	RRC
+	RRC
+	RRC
+	MOV	C,A
+	MOV	A,B
+	RRC
+	RRC
+	RRC
+	MOV	B,A
+	ANI	0E0H
+	ORA	C
+	MOV	C,A
+	MOV	A,B
+	ANI	1FH
+	MOV	B,A
+	ORA	C
 	RET
 
 ;CKCOPY -- WM 5249: copy-length sanity guard ('COPY ERR').
