@@ -534,6 +534,13 @@ command can forget to record itself.
   the cursor as the command starts; a command whose change starts somewhere
   else says so with `UNDHER` before its first edit: a backward operator span
   where the motion landed, a one-line delete at the line's first non-blank.
+- Offsets are measured from the window's top, so a page off the top moves
+  them all down 128 bytes a record. `UNDSHF` re-bases one by how far `OUTPOS`
+  has moved: from the snapshot to the first capture (issue #43, a `dd` that
+  spills before it takes the line), and from the start of `u` to each step and
+  to the cursor (issue #45, a `u` that has no room for the bytes it puts back
+  and spills in the middle of the replay). A `u` that pages leaves the change
+  out of reach of the next `u`, as any other page does.
 - The marks go back with the text. `MKSHFT` hears every edit before `UNDCHG`
   claims the change, so the first edit of a new change (`UNDNEW` still set)
   copies the marks to `MKUND` in the reserve block, and `u` copies back the

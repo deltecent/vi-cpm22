@@ -652,7 +652,7 @@
 
                                 	CELL	UNDPCU,2	; the cursor as the current command began
                                 	CELL	UNDCUR,2	; ... as the command that made THIS change began
-                                	CELL	UNDPCO,2	; OUTPOS when UNDPCU was taken (#43)
+                                	CELL	UNDPCO,2	; OUTPOS when UNDPCU was taken (#43), or as 'u' began (#45)
                                 	CELL	UNDLK,1		; the replay: 1 = whole lines put in, 2 = taken
                                 	CELL	UNDLC,1		;   out, 0FFH neither; how many; and LNDLT where
                                 	CELL	UNDLL0,2	;   they start (URLNQ)

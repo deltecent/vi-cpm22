@@ -5574,7 +5574,74 @@ def undo_cmds():
               saved_bytes(e) == wide[:a8] + wide[a5:a5 + n12] + wide[a8:])
     finally:
         e.close()
+    undo_replay_pages()
 
+
+def undo_replay_pages():
+    """#45: a 'u' that pages WHILE it puts the bytes back.  'dd' hands the
+    lines to the register, which takes what the delete freed; then the screen
+    fills from below, reading more of the file into the window.  If that read
+    leaves less room than the lines need, putting them back has to spill
+    records off the window's top in the middle of the replay -- and the
+    cursor's offset was measured from the top as it was.  'u' must still land
+    on the line the 'dd' began on, column 0, as vim does (it landed 31 lines
+    down).  On the wide file '500G 12dd' is the issue's case.  On the 8-byte
+    file the line is searched for: '{n}G' from line 1 for n = 3000, 3025 ...,
+    a fresh editor each, as many lines as the free room holds, until a 'dd'
+    there does not page and leaves less room than it took.  Where that is
+    depends on the arena, which shrinks with the image, so the pages (none in
+    the 'dd', one in the 'u') are asserted, not assumed."""
+    def free(e):
+        # every hole in the pointer row, as BUFSUM adds them
+        v = [word(e, k) for k in ('BUFBEG', 'QBEG', 'QEND', 'HOLEQP', 'TXTBAS',
+                                  'UBEG', 'UEND', 'TXTBEG', 'GAPBEG', 'GAPEND',
+                                  'TXTEND', 'BUFEND')]
+        return sum(v[i + 1] - v[i] for i in range(0, 12, 2))
+
+    def setup(text, ln, n):
+        """An editor at line *ln* after '{n}dd', with what the delete took,
+        or None (closed) if the 'dd' paged or left room enough."""
+        e = Editor(text)
+        e.key('%dG' % ln)
+        n = n or min(127, free(e) // 8)
+        L = text.split(b'\n')
+        need = sum(len(x) + 1 for x in L[ln - 1:ln - 1 + n])
+        top = word(e, 'PGTOPM')
+        e.key('%ddd' % n)
+        if word(e, 'PGTOPM') == top and need > free(e):
+            return e, n, need
+        e.close()
+        return None
+    for name, text, lines, n in (('wide', make_wide(), [500], 12),
+                                 ('8-byte', make(12800),
+                                  range(3000, 4000, 25), 0)):
+        for ln in lines:
+            got = setup(text, ln, n)
+            if got:
+                break
+        check(f"undo #45 {name}: a 'dd' that does not page and leaves less "
+              f"room than it took (line {ln})", got is not None)
+        if not got:
+            continue
+        e, n, need = got
+        try:
+            top = word(e, 'PGTOPM')
+            e.key('u')
+            check(f"undo #45 {name}: {ln}G {n}dd u had to page to put {need} "
+                  f"bytes back (PGTOPM {top} -> {word(e, 'PGTOPM')})",
+                  word(e, 'PGTOPM') != top)
+            v = e.screen(); r = rows(e)
+            check(f"undo #45 {name}: ... the cursor back on line {ln}, "
+                  f"column 0 ({r[v.row][:6]!r}, {v.col})",
+                  r[v.row].startswith('%06d' % ln) and v.col == 0)
+            g = ctrlg(e)
+            check(f"undo #45 {name}: ... and '^G' says line {ln} ({g!r})",
+                  f' line {ln} ' in g + ' ')
+            e.key(':w\r'); ex_settled(e)
+            check(f'undo #45 {name}: ... and the file is the file, byte for byte',
+                  saved_bytes(e) == text)
+        finally:
+            e.close()
 
 # Rows the editor is deliberately NOT held to, both recorded as deviations in
 # COMMANDS.md rather than worked around here:

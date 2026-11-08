@@ -1930,27 +1930,41 @@ UNDRST:
 				;   that is the room UNDGRW claimed)
 	LHLD	PGTOPM
 	SHLD	UNDPG
-	LHLD	OUTPOS		; ... and this command does change text, so
-	XCHG			;   where it began is where 'u' will put the
-	LHLD	UNDPCO		;   cursor back.  It was measured from the top
-	CALL	SUBHD		;   the window had then: a page before this
-	DAD	H		;   first capture moved the top by HL records
-	DAD	H		;   (#43: 'dd' on a full window spills before
-	DAD	H		;   it takes the line), so the offset moves by
-	DAD	H		;   128 bytes a record.  Above the top now is
-	DAD	H		;   where nothing can be put back: the top.
-	DAD	H
-	DAD	H
+	LHLD	UNDPCU		; ... and this command does change text, so
+	CALL	UNDSHF		;   where it began is where 'u' will put the
+	SHLD	UNDCUR		;   cursor back -- moved by any page since
+				;   (#43: 'dd' on a full window spills before
+				;   it takes the line)
+	MVI	A,1
+	STA	UNDST		; a change is on the buffer: 'u' undoes it
+	RET
+
+;UNDSHF -- HL = a logical offset measured when the window's top was record
+;UNDPCO: the same place, measured from the top as it is now (OUTPOS).  A page
+;off the top moves every offset down 128 bytes a record.  A place that has
+;itself gone above the top cannot be reached: 0, the top.  Clobbers DE.
+;The replay pages only when a step putting bytes back finds no room, and the
+;steps before it leave the room their change freed: in every change tried
+;that step was the replay's last, and only the cursor came after it (#45).
+UNDSHF:
+	PUSH	H
+	LHLD	OUTPOS
 	XCHG
-	LHLD	UNDPCU
+	LHLD	UNDPCO
+	CALL	SUBHD		; HL = records the top moved, negated
+	DAD	H
+	DAD	H
+	DAD	H
+	DAD	H
+	DAD	H
+	DAD	H
+	DAD	H		; ... times 128
+	POP	D
 	DAD	D
 	MOV	A,H
 	ORA	A
-	JP	URSTCU
+	RP
 	LXI	H,0
-URSTCU:	SHLD	UNDCUR
-	MVI	A,1
-	STA	UNDST		; a change is on the buffer: 'u' undoes it
 	RET
 
 ;UNDCHG -- the capture every hooked primitive uses.  A = UR_INS / UR_DEL,
@@ -2236,6 +2250,10 @@ UND_OK:
 	CALL	CMP16
 	JNZ	UNDPGD		; the pager has moved the window's top since,
 				;   so every offset the records hold has shifted
+	LHLD	OUTPOS		; ... but the replay may move it itself: the
+	SHLD	UNDPCO		;   bytes going back can need room the window
+				;   has not got (#45), and every offset read
+				;   from here on goes through UNDSHF
 	MVI	A,0FFH
 	STA	UNDML		; (no step taken yet)
 	XRA	A
@@ -2284,6 +2302,8 @@ UNDFIN:
 	;    measured from vim, which restores that and not the change's own
 	;    offset (CMD.MAC's VC_UNDO holds it inside the line) ---
 	LHLD	UNDCUR
+	CALL	UNDSHF		; (the replay paged: CMD.MAC reads the cell
+	SHLD	UNDCUR		;   again, so it is moved where it sits)
 	CALL	GOTO
 	ORA	A		; CY clear: it happened
 	RET
@@ -2437,6 +2457,7 @@ URSIDN:
 ;another line makes the change more than one line's (UNDML).
 URGOTO:
 	LHLD	UNDOF
+	CALL	UNDSHF		; (an earlier step may have paged)
 	CALL	GOTO
 	LHLD	LNDLT
 	XCHG
