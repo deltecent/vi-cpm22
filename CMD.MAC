@@ -93,6 +93,7 @@
 	EXTRN	LINPSB, DIRFLG			; BUF.MAC / PAGE.MAC -- G/gg placement
 	EXTRN	GAPEND, TXTEND			; BUF.MAC -- the char under the cursor (goal)
 	EXTRN	OUTPOS, REWIND			; PAGE.MAC -- records before the window / page back
+	EXTRN	PGJUMP, TOPLF			; PAGE.MAC -- a far move up starts over (#34 B)
 	EXTRN	SCNREC, SECBUF			; PAGE.MAC -- a record outside it, read
 	EXTRN	BAKRDY, BAKPOS			; ... and the backup stack below it
 
@@ -780,10 +781,14 @@ MKJ_LN:
 ;edge, SCRLST to page one step), stopped by where the window is instead of by
 ;the count.  A step cannot carry the window past the mark: the pager evicts
 ;only behind the cursor, and the cursor is on the edge nearer the mark.
+;A mark less than half as far down as the window's top, on a file not changed
+;since it was opened or written, is read again from the file's start instead
+;(MKFAR, #34 part B).
 MKPAGE:
 	CALL	MKWIN
 	JC	CLRCNT		; there: and the count that paged is spent,
 				;   not left for the next command to take
+	CNZ	MKFAR		; above the window (A = FFH, NZ)
 	STA	DIRFLG
 	LXI	H,0FFFFH
 	SHLD	CMDCNT
@@ -795,6 +800,24 @@ MKPAGE:
 	JC	CLRCNT
 	LXI	H,0FFFFH	; the very end of the text, which MKWIN does not
 	JMP	CLRCNT		;   count as in the window: GOTO clamps it
+
+;MKFAR -- the mark is above the window: if PGJUMP starts the file again from
+;its record 0, look for the mark again from there; if not, A = FFH, page back.
+MKFAR:
+	LHLD	MKPOS
+	DAD	H		; CY = bit 15
+	LDA	MKPOS+2
+	RAL
+	MOV	L,H
+	MOV	H,A		; HL = the mark's record
+	XCHG
+	LHLD	OUTPOS
+	XCHG			; DE = the window's top's
+	CALL	PGJUMP
+	MVI	A,0FFH
+	RNC
+	POP	H		; (MKPAGE's return)
+	JMP	MKPAGE
 
 ;BACKTO -- back to the 3-byte file position at HL, paging to it: where a
 ;command that came to nothing started.  The place has to be kept as a file
@@ -3566,6 +3589,9 @@ VG_LN:
 ;The move is counted from the line the cursor is on (CNTLF keeps that without
 ;reading the disk), so it costs the distance and not the line number: it used
 ;to go back to line 1 and count forward from there, whatever the distance.
+;A line less than half as far down as the window's top, on a file not changed
+;since it was opened or written, is the exception: PGJUMP reads the file
+;again from its start and the move counts forward from line 1 (#34 part B).
 GOLN:
 	PUSH	H
 	CALL	CNTLF
@@ -3578,6 +3604,20 @@ GOLN:
 	XRA	A
 	JMP	GLN_MV
 GLN_BK:
+	PUSH	H
+	PUSH	D
+	LHLD	TOPLF
+	XCHG			; DE = the lines behind the window
+	DCX	H		; HL = the lines above the one wanted
+	CALL	PGJUMP
+	POP	D
+	POP	H
+	JNC	GLN_UP
+	XCHG			; it jumped: the cursor is on line 1
+	DCX	H		; HL = the lines down to it
+	XRA	A
+	JMP	GLN_MV
+GLN_UP:
 	CALL	SUBHD		; HL = the lines up to it
 	MVI	A,0FFH
 GLN_MV:

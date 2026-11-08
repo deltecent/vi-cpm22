@@ -61,7 +61,8 @@
 ; editing), TFCB/WRTO/TEXIST/DISCRD/CNTLF (':w name', ':e', a buffer with no
 ; name), PGTOPM (the count of times the pager moved TXTBEG) and TOPLF with
 ; TLFADD/TLFSUB (the line feeds behind the window, kept in PAGEOUT and REWIND),
-; and SCNREC (a record of the text outside the window, read where it lies).
+; SCNREC (a record of the text outside the window, read where it lies) and
+; PGJUMP (a far move up on an unchanged file reads it again from its start).
 ;============================================================
 
 WBOOT	EQU	0
@@ -90,6 +91,8 @@ PGINIT	EQU	200H		; WM 20 -- cold WRLIM/RDLIM (no-spill window)
 	PUBLIC	WRTO, TEXIST, DISCRD, CNTLF
 ;--- APPENDED (NOT WordMaster): a search's wrapped pass reads, it does not page
 	PUBLIC	SCNREC
+;--- APPENDED (NOT WordMaster): a far move up on an unchanged file starts over
+	PUBLIC	PGJUMP
 	EXTRN	BINIT		; BUF.MAC -- WM L02F2 gap-pointer reset
 	EXTRN	WRTYP, SECBUF	; RSV.MAC -- held above the image (see RSV.MAC)
 
@@ -245,6 +248,52 @@ SKMORE:
 	XCHG
 	LHLD	TXTEND
 	JMP	SUBHD
+
+;============================================================
+; APPENDED (NOT WordMaster): a far move up starts again from the file's start
+; (issue #34, part B).  WM pages back to text above the window record by
+; record, sliding the window down for every batch, and on a file that has not
+; changed since it was opened or written that text is all still the source's
+; (deviation 8): the window can be dropped and the source read again from
+; record 0, as OPENFIL reads it, and the move goes on forward from there.
+; Nothing is lost by it.  SAMREC is FFFFH only while no change has been made,
+; so the window holds no change, nothing is in name.$$$ and VIBACKUP.$$$
+; holds only text the source holds too.  BINIT is not called: the yank
+; register and the undo region, below TXTBEG, stay as they are.
+;============================================================
+
+;PGJUMP -- HL = how far the target lies from the file's start, DE = how far
+;the window's top does, both in lines or both in records.  If the target is
+;less than half as far down as the window's top and SAMREC is FFFFH, empty the
+;window (the gap takes all of it), put the source back at record 0, reset the
+;marks and fill the window again as OPRD does: CY, the cursor at the start of
+;the text.  Otherwise NC and nothing done.
+PGJUMP:
+	DAD	H		; HL = twice the target
+	CMC
+	RNC			; that overflowed: far down, no
+	XCHG
+	CALL	CMP16		; CY iff twice the target < the window's top
+	RNC
+	LHLD	SAMREC
+	INX	H
+	MOV	A,H
+	ORA	L		; (and NC)
+	RNZ			; changed since it was opened or written
+	LHLD	TXTBEG
+	SHLD	GAPBEG
+	SHLD	GAPEND
+	SHLD	TXTEND
+	LHLD	PGTOPM		; the window's top moved: 'u' and the screen
+	INX	H		;   read this
+	SHLD	PGTOPM
+	LXI	H,0H
+	SHLD	7EH		; the source's next record is record 0 (SETREC
+	DCR	A		;   opens extent 0 for it), and it has data
+	STA	5BH
+	CALL	OPRD		; every mark to zero, then FILLBUF
+	STC
+	RET
 
 ;============================================================
 ; APPENDED (NOT WordMaster): the text outside the window, read where it lies.

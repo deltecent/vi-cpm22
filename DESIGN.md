@@ -213,12 +213,40 @@ WordMaster. The engine changes only for a stated reason.
   matches that straddle each seam; with the carry between pieces turned off,
   every straddle case fails. On the 100 K test file (TIMECOST.md) `/zzzz`
   from line 6000, never found, went from 88.1 to 36.6 s. A search that wraps
-  and finds costs what it did (`/000100` from line 6000, 46.6 s): landing
-  near the top still pages the window back from the end. VI.COM grew by 640
+  and finds cost what it did (`/000100` from line 6000, 46.6 s): landing
+  near the top still paged the window back from the end, until #34 part B
+  (below) made that landing a jump: 14.9 s. VI.COM grew by 640
   bytes, and the arena shrank by 715 with the 29-byte carry and the cells;
   the rows that slowed with it (`100dd` 0.7 to 1.9 s, `6100G` 0.8 to 1.9 s)
   time the same on the old code padded to the new size, so they are where
   the window's edges fall, not the search.
+- **A far move up on an unchanged file starts again from the top** (issue
+  #34, part B). WordMaster reaches text above the window by paging back
+  record by record, and every batch slides the window down in RAM; `gg` from
+  the end of the 100 K test file took 33.4 s that way. While `SAMREC` is still
+  "all" (no change since the file was opened or written), every byte of the
+  file is the source's, so `PGJUMP` (PAGE.MAC, appended) can drop the window
+  instead: the gap takes all of it, the source goes back to record 0, and
+  WordMaster's own `OPRD` reset zeroes the marks and fills the window from
+  the start. The move then goes on forward. `BINIT` is not called, so the yank
+  register and the undo region stay. `GOLN` (`{n}G`, `{n}gg`, `d{n}G`, `:N`,
+  `:N,Ms`) jumps when the line wanted is less than half as far down as the
+  window's top (`TOPLF`), and `MKPAGE` (a mark, a search landing, the way back
+  from an ESC) does the same in records (`OUTPOS`). The first change stops it,
+  because from then on the window holds the only copy of that change.
+  `accept_vi.py`'s `jump_back` lands each move on its line and checks the
+  window moved once (`PGTOPM` + 1), the register survives, a changed file
+  still pages back, and a `:w` brings the jump back; with the `SAMREC` test
+  taken out, the changed-file cases fail and one save comes back empty. On
+  the 100 K test file (TIMECOST.md) `gg` from the end went from 33.4 to
+  1.7 s, `100G` from line 12000 from 30.1 to 2.0, `'a` to line 100 from 13.9
+  to 1.4, `/000100` from line 6000 (it wraps) from 46.6 to 14.9 and `dgg` from
+  line 6000 from 19.6 to 8.6. The window then holds what an open reads, 2 K,
+  so the next key that needs more text reads it, as after an open
+  (PAGING.md §6). VI.COM grew by 128 bytes and the arena shrank by 98; the
+  rows that slowed with it (`100dd` 1.9 to 2.2 s, `d9000G` 12.2 to 14.1,
+  `:6000,6100w` 3.3 to 4.8) time the same on the old code padded to the new
+  size.
 - `OPENFIL` wraps WordMaster's inline open sequence as a callable routine
   (`SAVEFIL`, in `PSV.MAC`, does the same for `ENDEDIT`). They keep one drive
   and user 0.
@@ -277,6 +305,12 @@ WordMaster. The engine changes only for a stated reason.
   length less one, directly below `SECBUF` (`RVCRYN`, 29 bytes, in RSV.MAC),
   so a match across two records is found; the top byte of that reserve is
   `SECBUF`'s lower guard byte. `RVCRYN` is `SRMAX` - 1 (BUF.MAC).
+- **`PGJUMP`**, the jump back to the file's start (issue #34, part B). It
+  changes no WordMaster routine: it points the gap over the whole window,
+  sets the source FCB's record word to 0 and its has-data flag, counts the
+  move in `PGTOPM`, and calls `OPRD`, the reset WordMaster's open ends with,
+  which zeroes the marks and calls `FILLBUF`. `GOLN` and `MKPAGE` (CMD.MAC)
+  decide when, and go on forward from line 1.
 
 **Layout contracts inherited from WordMaster**, which code relies on and which a
 move would break:

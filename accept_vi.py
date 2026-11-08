@@ -307,7 +307,12 @@ def insert_record_end(label, n):
     with a 3-byte line.  One byte before and after the record end are the
     controls; a line break is the issue's own `i<CR>` row.  The state is
     asserted, not assumed: the record holding the insert is resident and
-    below OUTREC when the insert is typed."""
+    below OUTREC when the insert is typed.
+
+    The page back is `G` `x` `gg`: on a file not changed since it was opened,
+    `gg` reads the file again from its start instead (#34 part B) and leaves
+    nothing on disk, so the `x` on the last line is what keeps the page back.
+    The saved file is short that byte too."""
     if n < 1:
         return
     numbered = b'H\r\n' + make(n)
@@ -315,19 +320,19 @@ def insert_record_end(label, n):
     cases = []                          # (tag, content, moves, offset, insert)
     t = record_end(numbered, 10)
     if t is not None:
-        back = ['G', 'gg'] if paged else []
-        cases += [('G gg, iX', numbered, back, t, 'X'),
-                  ('G gg, i<CR>', numbered, back, t, '\r')]
+        back = ['G', 'x', 'gg'] if paged else []
+        cases += [('G x gg, iX', numbered, back, t, 'X'),
+                  ('G x gg, i<CR>', numbered, back, t, '\r')]
         if paged:
-            cases += [('G gg, iX a byte before', numbered, back, t - 1, 'X'),
-                      ('G gg, iX a byte after', numbered, back, t + 1, 'X')]
+            cases += [('G x gg, iX a byte before', numbered, back, t - 1, 'X'),
+                      ('G x gg, iX a byte after', numbered, back, t + 1, 'X')]
             far = record_end(numbered, len(numbered) * 3 // 5 // 128)
             cases.append(('G then back to a line, iX', numbered,
                           ['G', place(numbered, far).split('G')[0] + 'G'], far, 'X'))
     if n >= 12800:
         wide = make_wide()
         tw = record_end(wide, 10)
-        cases.append(('wide lines, G gg, iX', wide, ['G', 'gg'], tw, 'X'))
+        cases.append(('wide lines, G x gg, iX', wide, ['G', 'x', 'gg'], tw, 'X'))
     for tag, content, moves, t, ins in cases:
         e = Editor(content)
         try:
@@ -344,7 +349,11 @@ def insert_record_end(label, n):
             e.key(':w\r')
             add = b'\r\n' if ins == '\r' else ins.encode()
             got = saved_bytes(e)
-            want = content[:t] + add + content[t:]
+            was = content
+            if 'x' in moves:            # the x took the last line's first byte
+                last = content.rindex(b'\n', 0, len(content) - 1) + 1
+                was = content[:last] + content[last + 1:]
+            want = was[:t] + add + was[t:]
             bad = next((i for i in range(min(len(got), len(want)))
                         if got[i] != want[i]), None)
             check(f'{label}: #31 {tag} at offset {t} saved byte-exact'
@@ -479,6 +488,140 @@ def edit_front(label, n):
                       f'{len(want)})'), got == want)
             finally:
                 e.close()
+
+
+def jump_back(label, n):
+    """#34 part B: on a file not changed since it was opened or written, a far
+    move up drops the window and reads the file again from its start, instead
+    of paging back to it record by record.  The cursor and the screen land as
+    the paging move landed them, the yank register is kept, and the first
+    change stops it: the window then holds the only copy of that change.
+
+    PGTOPM counts the times the pager moved the window's top.  Paging back
+    adds one for every record it reads back; the jump adds one, and the move
+    on from the file's start adds none for a target in the first window.  A
+    move the window already held adds none at all."""
+    if n < 256:
+        return
+    lines = [b'%06d' % i for i in range(1, n + 1)]
+    wide = [b'%06d' % i + b'y' * 112 for i in range(1, 341)]
+
+    def go(e, keys):
+        e.s.send(keys)
+        idle(e)
+
+    def where(e):
+        m = re.search(r'line (\d+) col (\d+)', ctrlg(e))
+        return (int(m.group(1)), int(m.group(2))) if m else None
+
+    def joined(ls):
+        return b''.join(l + b'\r\n' for l in ls)
+
+    def moved(e, keys, ln, tag, jumps=True, within=None):
+        """From where the cursor is, *keys* must land on line *ln*; with the
+        window paged away from the top, the move jumps (PGTOPM + 1) or, for
+        *jumps* False, pages back (more than one).  *jumps* None: a command
+        that pages forward first or edits as it goes, which PGTOPM cannot tell
+        from paging back."""
+        paged = word(e, 'OUTPOS') > 0
+        p0, t0 = word(e, 'PGTOPM'), tstates(e)
+        go(e, keys)
+        took = (tstates(e) - t0) / 2e6
+        d = (word(e, 'PGTOPM') - p0) & 0xFFFF
+        w = where(e)
+        check(f'{label}: #34B {tag}: {keys!r} lands on line {ln} ({w})',
+              w is not None and w[0] == ln)
+        if jumps is None:
+            pass                # it pages forward first: PGTOPM cannot say
+        elif paged:
+            ok = d == 1 if jumps else d > 1
+            check(f'{label}: #34B {tag}: the window ' + ('jumped (PGTOPM +1)'
+                  if jumps else 'paged back') + f' (+{d}, {took:.1f} s)', ok)
+        else:
+            check(f'{label}: #34B {tag}: nothing paged, nothing moved (+{d})',
+                  d == 0)
+        if within is not None:
+            check(f'{label}: #34B {tag}: {keys!r} in {took:.1f} s '
+                  f'({within} allowed)', took < within)
+
+    def saves(e, want, tag):
+        e.key(':w\r'); ex_settled(e)
+        got = saved_bytes(e)
+        bad = next((i for i in range(min(len(got), len(want)))
+                    if got[i] != want[i]), None)
+        check(f'{label}: #34B {tag}: saved byte-exact' + ('' if got == want
+              else f' (first difference at {bad}; {len(got)} bytes for '
+              f'{len(want)})'), got == want)
+
+    fast = 10 if n >= 12800 else None
+    e = Editor(joined(lines))
+    try:
+        go(e, 'G')
+        moved(e, 'gg', 1, 'G gg', within=fast)
+        check(f'{label}: #34B G gg: the top row is line 1',
+              rows(e)[0] == txt(1))
+        go(e, 'G')
+        moved(e, '100G', 100, 'G 100G', within=fast)
+        go(e, '50G')
+        go(e, 'ma')
+        go(e, 'G')
+        moved(e, "'a", 50, "50G ma G 'a", within=fast)
+        go(e, 'G')
+        moved(e, '/000100\r', 100, 'G /000100 (wrapped)', jumps=None)
+        # the register outlives the jump (saved_bytes ends the editor)
+        go(e, 'G')
+        go(e, 'yy')
+        moved(e, 'gg', 1, 'G yy gg')
+        go(e, 'p')
+        saves(e, joined(lines[:1] + lines[-1:] + lines[1:]), 'G yy gg p')
+    finally:
+        e.close()
+    # a change: the window holds the only copy of it, so the move pages back;
+    # ':w' makes the file the source again, and the jump is back
+    e = Editor(joined(lines))
+    try:
+        go(e, 'x')
+        go(e, 'G')
+        moved(e, 'gg', 1, 'x G gg (changed)', jumps=False)
+        e.key(':w\r'); ex_settled(e)
+        go(e, 'G')
+        moved(e, 'gg', 1, 'x G gg :w G gg')
+        go(e, 'x')
+        saves(e, joined([lines[0][2:]] + lines[1:]), 'x G gg :w G gg x')
+    finally:
+        e.close()
+    # an ex range jumps to its first line, then changes it
+    e = Editor(joined(lines))
+    try:
+        go(e, 'G')
+        moved(e, ':1,3s/0/Z/\r', 3, 'G :1,3s')
+        saves(e, joined([l.replace(b'0', b'Z', 1) for l in lines[:3]]
+                        + lines[3:]), 'G :1,3s/0/Z/')
+    finally:
+        e.close()
+
+    if n != 5120:
+        return
+    # lines past the screen's right edge, and an operator over the jump
+    e = Editor(joined(wide))
+    try:
+        go(e, 'G')
+        moved(e, '100G', 100, '120-byte lines, G 100G')
+        go(e, 'G')
+        go(e, 'yy')
+        moved(e, 'gg', 1, '120-byte lines, G yy gg')
+        go(e, 'p')
+        saves(e, joined(wide[:1] + wide[-1:] + wide[1:]), '120-byte lines, G yy gg p')
+    finally:
+        e.close()
+    e = Editor(joined(lines))
+    try:
+        go(e, 'G')
+        go(e, 'k')
+        moved(e, 'd5G', 5, 'G k d5G', jumps=None)
+        saves(e, joined(lines[:4] + lines[-1:]), 'G k d5G')
+    finally:
+        e.close()
 
 
 def arena_free(e):
@@ -5326,8 +5469,11 @@ def undo_cmds():
     #     window 'dd' spills records off the top to make room before it
     #     takes the line, so the cursor offset taken as the command began is
     #     measured from a top that has since moved; 'u' must still put the
-    #     cursor back on the line, column 0, as vim does.  'G gg' first: the
-    #     second pass over the file writes nothing, so the window stays full.
+    #     cursor back on the line, column 0, as vim does.  'G x gg' first: the
+    #     page back leaves the window full, and the second pass over the file
+    #     writes nothing (the x is below it).  Without the x, 'gg' would read
+    #     the unchanged file again from its start (#34 part B) and fill the
+    #     window only as far as a load does.
     #     MKGAP pages only once under 256 bytes are free, and each record
     #     paged in takes 128, so 'j' walks down from line 700 until that is
     #     so: the line depends on the arena, which shrinks with the image.
@@ -5339,7 +5485,7 @@ def undo_cmds():
         return (word(e, 'GAPEND') - word(e, 'GAPBEG')
                 + word(e, 'BUFEND') - word(e, 'TXTEND'))
     try:
-        for k in ('G', 'gg', '700G'):
+        for k in ('G', 'x', 'gg', '700G'):
             e.key(k)
         ln = 700
         while free() >= 256 and ln < 1100:
@@ -5356,8 +5502,9 @@ def undo_cmds():
               f"back on line {ln}, column 0 ({r[v.row][:6]!r}, {v.col})",
               r[v.row].startswith('%06d' % ln) and v.col == 0)
         e.key(':w\r'); ex_settled(e)
-        check('undo #43: ... and the text is back byte for byte',
-              saved_bytes(e) == wide)
+        last = wide.rindex(b'\n', 0, len(wide) - 1) + 1
+        check('undo #43: ... and the text is back byte for byte (less the x)',
+              saved_bytes(e) == wide[:last] + wide[last + 1:])
     finally:
         e.close()
 
@@ -9517,6 +9664,12 @@ def resp_lines(n):
     return ''.join(l + '\r\n' for l in out).encode()
 
 
+# 'G' 'x' 'gg': the window paged to the end and back, so it is full.  The 'x'
+# (on the last line, off the screen) is what makes 'gg' page back: on a file
+# not changed since it was opened, 'gg' reads it again from its start (#34
+# part B) and the window holds what a load reads, 2 K, until a key needs more.
+BACK = ['G', 'x', 'gg']
+
 # What a key may take, in emulated seconds on the 2 MHz 8080 at 9600 baud,
 # with a full screen of ordinary lines (resp_lines).  The clock runs from the
 # key to the editor asking for the next one, as the harness sees it: that
@@ -9547,37 +9700,38 @@ RESP = [
     ('a char typed before a TAB', ['3j', 'w', 'i'], 'Z', 0.10),
     ('x before a TAB', ['3j', 'w'], 'x', 0.10),
     ('BS before a TAB', ['3j', 'w', 'iQQ'], '\x08', 0.10),
-    # a line comes or goes: the rows under it move, one is new.  ('G' 'gg'
-    # first, so that the file's end is not read for the first time here.)
-    ('dd', ['G', 'gg', '3j'], 'dd', 0.55),
-    ('dd, low on the screen', ['G', 'gg', '18j'], 'dd', 0.55),
-    ('o', ['G', 'gg', '3j'], 'o', 0.40),
-    ('O', ['G', 'gg', '3j'], 'O', 0.40),
-    ('<CR> typed mid-line', ['G', 'gg', '3j', '5w', 'i'], '\r', 0.40),
-    ('J', ['G', 'gg', '3j'], 'J', 0.45),
-    ('p of a line', ['G', 'gg', '3j', 'yy'], 'p', 0.45),
+    # a line comes or goes: the rows under it move, one is new.  (BACK
+    # first, so that the window is full and the text past it is not read
+    # for the first time here.)
+    ('dd', BACK + ['3j'], 'dd', 0.55),
+    ('dd, low on the screen', BACK + ['18j'], 'dd', 0.55),
+    ('o', BACK + ['3j'], 'o', 0.40),
+    ('O', BACK + ['3j'], 'O', 0.40),
+    ('<CR> typed mid-line', BACK + ['3j', '5w', 'i'], '\r', 0.40),
+    ('J', BACK + ['3j'], 'J', 0.45),
+    ('p of a line', BACK + ['3j', 'yy'], 'p', 0.45),
     ('u of an x', ['3j', '5w', 'x'], 'u', 0.25),
     ('u again (the redo)', ['3j', '5w', 'x', 'u'], 'u', 0.25),
     ('u of a word changed', ['3j', '5w', 'cwNEW\x1b'], 'u', 0.30),
     # whole lines put back or taken again: rows open or close, as for 'P'
-    ('u of a dd', ['G', 'gg', '3j', 'dd'], 'u', 0.50),
-    ('u again (the dd redone)', ['G', 'gg', '3j', 'dd', 'u'], 'u', 0.35),
-    ('u of a p', ['G', 'gg', '3j', 'yyp'], 'u', 0.40),
-    ('u of an o and its text', ['G', 'gg', '3j', 'onew\x1b'], 'u', 0.40),
+    ('u of a dd', BACK + ['3j', 'dd'], 'u', 0.50),
+    ('u again (the dd redone)', BACK + ['3j', 'dd', 'u'], 'u', 0.35),
+    ('u of a p', BACK + ['3j', 'yyp'], 'u', 0.40),
+    ('u of an o and its text', BACK + ['3j', 'onew\x1b'], 'u', 0.40),
     # a span out of the line: the terminal closes the cells up
     ('dw', ['3j', '5w'], 'dw', 0.20),
     ('D', ['3j', '5w'], 'D', 0.15),
     ('cw', ['3j', '5w'], 'cw', 0.25),
     # the cursor to another line of the screen: the lines between are looked
     # through once, and the cursor put there in one move
-    ('M from the top row', ['G', 'gg'], 'M', 0.11),
-    ('L from the top row', ['G', 'gg'], 'L', 0.15),
-    ('H from the bottom row', ['G', 'gg', 'L'], 'H', 0.13),
-    ('M from the bottom row', ['G', 'gg', 'L'], 'M', 0.09),
-    ('5j', ['G', 'gg'], '5j', 0.09),
-    ('5k', ['G', 'gg', 'L'], '5k', 0.09),
-    ('22j', ['G', 'gg'], '22j', 0.15),
-    ('22k', ['G', 'gg', 'L'], '22k', 0.15),
+    ('M from the top row', BACK, 'M', 0.11),
+    ('L from the top row', BACK, 'L', 0.15),
+    ('H from the bottom row', BACK + ['L'], 'H', 0.13),
+    ('M from the bottom row', BACK + ['L'], 'M', 0.09),
+    ('5j', BACK, '5j', 0.09),
+    ('5k', BACK + ['L'], '5k', 0.09),
+    ('22j', BACK, '22j', 0.15),
+    ('22k', BACK + ['L'], '22k', 0.15),
 ]
 
 
@@ -9945,7 +10099,6 @@ def brk_cmds():
         e.s.send('ma')
         idle(e)
         cancel(e, 'G', 6000, 'brk G')
-        cancel(e, 'gg', 6000, 'brk gg')
         cancel(e, '12000G', 6000, 'brk 12000G')
         # ('/' has come back in 27 to 31 s over many runs: the moment the ESC
         #  lands is not exact.  Left alone it takes 37.)
@@ -10025,6 +10178,19 @@ def brk_cmds():
         check(f"brk: G ^C still went to the last line ({bottom(e)!r})",
               'line 12800 ' in bottom(e) and 'Modified' not in bottom(e))
         check('brk: nothing was changed (:q exits)', at_ccp(e, ':q\r'))
+    finally:
+        e.close()
+
+    # --- a long move back.  On a file not changed since it was opened, 'gg'
+    #     from line 6000 reads the file again from its start and is done in
+    #     under 2 s (#34 part B), with nothing to stop.  An 'x' on the last
+    #     line keeps the page back, and that is the move ESC must stop ---
+    e = Editor(big)
+    try:
+        e.s.send('Gx')
+        idle(e)
+        start(e, 6000)
+        cancel(e, 'gg', 6000, 'brk gg (changed: pages back)')
     finally:
         e.close()
 
@@ -10819,6 +10985,7 @@ def main():
             insert_record_end(label, n)
             unchanged_front(label, n)
             edit_front(label, n)
+            jump_back(label, n)
             yank_span_paging(label, n)
             window_edge_span(label, n)
             hl_x_deep(label, n)

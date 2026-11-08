@@ -457,9 +457,13 @@ it is not instant:
 A command that changes the text is not stopped: dG, :s, a put and :w run
 to the end, and the ESC is taken afterwards as a key that does nothing.
 
-Going BACK costs more once something has been changed: gg from the last
-line is {t('gg from the end, after x there')} after an x there, because the text passed over
-is then written to VIBACKUP.$$$.
+Going back near the top of a file not changed since it was opened or
+written is quick: the editor reads it again from its start, as it did on
+opening it.  That is gg, {{n}}G, 'a and a search landing there, when the
+place is less than half as far down the file as where the text in memory
+begins.  Once something has been changed it pages back instead: gg from
+the last line is {t('gg from the end, after x there')} after an x there, because the text passed
+over is then written to VIBACKUP.$$$.
 
 Big deletes and yanks, at line 6000:
 
