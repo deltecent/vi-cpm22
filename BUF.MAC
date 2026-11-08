@@ -2063,59 +2063,85 @@ UNDXNO:
 	JMP	POPRET
 
 ;UNDAPT -- append BC bytes of resident text, from logical offset HL, to the
-;undo region.  One byte at a time, re-reading the offset through CHARAT and the
-;region through its pointer cell every time, so growing the region (which
-;slides regions about) can never leave this loop holding a stale address.
-;CY if it outgrows the claim, and the caller then gives the change up.
+;undo region.  CY, and the change given up on, if they do not all fit the room
+;UNDGRW claimed: then NOTHING is copied, so a change too big to keep costs no
+;capture at all (#36).  Otherwise the bytes go in with at most two MEMCPYs, the
+;run before the gap and the run after it.  Each hook hands over a span on ONE
+;side of the gap, but the split costs little and keeps the contract whole.
+;The addresses are resolved here and used at once: nothing UNDAPT calls can
+;move a region (no MKGAP, no paging; MEMCPY's KBPOLL only fills the key ring,
+;and at 1 K a copy never reaches it), so none can go stale in the middle.
 UNDAPT:
 	MOV	A,B
 	ORA	C
 	RZ			; nothing to append
-UNDAPL:
-	PUSH	B
-	PUSH	H
-	CALL	CHARAT		; A = the text byte at this offset
-	CALL	UNDAPB		; ... into the region
-	POP	H
-	POP	B
-	RC
-	INX	H
-	DCX	B
-	MOV	A,B
-	ORA	C
-	JNZ	UNDAPL
-	RET
-
-;UNDAPB -- put the byte in A into the room UNDGRW claimed.  It does NOT grow
-;the region -- see UNDGRW -- so CY, and the change given up on, once the room
-;is used up: a change bigger than the region is simply not undoable.
-UNDAPB:
-	PUSH	B
-	PUSH	D
-	PUSH	H
-	STA	UNDB1
+	PUSH	H		; the offset
+	PUSH	B		; ... and the length
 	LXI	H,UBEG
 	CALL	PRSPAN		; BC = the region's size
 	LHLD	UNDPTR
-	XCHG			; DE = where the next byte goes
+	XCHG
 	MOV	H,B
 	MOV	L,C
-	CALL	CMP16		; CY iff that is still inside the region
-	JNC	UNDAPF
-	LHLD	UBEG		; re-read: a relocation moves the region
+	CALL	SUBHD		; HL = the room left in it
+	XCHG			; DE = the room
+	POP	H
+	PUSH	H		; HL = the length
+	CALL	CMP16		; CY iff the room is short of it
+	JC	UNDAPF
+UNDAPR:
+	CALL	CUROFF		; HL = the bytes before the gap (DE is lost)
+	POP	B		; BC = the bytes still to copy
+	POP	D		; DE = their offset
+	MOV	A,B
+	ORA	C
+	RZ			; all in (NC from the ORA)
+	PUSH	D
+	CALL	CMP16		; CY iff they start before the gap
+	JNC	UNDAPA		; at or after it: one run, the rest
+	CALL	SUBHD		; HL = how many lie before the gap
+	MOV	D,B
+	MOV	E,C
+	CALL	CMP16		; CY iff fewer are left than that
+	JNC	UNDAPN		; the run stops at the gap
+UNDAPA:
+	MOV	H,B
+	MOV	L,C		; the run is all that is left
+UNDAPN:
+	MOV	A,C		; HL = this run, BC = left, the offset stacked
+	SUB	L
+	MOV	C,A
+	MOV	A,B
+	SBB	H
+	MOV	B,A		; BC = what is left after it
+	XCHG			; DE = the run
+	POP	H
+	PUSH	H		; HL = its offset
 	DAD	D
-	LDA	UNDB1
-	MOV	M,A
+	XTHL			; the next run's offset stacked, HL = this one's
+	PUSH	B		; ... and what will be left
+	MOV	B,D
+	MOV	C,E		; BC = the run
+	CALL	L2PHYS		; HL = where it sits in the text
+	PUSH	H
 	LHLD	UNDPTR
-	INX	H
-	SHLD	UNDPTR
-	ORA	A		; CY clear: it went in
-	JMP	POPRET
+	PUSH	H
+	DAD	B
+	SHLD	UNDPTR		; the write point moves past it
+	POP	D
+	LHLD	UBEG
+	DAD	D
+	XCHG			; DE = where it goes in the region
+	POP	H		; HL = the text
+	CALL	MEMCPY
+	JMP	UNDAPR
 UNDAPF:
+	POP	B
+	POP	H
 	MVI	A,1
-	STA	UNDBAD
+	STA	UNDBAD		; too big for the room: not undoable at all
 	STC
-	JMP	POPRET
+	RET
 
 ;UNDRM -- CY, and the change given up on, unless the arena still holds UNDRSV
 ;free.  The capture must never page: paging moves the window off the change and
@@ -2566,7 +2592,7 @@ UNDHX:
 	EXTRN	BUFEND, MVGTOP, ERRFLG, SRCHBF, SRCHST, L2756
 	EXTRN	QCPDON, UNDN, UNDST, UNDBAD, UNDRPL, UNDDIR
 	EXTRN	UNDWHY, UNDTY, UNDOF, UNDLN, UNDBO, UNDCL
-	EXTRN	UNDLSA, UNDPG, UNDPTR, UNDB1, UNDPCU, UNDCUR
+	EXTRN	UNDLSA, UNDPG, UNDPTR, UNDPCU, UNDCUR
 	EXTRN	UNDLK, UNDLC, UNDLL0, UNDML, UNDL0, LNDLT
 
 SRCMAX: DB	SRMAX		; SRCHST's capacity, so CMD.MAC cannot drift

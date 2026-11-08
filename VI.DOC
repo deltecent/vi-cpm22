@@ -209,7 +209,7 @@ stops a move or a search before then (see below).
 The limits:
 
     Memory      The text in memory, the yank register and the undo share
-                23026 bytes (about 22 K, with a 56 K CP/M).  About 2 K of
+                22996 bytes (about 22 K, with a 56 K CP/M).  About 2 K of
                 the file is read when it is opened, and up to 20 K is in
                 memory at once.
     Register    One, of whole lines, about 19 K.  What it holds is taken
@@ -235,7 +235,7 @@ Quick, wherever you are in the file:
 
     ^F  ^B                    under a second
     200j                       1.5 s
-    x                          0.0 s
+    x                          0.1 s
     dd                         0.3 s       u after it      0.2 s
     60yy                       0.3 s
     ^G                         0.4 s
@@ -274,12 +274,12 @@ is then written to VIBACKUP.$$$.
 
 Big deletes and yanks, at line 6000:
 
-    500dd      4 K   3.3 s          500yy      4 K   3.2 s
-    2000dd    16 K   8.4 s          2000yy    16 K    20 s
-    d6500G     4 K   2.8 s
-    d9000G    24 K    16 s
+    500dd      4 K   2.7 s          500yy      4 K   3.2 s
+    2000dd    16 K   7.7 s          2000yy    16 K    20 s
+    d6500G     4 K   2.1 s
+    d9000G    24 K    15 s
     dG        54 K    47 s
-    dgg       48 K    19 s
+    dgg       48 K    18 s
 
 What is refused:
 
@@ -302,9 +302,9 @@ What to do instead:
     no size is refused -- and nothing but :e! brings the lines back.
   * To MOVE or COPY a big block, write it to a file and read it back in
     (see YANK AND PUT).  :6000,9000w T.TXT is 29 s for 24 K and
-    :r T.TXT is 28 s.  That is any size, with the block still on the
+    :r T.TXT is 27 s.  That is any size, with the block still on the
     disk afterwards.  To move a block that fits the register, 2000dd
-    and P are quicker (8.4 s and 15 s); to copy one, 2000yy is not.
+    and P are quicker (7.7 s and 14 s); to copy one, 2000yy is not.
   * Type :w before a change that cannot be undone.  The file on the disk
     is not touched until the next :w, so :e! then throws the change away,
     and each :w leaves the version before it in NAME.BAK.

@@ -488,7 +488,6 @@ MVGTOP	EQU	BUFEND+1	; MOVGAP upper bound = high byte of BUFEND
 	CELL	UNDLSA,2	; the last record's address (UNDEXT's scratch)
 	CELL	UNDPG,2		; PGTOPM when this change was captured
 	CELL	UNDPTR,2	; the region's write point, as an OFFSET
-	CELL	UNDB1,1		; the byte going in (PRSPAN wants BC)
 	CELL	UNDPCU,2	; the cursor as the current command began
 	CELL	UNDCUR,2	; ... as the command that made THIS change began
 	CELL	UNDLK,1		; the replay: 1 = whole lines put in, 2 = taken

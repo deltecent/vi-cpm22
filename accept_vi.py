@@ -5162,6 +5162,41 @@ def undo_cmds():
               got == big[:5999 * 8] + big[7999 * 8:])
     finally:
         e.close()
+    # --- the edge of the room (#36): a change of exactly the room the region
+    #     claimed is kept, one line more is refused whole.  The room is read
+    #     from the editor, not assumed.  'dd' captures text AFTER the gap
+    #     (before it goes), 'P' captures text BEFORE it (once it is in) ---
+    small = make(400)
+    for how in ('dd', 'P'):
+        for extra in (0, 1):
+            e = Editor(small)
+            try:
+                e.key('3G'); e.key('x'); e.key('u')   # the region claims its room
+                room = word(e, 'UEND') - word(e, 'UBEG')
+                n = room // 8 + extra
+                fits = n * 8 <= room
+                if how == 'dd':
+                    e.key('100G'); e.key(f'{n}dd')
+                    want = small[:99 * 8] + small[(99 + n) * 8:]
+                else:
+                    e.key('100G'); e.key(f'{n}yy'); e.key('300G'); e.key('P')
+                    want = (small[:299 * 8] + small[99 * 8:(99 + n) * 8]
+                            + small[299 * 8:])
+                e.key('u')
+                said = bottom(e)
+                e.key(':w\r'); ex_settled(e)
+                got = saved_bytes(e)
+                what = f"undo: {n}{'dd' if how == 'dd' else 'yy P'} " \
+                       f'({n * 8} bytes, room {room})'
+                if fits:
+                    check(f'{what} goes back exactly ({said!r})',
+                          got == small and said == '')
+                else:
+                    check(f"{what} says it is too large ({said!r})",
+                          said == 'Too large to undo')
+                    check(f'{what} ... and the change stays', got == want)
+            finally:
+                e.close()
 
 
 # Rows the editor is deliberately NOT held to, both recorded as deviations in

@@ -406,6 +406,11 @@ command can forget to record itself.
   pointer that `DELPRV` hands to `SETGAPB`, and would overwrite the gap, where
   `R`'s backspace expects to find the byte it restores with `UNDELF`.
 - Limits: `URMAX` = 24 steps and `UNDCAP` = 1024 bytes per change.
+- A step's bytes go in whole or not at all (issue #36). `UNDAPT` checks the
+  room left first, so a change too big to keep costs nothing to capture. It
+  then copies them with at most two `MEMCPY`s, the run before the gap and the
+  run after it. That is safe because nothing it calls can move a region.
+  `100dd` went from 1.2 s to 0.7 s.
 - Reach is the resident window. `PGTOPM` counts how many times the pager moved
   `TXTBEG`, the only thing that shifts logical offsets. `OUTREC` and `SRCREC`
   are not a paging signature, because `UPDMARK` raises them on every edit.
