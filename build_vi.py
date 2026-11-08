@@ -4,9 +4,10 @@
 Drives the `altairsim` binary through its MCP interface (see mcpdrive.py):
   * sources move onto the CP/M disk with the **R** utility (altairsim's
     hostbridge card, port 0xB0), and TARGET.COM/.SYM come back with **W** --
-    no DSK-image surgery
-  * builds directly on CPM22-8MB-56K-VI.DSK, which carries M80/L80 and the
-    R/W/HDIR hostbridge utilities; there is no per-build working copy, so the
+    no DSK-image surgery; for VI, GENHEX makes VI.HEX too, and the build
+    fails unless it decodes to VI.COM byte for byte
+  * builds directly on CPM22-8MB-56K-VI.DSK, which carries M80/L80, GENHEX and
+    the R/W/HDIR hostbridge utilities; there is no per-build working copy, so the
     committed image always holds the current sources
 
 Modules use short names so the single L80 command line stays under CP/M's
@@ -151,6 +152,29 @@ def check_tables(target, modules):
     print(f"  tables: {len(keys)} commands, every OPCTAB key dispatchable")
 
 
+def check_hex(target):
+    """VI.HEX is tracked beside VI.COM, so it must be VI.COM: every data
+    record's checksum good, and the bytes from 0100H on the .COM's, all of it.
+    A build that leaves a stale or short hex file fails here."""
+    com = open(os.path.join(HERE, f"{target}.COM"), "rb").read()
+    mem = {}
+    for ln in open(os.path.join(HERE, f"{target}.HEX")):
+        ln = ln.strip()
+        if not ln.startswith(":"):
+            continue
+        b = bytes.fromhex(ln[1:])
+        if sum(b) & 0xFF:
+            sys.exit(f"BUILD FAILED: {target}.HEX has a bad checksum: {ln}")
+        if b[3] == 0:
+            at = b[1] << 8 | b[2]
+            for i in range(b[0]):
+                mem[at + i] = b[4 + i]
+    img = bytes(mem.get(a, 0) for a in range(0x100, 0x100 + len(com)))
+    if not mem or min(mem) != 0x100 or max(mem) > 0xFF + len(com) or img != com:
+        sys.exit(f"BUILD FAILED: {target}.HEX is not {target}.COM")
+    print(f"  {target}.HEX is {target}.COM ({len(com)} bytes from 0100H)")
+
+
 def run_build(target):
     modules = TARGETS[target]
     check_reserves()
@@ -196,18 +220,28 @@ def run_build(target):
                      f"  Reduce the {target} module count (merge feature modules).\n  {l80}")
         print(f"  L80 {link},{target}/Y/N/E  [{len(l80)} chars]")
         cmd(l80)
+        if target == "VI":
+            # VI.HEX is VI.COM as Intel hex (load address 0100H), for loaders
+            # that take hex: GENHEX on the disk makes it.  Only this script
+            # makes it; VI.SUB does not.
+            print("  GENHEX VI.COM 100")
+            cmd("GENHEX VI.COM 100")
 
         # Pull the artifacts back to the host via W (guest -> host).  Same
         # bridge, same arithmetic as the R step above: CMD.PRN alone is most of
         # a megabyte, so these get their own timeout too.
         sim.wfile(f"{target}.COM", timeout=600)        # .COM implies binary
         sim.wfile(f"{target}.SYM", "T", timeout=600)   # symbol table is text
+        if target == "VI":
+            sim.wfile("VI.HEX", "T", timeout=600)
 
         # Also pull each module's M80 listing (.PRN, text) alongside the sources.
         for mod in modules:
             sim.wfile(f"{mod}.PRN", "T", timeout=600)
 
     check_tables(target, modules)
+    if target == "VI":
+        check_hex(target)
 
     text = "\n".join(console)
     up = text.upper()
@@ -240,7 +274,9 @@ def run_build(target):
         print(text)
         sys.exit("BUILD FAILED")
 
-    print(f"  {target}.COM, {target}.SYM and .PRN listings written here")
+    print(f"  {target}.COM, {target}.SYM"
+          + (f", {target}.HEX" if target == "VI" else "")
+          + " and .PRN listings written here")
     print("BUILD OK")
 
 
