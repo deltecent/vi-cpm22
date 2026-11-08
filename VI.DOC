@@ -116,10 +116,11 @@ YANK AND PUT ---------------------------------------------------------------
     3p              put three copies
 
 There is one register and it holds whole lines.  A yank fills it and so
-does dd; no other delete does.  It holds about 18 K: a dd or yy of more
-than that is refused with "Too large to yank" and changes nothing.  To
-delete more, use dG, d{n}G or d'a, which keep nothing.  To MOVE more,
-write the lines to a file and read them back in where they belong:
+does dd; no other delete does.  It holds what memory allows (see LARGE
+FILES): a dd or yy of more is refused with "Too large to yank" and
+changes nothing.  To delete more, use dG, d{n}G or d'a, which keep
+nothing.  To MOVE more, write the lines to a file and read them back in
+where they belong:
 
     :100,900w TMP.TXT       lines 100 to 900 to a file ('!' to overwrite)
     100G  d900G             delete them
@@ -208,22 +209,23 @@ stops a move or a search before then (see below).
 
 The limits:
 
-    Memory      The text in memory, the yank register and the undo share
-                21841 bytes (about 21 K, with a 56 K CP/M).  About 2 K of
-                the file is read when it is opened, and up to 19 K is in
-                memory at once.
-    Register    One, of whole lines, about 18 K.  What it holds is taken
-                from the text's share, so after a big yank less of the
-                file is in memory and every move pages sooner.  If a
-                command then finds no room, it stops part way, the
-                register is emptied and the bottom row says "Out of
-                memory: register emptied".  The text is kept.
+    Memory      VI takes 24,500 bytes (22,784 of them are VI.COM).
+                The text in memory, the yank register and the undo share
+                the rest, up to CP/M: the more memory the system has, the
+                more of the file is in memory at once.
+    Register    One, of whole lines.  It can take all of that memory but
+                3,457 bytes, and what it holds is taken from the text's
+                share, so after a big yank less of the file is in memory
+                and every move pages sooner.  If a command then finds no
+                room, it stops part way, the register is emptied and the
+                bottom row says "Out of memory: register emptied".  The
+                text is kept.
     Undo        One change, of up to 1024 bytes.
     Lines       A long line wraps and is edited like any other.  The
-                one limit is a line of about 13,000 characters or more,
-                which is over half the memory.  A put into such a line
-                can land in the middle of it, and going to the end of
-                one of 26,000 or more runs out of memory, as above.
+                one limit is a line longer than half that memory.  A put
+                into such a line can land in the middle of it, and going
+                to the end of one longer than all of it runs out of
+                memory, as above.
     CPU, disk   The file moves through the window 128 bytes at a time, at
                 about 5 K a second.  Text that has left the window is
                 read again from the file itself up to the first change,
@@ -337,4 +339,4 @@ NOT IN THIS VI -------------------------------------------------------------
 
 A count before an insert (3ix) is ignored: it inserts once.  So is a count
 on r and ~.
-
+

@@ -34,8 +34,9 @@ a command is added or removed, this file is part of the change.
 
 The NUMBERS are not typed in at all.  Every time in the LARGE FILES section
 is read out of TIMECOST.md, which timecost.py measures on the built editor,
-and the memory figures are worked out from VI.SYM and BUF.MAC's equates (the
-arena starts where the image ends, so they move whenever the image grows).
+and VI's own size from VI.COM and VI.SYM (its reserves end at RSVTOP).  No
+figure for the memory left over is quoted: that is whatever the system has,
+and every system has different memory.
 A figure this file cannot find is a refusal to write, like a line too wide;
 and because a new build or a new measurement changes what this would write,
 `--check` then says VI.DOC is stale until it is rebuilt.
@@ -172,10 +173,11 @@ YANK AND PUT ---------------------------------------------------------------
     3p              put three copies
 
 There is one register and it holds whole lines.  A yank fills it and so
-does dd; no other delete does.  It holds about @REGK@ K: a dd or yy of more
-than that is refused with "Too large to yank" and changes nothing.  To
-delete more, use dG, d{n}G or d'a, which keep nothing.  To MOVE more,
-write the lines to a file and read them back in where they belong:
+does dd; no other delete does.  It holds what memory allows (see LARGE
+FILES): a dd or yy of more is refused with "Too large to yank" and
+changes nothing.  To delete more, use dG, d{n}G or d'a, which keep
+nothing.  To MOVE more, write the lines to a file and read them back in
+where they belong:
 
     :100,900w TMP.TXT       lines 100 to 900 to a file ('!' to overwrite)
     100G  d900G             delete them
@@ -329,19 +331,13 @@ def figures():
     def k(n):
         return "%d K" % round(n / 1024)
 
-    bdos = int(cell("BDOS entry, the word at 0006H").rstrip("H"), 16)
-    arena = bdos - 1 - symbol("RSVTOP")
-    held = [int(n) for n in re.findall(
-        r"\d+", cell("text in memory after 6000G G 6000G gg G"))] or [0]
     sizes = {
-        "arena": arena,
-        "ARENAK": k(arena),
+        # VI's memory: the image, then the reserves RSV.MAC names above it
+        "vi": symbol("RSVTOP") - 0x100,
+        "com": os.path.getsize(os.path.join(HERE, "VI.COM")),
         # QFIT refuses unless MORE than RESVMEM is left: BUF.MAC
-        "REGK": k(arena - equate("RESVMEM") - 1),
+        "resv": equate("RESVMEM") + 1,
         "undo": equate("UNDCAP"),
-        "WINK": k(max(held)),
-        "OPENK": k(int(cell("text in memory when the file is opened")
-                       .split()[0])),
         "OUTK": k(int(cell("TEST.$$$ after G from the top, nothing changed")
                       .split()[0])),
         "BAKK": k(int(cell("VIBACKUP.$$$ after G x gg").split()[0])),
@@ -398,22 +394,23 @@ stops a move or a search before then (see below).
 
 The limits:
 
-    Memory      The text in memory, the yank register and the undo share
-                {z['arena']} bytes (about {z['ARENAK']}, with a 56 K CP/M).  About {z['OPENK']} of
-                the file is read when it is opened, and up to {z['WINK']} is in
-                memory at once.
-    Register    One, of whole lines, about {z['REGK']}.  What it holds is taken
-                from the text's share, so after a big yank less of the
-                file is in memory and every move pages sooner.  If a
-                command then finds no room, it stops part way, the
-                register is emptied and the bottom row says "Out of
-                memory: register emptied".  The text is kept.
+    Memory      VI takes {z['vi']:,} bytes ({z['com']:,} of them are VI.COM).
+                The text in memory, the yank register and the undo share
+                the rest, up to CP/M: the more memory the system has, the
+                more of the file is in memory at once.
+    Register    One, of whole lines.  It can take all of that memory but
+                {z['resv']:,} bytes, and what it holds is taken from the text's
+                share, so after a big yank less of the file is in memory
+                and every move pages sooner.  If a command then finds no
+                room, it stops part way, the register is emptied and the
+                bottom row says "Out of memory: register emptied".  The
+                text is kept.
     Undo        One change, of up to {z['undo']} bytes.
     Lines       A long line wraps and is edited like any other.  The
-                one limit is a line of about 13,000 characters or more,
-                which is over half the memory.  A put into such a line
-                can land in the middle of it, and going to the end of
-                one of 26,000 or more runs out of memory, as above.
+                one limit is a line longer than half that memory.  A put
+                into such a line can land in the middle of it, and going
+                to the end of one longer than all of it runs out of
+                memory, as above.
     CPU, disk   The file moves through the window 128 bytes at a time, at
                 about {z['RATEK']} a second.  Text that has left the window is
                 read again from the file itself up to the first change,
@@ -528,8 +525,7 @@ def render():
     line rather than making the author find them one at a time.
     """
     large, sizes = large_files()
-    text = DOC.replace("@LARGE@", large).replace("@REGK@",
-                                                 sizes["REGK"].split()[0])
+    text = DOC.replace("@LARGE@", large)
     text = text.replace("@VER@", version())
     lines = [l.rstrip() for l in text.strip("\n").split("\n")]
     bad = []
