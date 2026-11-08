@@ -5197,6 +5197,32 @@ def undo_cmds():
                     check(f'{what} ... and the change stays', got == want)
             finally:
                 e.close()
+    # --- #43: a change that pages before its first capture.  On a full
+    #     window 'dd' spills records off the top to make room before it
+    #     takes the line, so the cursor offset taken as the command began is
+    #     measured from a top that has since moved; 'u' must still put the
+    #     cursor back on the line, column 0, as vim does.  'G gg' first: the
+    #     second pass over the file writes nothing, so the window stays full.
+    #     The page is asserted, not assumed ---
+    wide = make_wide()
+    e = Editor(wide)
+    try:
+        for k in ('G', 'gg', '700G'):
+            e.key(k)
+        top = word(e, 'PGTOPM')
+        e.key('dd')
+        check(f"undo #43: 'dd' on a full window paged before it took the line "
+              f"(PGTOPM {top} -> {word(e, 'PGTOPM')})", word(e, 'PGTOPM') != top)
+        e.key('u')
+        v = e.screen(); r = rows(e)
+        check(f"undo #43: G gg 700G dd u puts the cursor back on line 700, "
+              f"column 0 ({r[v.row][:6]!r}, {v.col})",
+              r[v.row].startswith('000700') and v.col == 0)
+        e.key(':w\r'); ex_settled(e)
+        check('undo #43: ... and the text is back byte for byte',
+              saved_bytes(e) == wide)
+    finally:
+        e.close()
 
 
 # Rows the editor is deliberately NOT held to, both recorded as deviations in

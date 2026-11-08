@@ -629,6 +629,7 @@
                                 	CELL	UNDPTR,2	; the region's write point, as an OFFSET
                                 	CELL	UNDPCU,2	; the cursor as the current command began
                                 	CELL	UNDCUR,2	; ... as the command that made THIS change began
+                                	CELL	UNDPCO,2	; OUTPOS when UNDPCU was taken (#43)
                                 	CELL	UNDLK,1		; the replay: 1 = whole lines put in, 2 = taken
                                 	CELL	UNDLC,1		;   out, 0FFH neither; how many; and LNDLT where
                                 	CELL	UNDLL0,2	;   they start (URLNQ)
@@ -639,8 +640,8 @@
                                 	CELL	LNDLT,2		; (appended) lines the cursor moved since the last
                                 				;   screen layout (signed; SCRN.MAC consumes it)
                                 
-  024B                          RSVZN	EQU	RZ-RVSIZE		; bytes ZINIT clears
-  0679'                         RSVTOP	EQU	RSVBAS+RZ		; BUF.MAC's PBEGMEM: the arena base
+  024D                          RSVZN	EQU	RZ-RVSIZE		; bytes ZINIT clears
+  067B'                         RSVTOP	EQU	RSVBAS+RZ		; BUF.MAC's PBEGMEM: the arena base
                                 
                                 	END
 	MACRO-80 3.44	09-Dec-81	PAGE	S
@@ -686,7 +687,7 @@ Symbols:
 04A3I'	JKMOV           04A1I'	JKN             04A7I'	JKPHN           
 04A9I'	JKVC            057FI'	KBHEAD          01BEI'	KBRING          
 0020 	KBRSIZ          0580I'	KBTAIL          0653I'	L2756           
-000A 	LF              048EI'	LNALL           0677I'	LNDLT           
+000A 	LF              048EI'	LNALL           0679I'	LNDLT           
 044AI'	LQKC            045DI'	LYDLT           0460I'	LYIB            
 046DI'	LYLAST          0463I'	LYLIM           0466I'	LYMAB           
 0467I'	LYMBL           0468I'	LYND            0449I'	LYOK            
@@ -727,8 +728,8 @@ Symbols:
 047BI'	RDSEG           048BI'	RINTENT         04E4I'	RLLEN           
 04E5I'	RLMAX           04E2I'	RLPTR           04FAI'	ROFLAG          
 04DEI'	RPAPP           04DCI'	RPDEL           04E0I'	RPGE            
-0000'	RSVBAS          0679I'	RSVTOP          042EI'	RSVZ            
-024BI 	RSVZN           0100 	RVDOTB          0080 	RVDOTS          
+0000'	RSVBAS          067BI'	RSVTOP          042EI'	RSVZ            
+024DI 	RSVZN           0100 	RVDOTB          0080 	RVDOTS          
 0195 	RVEXB           0180 	RVFNM           000C 	RVFNMN          
 032F 	RVHTB           00FF 	RVHTN           01BE 	RVKBR           
 0317 	RVMKS           030B 	RVMKT           0323 	RVMKU           
@@ -737,7 +738,7 @@ Symbols:
 0080 	RVSTKN          0263 	RVUND           00A8 	RVUNDN          
 01DE 	RVWRT           0003 	RVWRTN          018C 	RVZTP           
 0003 	RVZTPN          0551I'	RWERR           049DI'	RWMV            
-0550I'	RWPTR           049BI'	RWR             0679 	RZ              
+0550I'	RWPTR           049BI'	RWR             067B 	RZ              
 0007 	R_DCH           0003 	R_DLIN          0000 	R_FULL          
 0004 	R_ICH           0005 	R_ILIN          0006 	R_JOIN          
 0002 	R_LINE          0001 	R_MOVE          054AI'	SANY            
@@ -759,27 +760,27 @@ Symbols:
 0622I'	TXTBAS          0628I'	TXTBEG          062EI'	TXTEND          
 0624I'	UBEG            0626I'	UEND            0659I'	UNDBAD          
 0662I'	UNDBO           0664I'	UNDCL           066EI'	UNDCUR          
-065BI'	UNDDIR          0675I'	UNDL0           0671I'	UNDLC           
-0670I'	UNDLK           0672I'	UNDLL0          0660I'	UNDLN           
+065BI'	UNDDIR          0677I'	UNDL0           0673I'	UNDLC           
+0672I'	UNDLK           0674I'	UNDLL0          0660I'	UNDLN           
 	MACRO-80 3.44	09-Dec-81	PAGE	S-2
 
 
-0666I'	UNDLSA          0674I'	UNDML           0657I'	UNDN            
-065EI'	UNDOF           066CI'	UNDPCU          0668I'	UNDPG           
-066AI'	UNDPTR          0263I'	UNDREC          065AI'	UNDRPL          
-0658I'	UNDST           065DI'	UNDTY           065CI'	UNDWHY          
-0080I'	VISTK           04DBI'	VRCH            0490I'	WBIG            
-0000 	WBOOT           04D8I'	WKBOL           04DAI'	WKCLS           
-04D4I'	WKI             04D6I'	WKTERM          04ECI'	WPBYT           
-04EDI'	WPREC           04EBI'	WPROW           0491I'	WPULL           
-05DDI'	WRKMAD          060BI'	WRLIM           01DEI'	WRTYP           
-0481I'	XC              0529I'	YACT            052FI'	YCOL            
-04FDI'	YDCHG           050BI'	YLDLT           04FCI'	YMODF           
-0536I'	YNCNT           0534I'	YNPG            04FFI'	YOFF            
-0531I'	YPFP            0501I'	YPT             052BI'	YTGT            
-04FEI'	YURPL           052DI'	YWAS            04EFI'	ZDIF            
-04F1I'	ZLF             04F4I'	ZSVAUX          04F2I'	ZSVCNT          
-04F6I'	ZSVDIR          018CI'	ZTOP            
+0666I'	UNDLSA          0676I'	UNDML           0657I'	UNDN            
+065EI'	UNDOF           0670I'	UNDPCO          066CI'	UNDPCU          
+0668I'	UNDPG           066AI'	UNDPTR          0263I'	UNDREC          
+065AI'	UNDRPL          0658I'	UNDST           065DI'	UNDTY           
+065CI'	UNDWHY          0080I'	VISTK           04DBI'	VRCH            
+0490I'	WBIG            0000 	WBOOT           04D8I'	WKBOL           
+04DAI'	WKCLS           04D4I'	WKI             04D6I'	WKTERM          
+04ECI'	WPBYT           04EDI'	WPREC           04EBI'	WPROW           
+0491I'	WPULL           05DDI'	WRKMAD          060BI'	WRLIM           
+01DEI'	WRTYP           0481I'	XC              0529I'	YACT            
+052FI'	YCOL            04FDI'	YDCHG           050BI'	YLDLT           
+04FCI'	YMODF           0536I'	YNCNT           0534I'	YNPG            
+04FFI'	YOFF            0531I'	YPFP            0501I'	YPT             
+052BI'	YTGT            04FEI'	YURPL           052DI'	YWAS            
+04EFI'	ZDIF            04F1I'	ZLF             04F4I'	ZSVAUX          
+04F2I'	ZSVCNT          04F6I'	ZSVDIR          018CI'	ZTOP            
 
 
 
