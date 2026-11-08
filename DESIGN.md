@@ -181,6 +181,11 @@ WordMaster. The engine changes only for a stated reason.
     leaves with no disk call (part A of #34, below).
   - `LNW`, once a line, as a layout measures the lines round the cursor.
 
+  WordMaster's scanners `SCANF` and `SCANB` call it every 256 bytes (BUF.MAC
+  deviation 5). WordMaster read a key once a line, and only in `GOLINE`'s
+  backward loop. A search over the window (`MATCHF`, `MATCHB`) and `GOLINE`'s
+  forward loop went up to half a second without one.
+
   `stretch.py` books each long stretch to the nearest label in the `.PRN`
   listings, not just the nearest public. Its rows include `/` and `?`.
 - **Text the source still holds is not written out** (issue #34, part A).

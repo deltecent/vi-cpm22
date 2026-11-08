@@ -52,6 +52,13 @@
 ;      (about 26 T-states a byte), and KBPOLL takes a waiting key into the
 ;      ring after every 2 K.  The bytes, their order, and HL, DE and BC on
 ;      return are WM's; A and the flags are not, and no caller reads them.
+;   5. THE SCANNERS, SCANF and SCANB (issue #40).  WM reads a key once a line
+;      in GOLINE's backward loop and nowhere else in a scan, so a search over
+;      the window (MATCHF and MATCHB find each candidate through these two)
+;      or GOLINE's forward loop went up to half a second without one.  Here
+;      each takes a waiting key into the ring (KBPOLL, A kept) every 256
+;      bytes it scans: when C runs out and B does not.  The bytes compared,
+;      and HL, BC and the flags on return, are WM's.
 ;
 ; APPENDED (non-WM), each section tagged where it starts:
 ;   * the LOGICAL-OFFSET API (CUROFF/LOGLEN/CHARAT/GOTO/LFCNT, DELFWD, UNDELF,
@@ -649,7 +656,8 @@ SETBWD:				; WM 1039
 ; scanners and the matchers compared through WCMATCH on every byte that did
 ; not match, which was two thirds of the cost of looking for a newline, and no
 ; pattern the editor can build holds a wildcard: CMD.MAC's RDLINE drops every
-; control character.  WM's CALL GETKEY (type-ahead drain) is KBPOLL here:
+; control character.  WM's CALL GETKEY (type-ahead drain) is KBPOLL here
+; (SCANF/SCANB also call it every 256 bytes, DEVIATION 5):
 ; KEY.MAC owns the ring and its GETKEY is the blocking vi decoder.
 ;============================================================
 
@@ -772,9 +780,11 @@ SCFCNT:				; WM 2324
 	DCR	C
 	JNZ	SCFCMP
 	DCR	B
-	JNZ	SCFCMP
+	JNZ	SCFPL		; DEVIATION 5: WM is JNZ SCFCMP
 	STC
 	RET
+SCFPL:	CALL	SCPOLL		; DEVIATION 5: 256 bytes scanned
+	JMP	SCFCMP
 
 ;NLBACK -- WM 2333: scan backward to a newline.
 NLBACK:				; WM 2333
@@ -792,8 +802,16 @@ SCBCNT:				; WM 2348
 	DCR	C
 	JNZ	SCBCMP
 	DCR	B
-	JNZ	SCBCMP
+	JNZ	SCBPL		; DEVIATION 5: WM is JNZ SCBCMP
 	STC
+	RET
+SCBPL:	CALL	SCPOLL		; DEVIATION 5: 256 bytes scanned
+	JMP	SCBCMP
+
+;SCPOLL -- DEVIATION 5: KBPOLL keeping A, the character looked for.
+SCPOLL:	PUSH	PSW
+	CALL	KBPOLL
+	POP	PSW
 	RET
 
 ;============================================================

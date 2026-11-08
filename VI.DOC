@@ -209,7 +209,7 @@ stops a move or a search before then (see below).
 
 The limits:
 
-    Memory      VI takes 24,632 bytes (22,912 of them are VI.COM).
+    Memory      VI takes 24,650 bytes (22,912 of them are VI.COM).
                 The text in memory, the yank register and the undo share
                 the rest, up to CP/M: the more memory the system has, the
                 more of the file is in memory at once.
@@ -239,23 +239,23 @@ Quick, wherever you are in the file:
 
     ^F  ^B                    under a second
     200j                       1.7 s
-    x                          0.1 s
+    x                          0.0 s
     dd                         0.3 s       u after it      0.2 s
     60yy                       0.2 s
-    ^G                         0.4 s
-    6100G from line 6000       2.0 s
+    ^G                         0.3 s
+    6100G from line 6000       1.9 s
 
 A jump costs the distance moved, not the size of the line number.
 
 Slow, because the file has to go through the window:
 
     G from line 1               22 s       gg from the last line  1.7 s
-    6000G from line 1          9.9 s       100G from line 12000   2.0 s
+    6000G from line 1           10 s       100G from line 12000   1.9 s
     /text, 94 K further on      22 s       ?text, 46 K back        14 s
-    /text, wrapping round       15 s       'a, 46 K back          1.4 s
+    /text, wrapping round       15 s       'a, 46 K back          1.5 s
     :w                          51 s   all of it, however little changed
     :e! at line 6000            12 s   3.1 s at line 1
-    :%s/0/1/                   234 s   every line; over 100 lines, 3.5 s
+    :%s/0/1/                   235 s   every line; over 100 lines, 3.5 s
 
 ESC stops a move or a search -- G, gg, {n}G, 'a, `a, / ? n and N.  Within
 a second or two the bottom row says "Interrupting...", and when the
@@ -282,12 +282,12 @@ over is then written to VIBACKUP.$$$.
 
 Big deletes and yanks, at line 6000:
 
-    500dd      4 K   2.8 s          500yy      4 K   3.3 s
+    500dd      4 K   2.9 s          500yy      4 K   3.3 s
     2000dd    16 K   6.7 s          2000yy    16 K    25 s
     d6500G     4 K   2.3 s
     d9000G    24 K    14 s
-    dG        54 K    35 s
-    dgg       48 K   8.6 s
+    dG        54 K    36 s
+    dgg       48 K   8.5 s
 
 What is refused:
 
