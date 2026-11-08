@@ -60,7 +60,8 @@
 ; APPENDED (not WM), tagged where each starts: REOPEN/SEEKTO/OPENZ (':w' keeps
 ; editing), TFCB/WRTO/TEXIST/DISCRD/CNTLF (':w name', ':e', a buffer with no
 ; name), PGTOPM (the count of times the pager moved TXTBEG) and TOPLF with
-; TLFADD/TLFSUB (the line feeds behind the window, kept in PAGEOUT and REWIND).
+; TLFADD/TLFSUB (the line feeds behind the window, kept in PAGEOUT and REWIND),
+; and SCNREC (a record of the text outside the window, read where it lies).
 ;============================================================
 
 WBOOT	EQU	0
@@ -87,6 +88,8 @@ PGINIT	EQU	200H		; WM 20 -- cold WRLIM/RDLIM (no-spill window)
 	PUBLIC	REOPEN, SEEKTO, OPENZ
 ;--- APPENDED (NOT WordMaster): vi :w name, :e, a buffer with no name ---------
 	PUBLIC	WRTO, TEXIST, DISCRD, CNTLF
+;--- APPENDED (NOT WordMaster): a search's wrapped pass reads, it does not page
+	PUBLIC	SCNREC
 	EXTRN	BINIT		; BUF.MAC -- WM L02F2 gap-pointer reset
 	EXTRN	WRTYP, SECBUF	; RSV.MAC -- held above the image (see RSV.MAC)
 
@@ -242,6 +245,83 @@ SKMORE:
 	XCHG
 	LHLD	TXTEND
 	JMP	SUBHD
+
+;============================================================
+; APPENDED (NOT WordMaster): the text outside the window, read where it lies.
+; vi's search wraps round the file, and WM's find can only page the window
+; there and back again to look (CMD.MAC SCAN, issue #35).  This reads one
+; record of it into SECBUF with WM's own RDSEC and CLNSEC, through the FCB the
+; pager would have read it through, and puts that FCB's record word and its
+; has-data flag back after -- so the pager never knows.  Only the open extent
+; moves, and SETREC re-opens the right one on the pager's next transfer, as it
+; does after a REWIND.
+;============================================================
+
+;SCNREC -- HL = a record, A = which: 0 one above the window (0 to OUTPOS-1:
+;below SAMREC it is the source's own, and from there name.$$$'s, as RWNREC
+;has it), 1 one of VIBACKUP.$$$'s, 2 one of the source's below the window.
+;Cleaned as FILLBUF cleans what it reads; name.$$$'s is read raw, as REWIND
+;reads it.  A = the bytes of text in it.  CY = its stream ended in it (a ^Z)
+;or before it (there is no such record: A = 0).
+SCNREC:
+	XCHG			; DE = the record
+	LXI	H,BAKFCB
+	DCR	A
+	JZ	SCNCLN		; 1: the backup stack
+	LXI	H,SRCFCB
+	JP	SCNCLN		; 2: the source below
+	LHLD	SAMREC		; 0: above
+	CALL	CMP16		; CY iff the record < SAMREC
+	LXI	H,SRCFCB
+	JC	SCNCLN
+	LXI	H,OUTFCB
+	MVI	B,0		; name.$$$'s: raw
+	JMP	SCNGO
+SCNCLN:
+	MVI	B,1
+SCNGO:				; HL = the FCB, DE = the record, B = 1 to clean
+	PUSH	B
+	PUSH	H
+	DCX	H
+	MOV	A,M
+	STA	SCNFLG		; its has-data flag: an EOF or a ^Z clears it
+	LXI	B,23H
+	DAD	B		; FCB+22H, its record word
+	MOV	C,M
+	MOV	M,E
+	INX	H
+	MOV	B,M
+	MOV	M,D
+	MOV	H,B
+	MOV	L,C
+	SHLD	SCNOLD		; the record word as the pager left it
+	POP	D		; DE = the FCB
+	LXI	H,SECBUF
+	CALL	RDSEC		; CY: there is no such record (A = 0)
+	POP	B
+	JC	SCNEND
+	MVI	A,80H
+	DCR	B
+	JNZ	SCNEND		; raw: all of it, NC
+	LXI	H,SECBUF
+	CALL	CLNSEC		; CY: all of it; NC: a ^Z, A = the bytes before
+	CMC
+SCNEND:
+	PUSH	PSW
+	LDA	SCNFLG
+	XCHG			; HL = the FCB
+	DCX	H
+	MOV	M,A
+	LXI	D,23H
+	DAD	D
+	XCHG
+	LHLD	SCNOLD
+	XCHG
+	MOV	M,E
+	INX	H
+	MOV	M,D
+	POP	PSW
+	RET
 
 ;============================================================
 ; APPENDED (NOT WordMaster): vi writes the text to a name of its own (:w name,
@@ -1642,6 +1722,7 @@ POLLBRK:			; WM 6199
 	EXTRN	RDLIM, BUFLO, BUFHI, PGSCAL, PGSCL2, MARGLO
 	EXTRN	PGMARGN, IOBATCH, PGSCRA, SPLCNT
 	EXTRN	SAMREC, SAVMOD, SRCFCB, SVFCNT	; deviation 8
+	EXTRN	SCNFLG, SCNOLD			; (appended) SCNREC
 
 BAKNAM:	 DB	 'VIBACKUP$$$'	  ; WM 520 -- BAKFCB name (WM: WMBACKUP$$$)
 BAKTYP	EQU	BAKNAM+8	 ; the '$$$' substring (WM BAKTYP EQU 443H)

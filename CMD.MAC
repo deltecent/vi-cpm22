@@ -93,6 +93,8 @@
 	EXTRN	LINPSB, DIRFLG			; BUF.MAC / PAGE.MAC -- G/gg placement
 	EXTRN	GAPEND, TXTEND			; BUF.MAC -- the char under the cursor (goal)
 	EXTRN	OUTPOS, REWIND			; PAGE.MAC -- records before the window / page back
+	EXTRN	SCNREC, SECBUF			; PAGE.MAC -- a record outside it, read
+	EXTRN	BAKRDY, BAKPOS			; ... and the backup stack below it
 
 ;DOTMAX, and the buffers it sizes, are in VI.INC / RSV.MAC: see RSV.MAC for
 ;why storage that starts life unread is held above the image, not inside it.
@@ -7496,24 +7498,348 @@ SN_BAD:
 	JMP	EXOUT		; 'Pattern not found: ' and the pattern
 
 ;SRCHGO -- one search of the whole file, wrapping once: from the cursor to the
-; end in SDIRE's direction, then from the other end back to it.  CY = the
-; pattern is nowhere in the file (and the cursor is left at an end of it --
-; SRCHN is what puts it back).
+; end in SDIRE's direction, paging as WM's find pages, then the rest of the
+; file READ where it lies (SCAN) and the window moved once, to the match --
+; not paged round the whole file a second time (issue #35).  CY = the pattern
+; is nowhere in the file, or an ESC stopped it (BRKQ says which); the cursor
+; is then at an end of the file, and SRCHN puts it back.
 SRCHGO:
-	MVI	A,1
-	STA	SSKIP		; this pass starts one past the cursor
-	CALL	SRCHW
+	LXI	H,SGPOS
+	CALL	FPSTO		; where this one starts: the wrapped pass ends
+	CALL	SRCHW		;   there
 	RNC
 	CALL	BRKQ
 	RC			; stopped: no second pass
-	LDA	SDIRE
-	CMA
-	CALL	MVLMAX		; to the end the wrapped pass starts from
+	CALL	SCAN
+	RC
+	LXI	H,SCHIT
+	CALL	BACKTO		; to the match: one move, as a mark jump
+	JMP	BRKQ		; CY: stopped on the way there
+
+;SCAN -- the wrapped pass, without moving the window: the records above it,
+; the window, then the records below it, through SECBUF in file order (SCNEXT).
+; The last bytes of each piece, a pattern less one, are kept just below
+; SECBUF, so a match that straddles two pieces is seen whole there.  '/'
+; wants the FIRST match in the file and stops reading once a match could only
+; start past SGPOS -- the first pass found nothing there.  '?' wants the LAST,
+; so it reads to the end, but skips the records that end before SCLIM: the
+; first pass found nothing that ends before SGPOS.  NC: SCHIT = the match's
+; file position.  CY: there is none, or an ESC stopped it.
+SCAN:
 	XRA	A
-	STA	SSKIP		; ... but the wrapped pass starts AT it, or a
-				;   match on the file's very first character
-				;   would be stepped over and never found
-	JMP	SRCHW
+	STA	SCFND
+	STA	SCCRY
+	STA	SCPH		; the records above the window first
+	STA	SCPOS+2
+	LXI	H,0
+	SHLD	SCIX
+	SHLD	SCPOS
+	LDA	SRCHBF
+	MOV	E,A
+	MVI	D,0		; DE = the pattern's length
+	LHLD	SGPOS
+	LDA	SDIRE
+	ORA	A
+	LDA	SGPOS+2
+	JM	SC_BK
+	DAD	D		; '/': SGPOS + the length
+	ACI	0
+	JMP	SC_LIM
+SC_BK:
+	MOV	B,D
+	CALL	SUB24		; '?': SGPOS - the length (0 if that is less)
+	JNC	SC_LIM
+	XRA	A
+	MOV	H,A
+	MOV	L,A
+SC_LIM:
+	SHLD	SCLIM
+	STA	SCLIM+2
+SC_LP:
+	LDA	BRKARM
+	ORA	A
+	CNZ	BRKTST		; an ESC, as CNTTST looks for one
+	CALL	BRKQ
+	RC
+	LDA	SDIRE
+	ORA	A
+	JM	SC_RD		; '?' reads to the end
+	LDA	SCFND
+	ORA	A
+	RNZ			; '/': the first is all it wants (NC)
+	LHLD	SCLIM
+	XCHG
+	LDA	SCLIM+2
+	MOV	B,A
+	LHLD	SCPOS
+	LDA	SCPOS+2
+	CALL	SUB24		; NC: no match can start at SGPOS or before
+	JNC	SC_END		;   from here on
+SC_RD:
+	CALL	SCNEXT		; SECBUF = the next piece, A = its length
+	JC	SC_END		; the file has run out
+	ORA	A
+	CNZ	SCMAT
+	JMP	SC_LP
+SC_END:
+	LDA	SCFND
+	SUI	1		; CY iff there is none
+	RET
+
+;SCMAT -- look for the pattern in the A bytes in SECBUF and the carry below
+; it, then keep the last of them as the carry and move SCPOS past them.
+SCMAT:
+	MOV	C,A
+	MVI	B,0
+	PUSH	B		; the length of the piece
+	LDA	SRCHBF
+	MOV	H,A
+	LDA	SCCRY
+	ADD	C		; the carry and the piece
+	SUB	H
+	JC	SCM_NO		; shorter than the pattern
+	INR	A
+	MOV	C,A		; BC = the places a match may start at
+	LXI	D,SRCHST
+	LDA	SDIRE
+	ORA	A
+	JM	SCM_BK
+	LDA	SCCRY		; '/': the first, from the carry's first byte
+	CMA
+	MOV	L,A
+	MVI	H,0FFH
+	INX	H		; HL = - the carry
+	PUSH	D
+	LXI	D,SECBUF
+	DAD	D
+	POP	D
+	CALL	MATCHF
+	JC	SCM_NO
+	CALL	SUBLEN		; MATCHF ends past the match
+	JMP	SCM_HI
+SCM_BK:
+	POP	H		; '?': the last, back from the piece's end
+	PUSH	H
+	PUSH	D
+	LXI	D,SECBUF
+	DAD	D
+	POP	D
+	CALL	SUBLEN		; the last place one can start
+	CALL	MATCHB
+	JC	SCM_NO
+SCM_HI:
+	XCHG			; DE = the match, in SECBUF or below it
+	LHLD	SCPOS
+	DAD	D
+	LDA	SCPOS+2
+	ACI	0
+	LXI	D,SECBUF
+	MVI	B,0
+	CALL	SUB24		; its file position
+	SHLD	SCHIT
+	STA	SCHIT+2
+	MVI	A,1
+	STA	SCFND
+SCM_NO:
+	POP	B		; BC = the piece's length
+	PUSH	B
+	LDA	SCCRY
+	ADD	C
+	MOV	E,A		; the carry and the piece
+	LDA	SRCHBF
+	DCR	A		; ... of which a pattern less one is kept
+	CMP	E
+	JC	SCM_T
+	MOV	A,E
+SCM_T:
+	STA	SCCRY
+	MOV	E,A
+	MVI	D,0		; DE = the new carry
+	LXI	H,SECBUF
+	DAD	B
+	CALL	SUBHD		; the bytes it keeps
+	PUSH	H
+	LXI	H,SECBUF
+	CALL	SUBHD		; where they go
+	MOV	B,D
+	MOV	C,E
+	XCHG
+	POP	H
+	CALL	MEMCPY		; (down, so a forward copy is safe)
+	POP	D		; the piece's length
+;SCADV -- SCPOS += DE.
+SCADV:
+	LHLD	SCPOS
+	DAD	D
+	SHLD	SCPOS
+	RNC
+	LXI	H,SCPOS+2
+	INR	M
+	RET
+
+;SCNEXT -- the next piece of the file into SECBUF: A = its length, which is 0
+; for a record skipped.  CY: the file has run out.  SCPH is what it is in:
+; 0 the records above the window, 1 the window before the gap, 2 after it,
+; 3 VIBACKUP.$$$ (top down), 4 the source below, 5 nothing left.
+SCNEXT:
+	LDA	SCPH
+	ORA	A
+	JZ	SN_AB
+	CPI	3
+	JC	SN_GP
+	JZ	SN_BAK
+	CPI	4
+	JZ	SN_SRC
+	STC
+	RET
+SN_AB:
+	LHLD	OUTPOS
+	XCHG
+	LHLD	SCIX
+	CALL	CMP16
+	JZ	SN_W0		; all of them read: the window
+	INX	H
+	SHLD	SCIX
+	DCX	H
+	XRA	A		; above the window
+	CALL	SN_REC
+	ORA	A
+	RET
+SN_W0:
+	LHLD	TXTBEG
+	XCHG
+	LHLD	GAPBEG
+	MVI	A,1
+SN_PH:				; phase A, from DE up to HL
+	STA	SCPH
+	SHLD	SCEND
+	XCHG
+	SHLD	SCIX
+	JMP	SCNEXT
+SN_GP:				; the window: up to 128 bytes of it, copied
+	LHLD	SCIX
+	XCHG
+	LHLD	SCEND
+	CALL	SUBHD		; HL = what is left of this part
+	MOV	A,H
+	ORA	L
+	JZ	SN_GPX
+	MOV	A,H
+	ORA	A
+	JNZ	SN_128
+	MOV	A,L
+	CPI	81H
+	JC	SN_GPN
+SN_128:
+	LXI	H,80H
+SN_GPN:
+	PUSH	H
+	MOV	B,H
+	MOV	C,L
+	XCHG
+	PUSH	H
+	LXI	D,SECBUF
+	CALL	MEMCPY
+	POP	H
+	POP	B
+	DAD	B
+	SHLD	SCIX
+	MOV	A,C
+	ORA	A
+	RET
+SN_GPX:
+	LDA	SCPH
+	CPI	2
+	JZ	SN_BLW
+	LHLD	GAPEND
+	XCHG
+	LHLD	TXTEND
+	MVI	A,2
+	JMP	SN_PH
+SN_BLW:				; below the window: VIBACKUP.$$$ if it holds
+	LDA	BAKRDY		;   anything, as RDIN reads it first
+	ORA	A
+	JZ	SN_S0
+	LHLD	BAKPOS
+	MOV	A,H
+	ORA	L
+	JZ	SN_S0
+	SHLD	SCIX
+	MVI	A,3
+	STA	SCPH
+	JMP	SCNEXT
+SN_S0:				; then the source, from where it is read to
+	LDA	5BH
+	ORA	A
+	MVI	A,5
+	JZ	SN_END
+	LHLD	7EH
+	SHLD	SCIX
+	MVI	A,4
+SN_END:
+	STA	SCPH
+	JMP	SCNEXT
+SN_BAK:
+	LHLD	SCIX
+	MOV	A,H
+	ORA	L
+	JZ	SN_S0		; record 0 read
+	DCX	H
+	SHLD	SCIX
+	MVI	A,1
+	CALL	SN_REC
+	RNC
+	LXI	H,0		; a ^Z: the stack ends there (RDIN's IOEOF)
+	SHLD	SCIX
+	ORA	A
+	RET
+SN_SRC:
+	LHLD	SCIX
+	INX	H
+	SHLD	SCIX
+	DCX	H
+	MVI	A,2
+	CALL	SN_REC
+	RNC
+	PUSH	PSW		; a ^Z or no record: the end of the file
+	MVI	A,5
+	STA	SCPH
+	POP	PSW
+	ORA	A
+	RET
+
+;SN_REC -- SCNREC (record HL, kind A), unless it is a '?' record that ends
+; before SCLIM, which is skipped: SCPOS moves past it and the carry goes (a
+; record is 128 bytes until the last, and that one is never skipped).
+SN_REC:
+	PUSH	PSW
+	PUSH	H
+	LDA	SDIRE
+	ORA	A
+	JP	SN_RD		; '/' never skips
+	LHLD	SCPOS
+	LXI	D,80H
+	DAD	D
+	XCHG
+	LDA	SCPOS+2
+	ACI	0
+	MOV	B,A		; B:DE = past this record
+	LHLD	SCLIM
+	LDA	SCLIM+2
+	CALL	SUB24		; NC: it ends at SCLIM or before
+	JC	SN_RD
+	POP	H
+	POP	PSW
+	XRA	A
+	STA	SCCRY
+	LXI	D,80H
+	CALL	SCADV
+	XRA	A		; nothing to look at, NC
+	RET
+SN_RD:
+	POP	H
+	POP	PSW
+	JMP	SCNREC
 
 ;SRCHW -- WM FINDA (WM 1943): the file from the cursor on, one resident
 ; window at a time.  A miss moves the cursor to that window's edge and pages
@@ -7521,7 +7847,7 @@ SRCHGO:
 ; CY when the file runs out.  PAGESTP only pages while the count is unspent,
 ; so the sweep opens CMDCNT wide, as MVLMAX does.  WM's FINDA then puts the
 ; cursor exactly at the file's end (WM 1949); nothing here needs that -- the
-; caller either wraps to the other end or restores the cursor outright.
+; caller reads the rest of the file or restores the cursor outright.
 SRCHW:
 	LDA	SDIRE
 	STA	DIRFLG
@@ -7553,9 +7879,6 @@ SRCH1:
 	RC			;   carry: a miss still has to leave HL a
 				;   real text address, because SCRLST puts
 				;   the cursor there on the way to paging
-	LDA	SSKIP
-	ORA	A
-	JZ	SR1_FW
 	MOV	A,B
 	ORA	C
 	STC
@@ -7563,7 +7886,6 @@ SRCH1:
 	DCX	B		; vim's '/' starts one character PAST the
 	INX	H		;   cursor, so the character under it can
 				;   never be the one that matches
-SR1_FW:
 	CALL	MATCHF
 	RC
 	CALL	SUBLEN		; MATCHF ends PAST the match; vi lands on it
@@ -8010,7 +8332,9 @@ CMDTAB:
 	EXTRN	GPKEEP, MKVAL, MKEDIT, MKN, MKTYP, MKPOS
 	EXTRN	MKWHAT, MKHOLD, YACT, YTGT, YWAS, YCOL
 	EXTRN	YPFP, YNPG, YNCNT, SCNT, SOFF, SLDLT
-	EXTRN	BRKARM, BRKHIT, SSKIP, SRNGF, SRNG1, SRNG2
+	EXTRN	BRKARM, BRKHIT, SRNGF, SRNG1, SRNG2
+	EXTRN	SGPOS, SCLIM, SCPOS, SCHIT, SCFND, SCCRY
+	EXTRN	SCPH, SCIX, SCEND
 	EXTRN	ABTFLG, FORCEF, VISTK
 	EXTRN	SDELIM, SGFLAG, SANY, SLCHG, SBACK, SLINES
 	EXTRN	RWPTR, RWERR, RDANY, RDBRK, SOFFS, SLDLTS

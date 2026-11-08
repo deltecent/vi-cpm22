@@ -198,6 +198,27 @@ WordMaster. The engine changes only for a stated reason.
   every one of its cases fails. On the 100 K test file (TIMECOST.md) `G` from
   the top went from 44.7 to 21.9 s and `6000G` from 20.1 to 9.9 s; `:w` after
   `x` at the end went from 53.0 to 69.2 s, the price of copying the front.
+- **A search's wrapped pass reads the file where it lies** (issue #35).
+  WordMaster's `FINDA` sweeps the window through the file, so a search that
+  wrapped paged it to the far end and then all the way round again, and a
+  miss then paged it back. Now only the first pass pages. The pass after the
+  wrap (`SCAN`, CMD.MAC) reads the rest of the file through `SECBUF` with
+  `SCNREC` (PAGE.MAC, appended, see below), and keeps a match as a file
+  position. The window then moves once: to the match by `BACKTO` and the same
+  `GPLACE` a jump takes, or for a miss back to where the search began. `/`
+  stops reading once past that place; `?` wants the LAST match, so it reads to
+  the end of the file but skips the records that end before it.
+  `accept_vi.py`'s `swrap` group lands on a model of the file in every kind
+  of record (the source, `name.$$$`, `VIBACKUP.$$$`, the window), with
+  matches that straddle each seam; with the carry between pieces turned off,
+  every straddle case fails. On the 100 K test file (TIMECOST.md) `/zzzz`
+  from line 6000, never found, went from 88.1 to 36.6 s. A search that wraps
+  and finds costs what it did (`/000100` from line 6000, 46.6 s): landing
+  near the top still pages the window back from the end. VI.COM grew by 640
+  bytes, and the arena shrank by 715 with the 29-byte carry and the cells;
+  the rows that slowed with it (`100dd` 0.7 to 1.9 s, `6100G` 0.8 to 1.9 s)
+  time the same on the old code padded to the new size, so they are where
+  the window's edges fall, not the search.
 - `OPENFIL` wraps WordMaster's inline open sequence as a callable routine
   (`SAVEFIL`, in `PSV.MAC`, does the same for `ENDEDIT`). They keep one drive
   and user 0.
@@ -246,6 +267,16 @@ WordMaster. The engine changes only for a stated reason.
   and links into the four pager tests alone: they use it as their save step,
   which is what tests WordMaster's own save side.
 - **Undo capture** in the primitives (§5).
+- **`SCNREC`**, the record reader for a search's wrapped pass (issue #35). It
+  reads one record of the text outside the window into `SECBUF`: above the
+  window from the source (`SRCFCB`, cleaned by `CLNSEC`) or `name.$$$` (raw,
+  as `REWIND` reads it), below it from `VIBACKUP.$$$` or the source. It puts
+  the FCB's record word and has-data flag back after, so the pager never sees
+  that it ran. It is built from `RDSEC` and `CLNSEC`; no WordMaster routine
+  changed. The search keeps the last bytes of each piece, up to the pattern's
+  length less one, directly below `SECBUF` (`RVCRYN`, 29 bytes, in RSV.MAC),
+  so a match across two records is found; the top byte of that reserve is
+  `SECBUF`'s lower guard byte. `RVCRYN` is `SRMAX` - 1 (BUF.MAC).
 
 **Layout contracts inherited from WordMaster**, which code relies on and which a
 move would break:
@@ -472,8 +503,11 @@ start out. Only `:e` clears the marks. A yank moves none: the copy changes no
 text, and `MKHOLD` holds `MKSHFT` off across the delete and put back when
 `YKGO` has to run instead.
 
-**Search** is WordMaster's `MATCHF`/`MATCHB` swept across the whole file by
-WordMaster's `FINDA` loop (`SRCHW`), paging one step per miss. The pattern is
+**Search** is WordMaster's `MATCHF`/`MATCHB`. The first pass, from the cursor
+to the far end, is WordMaster's `FINDA` loop (`SRCHW`), paging one step per
+miss. The pass after the wrap (`SCAN`, issue #35) leaves the window where it
+is and reads the rest of the file through `SECBUF`; the window moves once, to
+the match, or for a miss back to where the search began. The pattern is
 literal (there is no room for a regex engine). Overlapping matches are found.
 `?` finds the last match that *ends* before the cursor, because the bytes after
 the cursor are across the gap. `:s` uses the same matcher and splices

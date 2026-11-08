@@ -83,8 +83,11 @@ RVZTPN	EQU	3		; ZTOP:    a 3-byte file position
 RVPLSN	EQU	6		; PLUSB:   '+{n}' digits, 0-terminated
 RVWRTN	EQU	3		; WRTYP:   an FCB type field
 RVSECN	EQU	128		; SECBUF:  one CP/M sector
+RVCRYN	EQU	29		; below it: the search's carry (CMD.MAC SCAN),
+				;          a pattern less one, BUF.MAC SRMAX-1
 RVHTN	EQU	255		; HTAB:    a byte a line; SCRN.MAC HTPUT drops
 				;          a 256th
+;CHECK BUF.MAC SRMAX-1 = 29
 ;MKSAV is a copy of MKTAB that CMD.MAC makes and restores with COPY12.
 ;CHECK VI.INC MKMAX*MKSIZ = 12
 
@@ -100,7 +103,8 @@ RVPLS	EQU	RVZTP+RVZTPN
 RVEXB	EQU	RVPLS+RVPLSN
 RVKBR	EQU	RVEXB+EXMAX+1
 RVWRT	EQU	RVKBR+KBRSIZ
-RVSEC	EQU	RVWRT+RVWRTN+1	; +1: STAGSEC's guard byte at SECBUF-1
+RVSEC	EQU	RVWRT+RVWRTN+RVCRYN ; the carry's top byte is STAGSEC's guard
+				;   byte at SECBUF-1: the two never meet
 RVUND	EQU	RVSEC+RVSECN+1	; +1: ... and its guard at SECBUF+128
 RVMKT	EQU	RVUND+RVUNDN
 RVMKS	EQU	RVMKT+MKMAX*MKSIZ
@@ -349,8 +353,15 @@ RSVZ	EQU	RSVBAS+RZ
 				;   shortage ends the editor
 	CELL	BRKARM,1	; nonzero: CNTTST looks for an ESC
 	CELL	BRKHIT,1	; nonzero: one was found, and the count spent
-	CELL	SSKIP,1		; skip the character under the cursor (not
-				;   on the wrapped pass)
+	CELL	SGPOS,3		; where THIS search began, in the file
+	CELL	SCLIM,3		; SCAN: '/' reads up to here, '?' from here
+	CELL	SCPOS,3		; SCAN: the file position SECBUF's text is at
+	CELL	SCHIT,3		; SCAN: the match's
+	CELL	SCFND,1		; SCAN: nonzero once there is one
+	CELL	SCCRY,1		; SCAN: the bytes carried below SECBUF
+	CELL	SCPH,1		; SCAN: what it is reading (SCNEXT)
+	CELL	SCIX,2		; SCAN: the record, or the pointer, next
+	CELL	SCEND,2		; SCAN: where the window's part ends
 	CELL	SRNGF,1		; ex: a line range was given
 	CELL	SRNG1,2		; ex: its first line
 	CELL	SRNG2,2		; ... and its last (FFFFH = the file's last)
@@ -424,6 +435,8 @@ BAKPOS	EQU	BAKFCB+22H	; BAKFCB random-record word (RECBASE input base)
 				;   that are still the source's own
 	CELL	SAVMOD,1	; (deviation 8) nonzero while SAVCLO saves
 	CELL	SVFCNT,2	; (deviation 8) the front records still to copy
+	CELL	SCNFLG,1	; (appended) SCNREC: the FCB's has-data flag
+	CELL	SCNOLD,2	; ... and its record word, put back after
 RZ	SET	RZ+1		; SRCFCB-1 : RECADJ / IOEOF's has-data flag
 	CELL	SRCFCB,36	; (deviation 8) the source, for the records
 				;   above the window

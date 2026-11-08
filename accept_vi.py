@@ -5328,21 +5328,33 @@ def undo_cmds():
     #     measured from a top that has since moved; 'u' must still put the
     #     cursor back on the line, column 0, as vim does.  'G gg' first: the
     #     second pass over the file writes nothing, so the window stays full.
+    #     MKGAP pages only once under 256 bytes are free, and each record
+    #     paged in takes 128, so 'j' walks down from line 700 until that is
+    #     so: the line depends on the arena, which shrinks with the image.
     #     The page is asserted, not assumed ---
     wide = make_wide()
     e = Editor(wide)
+
+    def free():
+        return (word(e, 'GAPEND') - word(e, 'GAPBEG')
+                + word(e, 'BUFEND') - word(e, 'TXTEND'))
     try:
         for k in ('G', 'gg', '700G'):
             e.key(k)
-        top = word(e, 'PGTOPM')
+        ln = 700
+        while free() >= 256 and ln < 1100:
+            e.key('j')
+            ln += 1
+        top, room = word(e, 'PGTOPM'), free()
         e.key('dd')
-        check(f"undo #43: 'dd' on a full window paged before it took the line "
+        check(f"undo #43: 'dd' on a full window (line {ln}, {room} free) "
+              f"paged before it took the line "
               f"(PGTOPM {top} -> {word(e, 'PGTOPM')})", word(e, 'PGTOPM') != top)
         e.key('u')
         v = e.screen(); r = rows(e)
-        check(f"undo #43: G gg 700G dd u puts the cursor back on line 700, "
-              f"column 0 ({r[v.row][:6]!r}, {v.col})",
-              r[v.row].startswith('000700') and v.col == 0)
+        check(f"undo #43: G gg 700G, j to line {ln}, dd u puts the cursor "
+              f"back on line {ln}, column 0 ({r[v.row][:6]!r}, {v.col})",
+              r[v.row].startswith('%06d' % ln) and v.col == 0)
         e.key(':w\r'); ex_settled(e)
         check('undo #43: ... and the text is back byte for byte',
               saved_bytes(e) == wide)
@@ -5441,6 +5453,200 @@ def srch_cmds():
             idle(e)
             stays_put(e, keys, 'Pattern not found: zzzz', start,
                       f'srch miss from {start}')
+    finally:
+        e.close()
+
+
+# ---------------------------------------------------------------------------
+# The wrapped pass of a search (issue #35).  The first pass pages from the
+# cursor to the end of the file; the pass after the wrap reads the rest of the
+# file where it lies -- the records above the window (the source's own, or
+# name.$$$'s), the window, then VIBACKUP.$$$ and the source below it -- and
+# moves the window once, to the match.  So what it finds is the same as
+# before, and these check that against a model: the text is read in records,
+# and a match that straddles two of them has to be found too.  Where the
+# records split is worked out from how the pager reads and writes them:
+#   - the source and name.$$$ split at multiples of 128 of the file as it is;
+#   - one byte deleted at the top shifts the source by one, so the source's
+#     records -- and VIBACKUP.$$$'s, pushed back from the end of a source
+#     read to its end -- split at 128k-1 after that deletion.
+# A 30-character pattern is the longest; it straddles inside a wide line.
+
+def swrap_text(n, marks):
+    """*n* numbered lines 0 to 29 columns wide, every 400th 200 columns wide,
+    and the *marks* (text, line, residue) written over them, each straddling
+    a record boundary -- a file position of that residue modulo 128 -- at or
+    after the start of that line.  Returns the bytes and where each mark is."""
+    out = []
+    for i in range(1, n + 1):
+        if i % 400 == 0:
+            body = '%06d ' % i + ''.join(chr(97 + (i + j) % 26) for j in range(193))
+        else:
+            body = '%06d ' % i + '.' * ((i * 7) % 23)
+        out.append(body + '\r\n')
+    buf = bytearray(''.join(out).encode())
+    starts = [0]
+    for s in out:
+        starts.append(starts[-1] + len(s))
+    at = {}
+    for m, ln, res in marks:
+        m = m.encode()
+        p = starts[ln - 1]
+        p += (res - p) % 128            # the first boundary at or after the line
+        while True:
+            s = p - len(m) // 2
+            span = buf[s:s + len(m)]
+            if b'\r' not in span and b'\n' not in span \
+                    and not any(c in b'QRS' for c in span):
+                break
+            p += 128
+        buf[s:s + len(m)] = m
+        at[m.decode()] = (s, res)
+    return bytes(buf), at
+
+
+def swrap_straddles(at, m):
+    """Does mark *m* cross the record boundary it was placed on?"""
+    s, res = at[m]
+    return (s - res) // 128 != (s + len(m) - 1 - res) // 128
+
+
+def swrap_where(text, pos):
+    """(line, column) of file position *pos*, both 1-based, as '^G' says."""
+    ln = text.count(b'\n', 0, pos) + 1
+    return ln, pos - (text.rfind(b'\n', 0, pos) + 1) + 1
+
+
+def swrap_model(text, cur, pat, fwd):
+    """Where '/' (fwd) or '?' lands from file position *cur*: '/' starts one
+    past the cursor, '?' takes the last match that ends before it; either one
+    then wraps round the file.  None: not found."""
+    pat = pat.encode()
+    if fwd:
+        p = text.find(pat, cur + 1)
+        return p if p >= 0 else (text.find(pat) if pat in text else None)
+    p = text.rfind(pat, 0, cur)
+    return p if p >= 0 else (text.rfind(pat) if pat in text else None)
+
+
+def swrap_cmds():
+    """A search that wraps lands where it did when the wrapped pass paged the
+    window round the file, on every kind of record the text can be in; a miss
+    still puts everything back; and neither pays for a second sweep."""
+    def go(e, keys):
+        e.s.send(keys)
+        idle(e)
+
+    def lands(e, text, cur, keys, pat, fwd, tag):
+        """*keys* from file position *cur*: the cursor on the model's match."""
+        go(e, keys)
+        want = swrap_where(text, swrap_model(text, cur, pat, fwd))
+        got = ctrlg(e)
+        m = re.search(r'line (\d+) col (\d+)', got)
+        check(f'swrap {tag}: {keys!r} lands on line {want[0]} col {want[1]} '
+              f'({got!r})', m is not None and (int(m.group(1)), int(m.group(2))) == want)
+        return swrap_model(text, cur, pat, fwd)
+
+    def line_pos(text, ln):
+        p = 0
+        for _ in range(ln - 1):
+            p = text.index(b'\n', p) + 1
+        return p
+
+    L30A = 'RQZYXWVUTSRQPONMLKJIHGFEDCBAQR'
+    L30B = 'SQABCDEFGHIJKLMNOPQRSTUVWXYZQS'
+    # --- the file as it is on the disk: the source above and below ---------
+    a, at = swrap_text(4900, [('QAQBQC', 120, 0), (L30A, 400, 0),
+                              ('QDQEQF', 4700, 0), (L30B, 4800, 0),
+                              ('QLQM', 3500, 1)])
+    a = bytearray(a)
+    for ln, m in ((50, b'QGQH'), (300, b'QGQH'), (55, b'QJQK')):
+        p = line_pos(bytes(a), ln) + 7
+        a[p:p + len(m)] = m
+    a = bytes(a)
+    for m in ('QAQBQC', L30A, 'QDQEQF', L30B, 'QLQM'):
+        check(f'swrap file a: {m[:6]} straddles a record', swrap_straddles(at, m))
+    e = Editor(a)
+    try:
+        c = line_pos(a, 2000)
+        go(e, '2000G')
+        h = lands(e, a, c, '/QAQBQC\r', 'QAQBQC', True, 'source above /')
+        lands(e, a, h, 'n', 'QAQBQC', True, 'source above n (its only match)')
+        go(e, '2000G')
+        lands(e, a, c, '/' + L30A + '\r', L30A, True, 'source above / 30')
+        go(e, '2000G')
+        lands(e, a, c, '?QDQEQF\r', 'QDQEQF', False, 'source below ?')
+        go(e, '2000G')
+        lands(e, a, c, '?' + L30B + '\r', L30B, False, 'source below ? 30')
+        go(e, '2000G')
+        go(e, '2/QGQH\r')
+        want = swrap_where(a, line_pos(a, 300) + 7)
+        check(f'swrap 2/: the second match after the wrap {want} ({ctrlg(e)!r})',
+              f'line {want[0]} col {want[1]}' in bottom(e))
+        go(e, '3000G')
+        go(e, '3?QGQH\r')
+        check(f'swrap 3?: the third, past the wrap {want} ({ctrlg(e)!r})',
+              f'line {want[0]} col {want[1]}' in bottom(e))
+        go(e, '2000G')
+        stays_put(e, '/QZQZ\r', 'Pattern not found: QZQZ', 2000, 'swrap miss /')
+        stays_put(e, '?QZQZ\r', 'Pattern not found: QZQZ', 2000, 'swrap miss ?')
+        # one byte out of line 3000: the text after it is the source's less
+        # one byte, read back from VIBACKUP.$$$ and the source below, and
+        # from name.$$$ above
+        go(e, '3000G')
+        go(e, 'x')
+        p3 = line_pos(a, 3000)
+        a2 = a[:p3] + a[p3 + 1:]
+        go(e, 'gg')
+        lands(e, a2, 0, '?QDQEQF\r', 'QDQEQF', False, 'stack and source below ?')
+        go(e, '4000G')
+        lands(e, a2, line_pos(a2, 4000), '/QLQM\r', 'QLQM', True,
+              "name.$$$ above /")
+        e.key(':w\r')
+        ex_settled(e)
+        check('swrap: the searches changed nothing: :w writes the text as '
+              'it was edited', saved_bytes(e) == a2)
+    finally:
+        e.close()
+
+    # --- one byte out of the top, then 'G': all of it in name.$$$ above, and
+    #     VIBACKUP.$$$ below once the window comes back -----------------------
+    b, at = swrap_text(4900, [('QAQBQC', 120, 0), ('QDQEQF', 4700, 127),
+                              (L30B, 4800, 127)])
+    for m in ('QAQBQC', 'QDQEQF', L30B):
+        check(f'swrap file b: {m[:6]} straddles a record', swrap_straddles(at, m))
+    e = Editor(b'#' + b)
+    try:
+        go(e, 'x')
+        go(e, 'G')
+        go(e, '2000G')
+        h = lands(e, b, line_pos(b, 2000), '/QAQBQC\r', 'QAQBQC', True,
+                  'name.$$$ above /')
+        h = lands(e, b, h, '?QDQEQF\r', 'QDQEQF', False, 'stack below ?')
+        go(e, '100G')
+        lands(e, b, line_pos(b, 100), '?' + L30B + '\r', L30B, False,
+              'stack below ? 30')
+        go(e, '2000G')
+        stays_put(e, '/QZQZ\r', 'Pattern not found: QZQZ', 2000, 'swrap edited miss /')
+        stays_put(e, '?QZQZ\r', 'Pattern not found: QZQZ', 2000, 'swrap edited miss ?')
+        e.key(':w\r')
+        ex_settled(e)
+        check('swrap: the edited file is written as it was edited',
+              saved_bytes(e) == b)
+    finally:
+        e.close()
+
+    # --- and a miss costs one sweep and the way back, not two sweeps.  These
+    #     took 88 s ('/') before the wrapped pass stopped paging. ----------------
+    e = Editor(make(12800))
+    try:
+        for keys in ('/zzzz\r', '?zzzz\r'):
+            go(e, '6000G')
+            t0 = tstates(e)
+            go(e, keys)
+            took = (tstates(e) - t0) / 2e6
+            check(f'swrap miss {keys!r} from 6000 in {took:.1f} s (60 allowed)',
+                  took < 60 and bottom(e) == 'Pattern not found: zzzz')
     finally:
         e.close()
 
@@ -9277,11 +9483,13 @@ def tstates(e):
     return int(re.search(r'\((\d+) T-states\)', out).group(1))
 
 
-def run_for(e, seconds):
-    """Let the guest run for *seconds* of its own clock, mid-command."""
+def run_for(e, seconds, step_ms=100):
+    """Let the guest run for *seconds* of its own clock, mid-command.  A step
+    of *step_ms* wall-clock milliseconds can run several guest seconds where
+    the guest reads the console rarely; a smaller step lands closer."""
     until = tstates(e) + int(seconds * 2e6)
     while tstates(e) < until:
-        e.s._run(timeout_ms=100)
+        e.s._run(timeout_ms=step_ms)
 
 
 def resp_lines(n):
@@ -9693,14 +9901,14 @@ def brk_cmds():
         e.s.send(f'{ln}G')
         idle(e)
 
-    def cancel(e, keys, ln, tag, after=4.0, ahead='', limit=30):
+    def cancel(e, keys, ln, tag, after=4.0, ahead='', limit=30, step_ms=100):
         """*keys* from line *ln*, 'ESC' *after* seconds into them."""
         v0 = e.screen()
         scr0 = [''.join(r) for r in v0.screen]
         idle(e)
         t0 = tstates(e)
         e.s.send(keys)
-        run_for(e, after)
+        run_for(e, after, step_ms)
         sent = len(e.cap.getvalue())
         e.s.send(ahead + '\x1b')
         idle(e)
@@ -9730,7 +9938,7 @@ def brk_cmds():
               scr[:23] == scr0[:23] and (v.row, v.col) == (v0.row, v0.col))
 
     # --- the moves and the searches, each stopped part of the way there.
-    #     Uncancelled these take 22 to 65 s (TIMECOST.md). ---
+    #     Uncancelled these take 22 to 37 s (TIMECOST.md). ---
     e = Editor(big)
     try:
         start(e, 6000)
@@ -9740,13 +9948,17 @@ def brk_cmds():
         cancel(e, 'gg', 6000, 'brk gg')
         cancel(e, '12000G', 6000, 'brk 12000G')
         # ('/' has come back in 27 to 31 s over many runs: the moment the ESC
-        #  lands is not exact.  Left alone it takes 65.)
+        #  lands is not exact.  Left alone it takes 37.)
         cancel(e, '/zzzz\r', 6000, 'brk /', limit=45)
         cancel(e, '?zzzz\r', 6000, 'brk ?')
         cancel(e, 'n', 6000, 'brk n')
         cancel(e, 'N', 6000, 'brk N')
-        # ... in the pass AFTER the wrap, which is a second sweep
-        cancel(e, '/zzzz\r', 6000, 'brk / wrapped', after=40.0, limit=110)
+        # ... in the pass AFTER the wrap, which reads the rest of the file
+        # where it lies (#35): from 11.9 to 19.8 s into this one, measured
+        # with a breakpoint on SCAN and SC_END.  That pass reads the console
+        # rarely, so a 100 ms step of the clock would overshoot it.
+        cancel(e, '/zzzz\r', 6000, 'brk / wrapped', after=16.0, limit=45,
+               step_ms=5)
         # the editor is whole afterwards: the same commands, left to finish
         e.s.send('/012000\r')
         idle(e)
@@ -10654,6 +10866,9 @@ def main():
         srch_like_vim()
         srch_cmds()
         paint_cost()
+    if not args or 'vim' in args or 'swrap' in args:
+        print('\n=== a wrapped search reads the file where it lies ===', flush=True)
+        swrap_cmds()
     if not args or 'vim' in args or 'ops' in args:
         print('\n=== o O J ~ dw cw D  ^L vs vim ===', flush=True)
         ops_like_vim()
