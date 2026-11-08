@@ -30,6 +30,9 @@
 	PUBLIC	DCHN				; ... the cells an R_DCH deletes
 	PUBLIC	CNTTST				; count-test (BUF.MAC PAGESTP reads)
 	PUBLIC	MKSHFT				; the marks follow an edit (VI.MAC hooks it)
+	PUBLIC	MEMABT				; out of room: the key goes (VI.MAC hooks it)
+	EXTRN	ERRMSG				; BUF.MAC -- ... unless it cannot
+	EXTRN	MLDRAW				; VI.MAC  -- the main loop's repaint
 	PUBLIC	CURRW				; cursor's screen row (SCRN.MAC reads)
 	PUBLIC	FOPEN				; open the command-line file
 	PUBLIC	ARGSCN, ARGGO			; the rest of the command line
@@ -107,6 +110,7 @@
 CMDDIS:
 	XRA	A		; no command is ever left open to an ESC by the
 	STA	BRKARM		;   one before it (BRKON)
+	STA	ABTFLG		; ... and MEMABT's repaint is behind it
 	CALL	DOTPRE
 	CALL	CDMODE
 	JMP	DOTPOST
@@ -5226,6 +5230,56 @@ QRF_Y:
 	STA	MSGWHT
 	JMP	OPG_HM
 
+;MEMABT -- the arena has no room for what this key asked of it: WordMaster's
+; 'MEM SHORTAGE', 'MEM FULL' or 'QBUF FULL', which BUF.MAC's MEMERR sends here
+; once the screen is up (issue #39).  WordMaster abandons the command there and
+; goes back to its prompt, and so does this: the key's stack goes, and with it
+; whatever the key was part way through.  Each of those errors is raised before
+; a byte of text moves, so the text is whole, though not all of the change may
+; have been made.  The register is emptied -- it is what holds the room -- or
+; the repaint that follows would run into the same wall, and the half-done
+; command leaves nothing behind: no count, no pending operator, no '.' to repeat
+; it and no 'u' to undo half of it.  The bottom row says so.
+;
+; Two cases still end the editor, through ERRMSG as all three always did: a
+; second shortage before the next key (the repaint, with the register already
+; given back -- there is nothing left to give), and one in the middle of a yank
+; that took its lines OUT to put them back (YKGO, MKHOLD set): the register IS
+; those lines then, and emptying it would cut them from the file.
+MEMABT:
+	LDA	ABTFLG
+	LXI	H,MKHOLD
+	ORA	M
+	JNZ	ERRMSG		; the message is still on the stack for it
+	INR	A		; A = 1
+	STA	ABTFLG		; ... until the next key (CMDDIS)
+	LXI	SP,VISTK	; the key's stack: VI.MAC's loop runs at the top
+	STA	MODF		; the text may have changed part way
+	STA	FORCEF		; the frame on the screen may be half drawn
+	STA	DOTOVF		; a half command is no change for '.'
+	LDA	EDMODE		; in insert or replace mode the recording runs
+	ORA	A		;   on to the ESC, DOTOVF keeping it from '.';
+	JNZ	MAB_1		;   otherwise the next key starts a new one
+	STA	DOTCHG
+	INR	A
+	STA	DOTSTA
+MAB_1:
+	XRA	A
+	STA	GPEND
+	STA	PENDOP
+	STA	DOTRPL		; a '.' replay is over
+	STA	UNDRPL		; ... and so is a 'u' one
+	STA	BRKARM
+	STA	BRKHIT
+	CALL	CLRCNT		; no count
+	CALL	UNDCLR		; nothing 'u' can trust
+	CALL	QKILL		; the room back
+	MVI	A,MW_MEM
+	STA	MSGWHT
+	MVI	A,R_FULL
+	STA	RINTENT
+	JMP	MLDRAW		; VI.MAC: the repaint, then the next key
+
 ;YSPAN -- the lines of [OPLO,OPHI) out of the file and into the register, one at
 ; a time as 'dd' does it.  There is no line COUNT to drive the loop with here --
 ; the span is a pair of offsets -- so it runs until the REGISTER holds the
@@ -6925,6 +6979,7 @@ SNOPAT: DB	'No previous search pattern',0
 SUNDW:	DB	'Cannot undo: change has paged out',0
 SUNDB:	DB	'Too large to undo',0
 SQBIG:	DB	'Too large to yank',0
+SMEM:	DB	'Out of memory: register emptied',0
 SMKNS:	DB	'Mark not set',0
 SNONM:	DB	'[No Name]',0
 SMODM:	DB	'[Modified]',0
@@ -7775,10 +7830,16 @@ MSGPST:
 	JZ	MP_WRT
 	CPI	MW_BIG
 	JZ	MP_BIG
+	CPI	MW_MEM
+	JZ	MP_MEM
 	CALL	MSGCTG
 	JMP	SCURS
+MP_MEM:
+	LXI	H,SMEM
+	JMP	MP_BG
 MP_BIG:
 	LXI	H,SQBIG
+MP_BG:
 	CALL	EXMSG
 	JMP	SCURS
 MP_FIL:
@@ -7950,6 +8011,7 @@ CMDTAB:
 	EXTRN	MKWHAT, MKHOLD, YACT, YTGT, YWAS, YCOL
 	EXTRN	YPFP, YNPG, YNCNT, SCNT, SOFF, SLDLT
 	EXTRN	BRKARM, BRKHIT, SSKIP, SRNGF, SRNG1, SRNG2
+	EXTRN	ABTFLG, FORCEF, VISTK
 	EXTRN	SDELIM, SGFLAG, SANY, SLCHG, SBACK, SLINES
 	EXTRN	RWPTR, RWERR, RDANY, RDBRK, SOFFS, SLDLTS
 	EXTRN	SREPLN, SREPL

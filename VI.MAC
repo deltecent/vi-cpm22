@@ -28,6 +28,9 @@
 
 	EXTRN	ZINIT			; BUF.MAC -- stand up the arena
 	EXTRN	ERRHK			; BUF.MAC -- where a fatal message goes
+	EXTRN	MEMHK			; BUF.MAC -- where running out of room goes
+	EXTRN	MEMABT			; CMD.MAC -- ... once there is a screen
+	PUBLIC	MLDRAW			; MEMABT comes back to the repaint
 	EXTRN	EDTHK			; BUF.MAC -- who hears of an edit
 	EXTRN	MKSHFT			; CMD.MAC  -- the marks do
 	EXTRN	FOPEN			; CMD.MAC  -- open + load the file (or none)
@@ -66,6 +69,8 @@ START:
 					;   may have lowered the intent
 	CALL	SCDRAW			; first full paint
 	CALL	MSGPST			; ... and vim's load line under it
+	LXI	H,MEMABT		; from here, running out of room ends
+	SHLD	MEMHK			;   the key and not the editor (#39)
 MLOOP:
 	CALL	GETKEY			; C = the key
 	CALL	SCPRE			; snapshot the displayed viewport pre-dispatch
@@ -75,6 +80,7 @@ MLOOP:
 	LDA	QUITF
 	ORA	A
 	JNZ	MQUIT			; quitting: do not repaint what we are leaving
+MLDRAW:
 	CALL	SCDRAW			; repaint: full, or cursor-only for a still motion
 	CALL	MODEMS			; '-- INSERT --' when the mode changed
 	CALL	MSGPST			; ... or whatever this key asked to say

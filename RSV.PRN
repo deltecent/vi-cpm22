@@ -146,6 +146,7 @@
   0002                   C      MW_WRT	EQU	2		; ':w' wrote it
   0003                   C      MW_CTG	EQU	3		; '^G' -- where am I
   0004                   C      MW_BIG	EQU	4		; the yank register cannot hold that
+  0005                   C      MW_MEM	EQU	5		; out of memory: the key abandoned (MEMABT)
                          C      
   0028                   C      EXMAX	EQU	40		; max chars on the ':' ex command line
                          C      
@@ -174,10 +175,10 @@
                                 	PUBLIC	EXBUF			; CMD.MAC  -- the ':' line
                                 	PUBLIC	KBRING			; KEY.MAC  -- type-ahead ring
                                 	PUBLIC	WRTYP, SECBUF		; PAGE.MAC -- saved type, sector stage
-                                	PUBLIC	UNDREC			; BUF.MAC  -- the captured change
 	MACRO-80 3.44	09-Dec-81	PAGE	1-3
 
 
+                                	PUBLIC	UNDREC			; BUF.MAC  -- the captured change
                                 	PUBLIC	MKTAB			; CMD.MAC  -- the marks 'm' sets
                                 	PUBLIC	MKSAV			; CMD.MAC  -- ... as a refused 'dd' found them
                                 	PUBLIC	MKUND			; CMD.MAC  -- ... as the last change found them
@@ -233,10 +234,10 @@
   0100'                         DOTBUF	EQU	RSVBAS+RVDOTB
   0180'                         FNAME	EQU	RSVBAS+RVFNM
   018C'                         ZTOP	EQU	RSVBAS+RVZTP
-  018F'                         PLUSB	EQU	RSVBAS+RVPLS
 	MACRO-80 3.44	09-Dec-81	PAGE	1-4
 
 
+  018F'                         PLUSB	EQU	RSVBAS+RVPLS
   0195'                         EXBUF	EQU	RSVBAS+RVEXB
   01BE'                         KBRING	EQU	RSVBAS+RVKBR
   01DE'                         WRTYP	EQU	RSVBAS+RVWRT
@@ -292,10 +293,10 @@
                                 				;   the cursor
                                 	CELL	LYPG,2		; ... and PGTOPM
                                 	CELL	FORCEF,1	; 1 = a full frame is not finished -> repaint in full
-                                	CELL	OEDMOD,1	; the mode the bottom row last showed (0FFH: unknown)
 	MACRO-80 3.44	09-Dec-81	PAGE	1-5
 
 
+                                	CELL	OEDMOD,1	; the mode the bottom row last showed (0FFH: unknown)
                                 	CELL	SCEOF,1		; 1 = the end of the file is on the screen
                                 	CELL	SCBOF,1		; 1 = the top row is the file's first line
                                 	CELL	PLACE,1		; the command's request of the next layout (VI.INC
@@ -351,10 +352,10 @@
                                 	CELL	WBIG,1		; word motion: 0 = w/b/e, 1 = W/B/E
                                 	CELL	WPULL,1		; w/W ended off a line's end and was pulled back
                                 	CELL	HFAMT,1		; ^D/^U: rows (vim's 'scroll'); 0 = NEDIT/2
-                                	CELL	HFN,1		; ^D/^U: the rows this one goes
 	MACRO-80 3.44	09-Dec-81	PAGE	1-6
 
 
+                                	CELL	HFN,1		; ^D/^U: the rows this one goes
                                 	CELL	HFTP,2		; ^D/^U: -> the new top line's entry
                                 	CELL	HTN,1		; row table: its entries
                                 	CELL	HTCUR,1		; ... the cursor line's
@@ -410,10 +411,10 @@
                                 	CELL	RPGE,2		; R: GAPEND as the last overwrite left it
                                 	CELL	RLPTR,2		; RDLINE: write pointer
                                 	CELL	RLLEN,1		; RDLINE: chars stored
-                                	CELL	RLMAX,1		; RDLINE: capacity
 	MACRO-80 3.44	09-Dec-81	PAGE	1-7
 
 
+                                	CELL	RLMAX,1		; RDLINE: capacity
                                 	CELL	EXOP,1		; ex: the command (EO_xx)
                                 	CELL	EXARG,1		; ex: 0 = no file name given
                                 	CELL	EXBAK,1		; ex: the write keeps a backup
@@ -469,14 +470,16 @@
                                 	CELL	YCOL,2		; ... how far into them the cursor sat
                                 	CELL	YPFP,3		; ... and where in the file they start
                                 	CELL	YNPG,2		; the window the yank started in (YNDONE's paint)
-                                	CELL	YNCNT,2		; YNLINE: the lines it still wants
 	MACRO-80 3.44	09-Dec-81	PAGE	1-8
 
 
+                                	CELL	YNCNT,2		; YNLINE: the lines it still wants
                                 	CELL	SCNT,2		; searches still to do (the count)
                                 	CELL	SOFF,3		; BRKON: where in the FILE the command began
                                 	CELL	SLDLT,2		; ... and LNDLT: for a search that fails, and
                                 				;   any move an ESC stops
+                                	CELL	ABTFLG,1	; MEMABT ran since the last key: a second
+                                				;   shortage ends the editor
                                 	CELL	BRKARM,1	; nonzero: CNTTST looks for an ESC
                                 	CELL	BRKHIT,1	; nonzero: one was found, and the count spent
                                 	CELL	SSKIP,1		; skip the character under the cursor (not
@@ -517,21 +520,21 @@
                                 ;OUTFCB's current write position and PAGEOUT's "OUTREC vs OUTPOS" compare
                                 ;skips exactly the records REWIND already pulled back.  A separate static
                                 ;cell would never advance, and the save would stop after its first record.
-  0581                          RZ	SET	RZ+1		; OUTFCB-2 : WRREC/CLOSEC open flag
+  0582                          RZ	SET	RZ+1		; OUTFCB-2 : WRREC/CLOSEC open flag
                                 	CELL	OUTACT,1	; OUTFCB-1 : out-side active flag
                                 	CELL	OUTFCB,36	; output file (name.$$$)
-  058B'                         OUTTYP	EQU	OUTFCB+9	; OUTFCB type field ('$$$' / briefly 'BAK')
+  058C'                         OUTTYP	EQU	OUTFCB+9	; OUTFCB type field ('$$$' / briefly 'BAK')
                                 	PUBLIC	OUTTYP
-  05A4'                         OUTPOS	EQU	OUTFCB+22H	; OUTFCB random-record word (write position)
+  05A5'                         OUTPOS	EQU	OUTFCB+22H	; OUTFCB random-record word (write position)
                                 	PUBLIC	OUTPOS
-  05A7                          RZ	SET	RZ+1		; BAKFCB-2 : WRREC/CLOSEC open flag
+  05A8                          RZ	SET	RZ+1		; BAKFCB-2 : WRREC/CLOSEC open flag
                                 	CELL	BAKRDY,1	; BAKFCB-1 : backup-has-data flag
-                                	CELL	BAKFCB,36	; backup file (VIBACKUP$$$)
-  05CA'                         BAKPOS	EQU	BAKFCB+22H	; BAKFCB random-record word (RECBASE input base)
-                                	PUBLIC	BAKPOS
 	MACRO-80 3.44	09-Dec-81	PAGE	1-9
 
 
+                                	CELL	BAKFCB,36	; backup file (VIBACKUP$$$)
+  05CB'                         BAKPOS	EQU	BAKFCB+22H	; BAKFCB random-record word (RECBASE input base)
+                                	PUBLIC	BAKPOS
                                 	CELL	PGTOPM,2	; (appended) times the pager moved TXTBEG --
                                 				;   the window signature 'u' checks (see BUF.MAC)
                                 	CELL	OUTREC,2	; output write high-water (record)
@@ -553,8 +556,8 @@
                                 	CELL	TOPLF,2		; the line feeds behind the window: in output
                                 				;   records 0 to OUTPOS-1 (TLFADD / TLFSUB)
                                 	CELL	CLCNT,2		; CNTLF: line feeds counted
-  05E5                          RZ	SET	RZ+1		; TFCB-2 : WRREC/CLOSEC open flag (DELF clears)
-  05E6                          RZ	SET	RZ+1		; TFCB-1
+  05E6                          RZ	SET	RZ+1		; TFCB-2 : WRREC/CLOSEC open flag (DELF clears)
+  05E7                          RZ	SET	RZ+1		; TFCB-1
                                 	CELL	TFCB,36		; WRTO / TEXIST: the target file
                                 	CELL	WRLIM,2		; PAGEOUT write limit (set to PGINIT / 81H)
                                 	CELL	RDLIM,2		; PAGEBOT read limit (set to PGINIT)
@@ -585,19 +588,19 @@
                                 ;(QBEG,QEND) (HOLEQP,TXTBAS) (UBEG,UEND) (TXTBEG,GAPBEG) (GAPEND,TXTEND).
                                 ;NEXTPR, MOVGAP, BUFSUM, HOLEUP/HOLEDN, PRSPAN and INIBAS's count are all
                                 ;untouched by it; INIGAP empties it.
-                                	CELL	UBEG,2		; undo region begin
-                                	CELL	UEND,2		; undo region end = its insertion point
-                                	CELL	TXTBEG,2	; window start
 	MACRO-80 3.44	09-Dec-81	PAGE	1-10
 
 
+                                	CELL	UBEG,2		; undo region begin
+                                	CELL	UEND,2		; undo region end = its insertion point
+                                	CELL	TXTBEG,2	; window start
                                 	CELL	GAPBEG,2	; cursor / gap start
                                 	CELL	GAPEND,2	; gap end / first char after cursor
                                 	CELL	TXTEND,2	; window end
-  062E'                         PRTERM	EQU	TXTEND+1	; NEXTPR terminator = high byte of TXTEND
+  062F'                         PRTERM	EQU	TXTEND+1	; NEXTPR terminator = high byte of TXTEND
                                 	PUBLIC	PRTERM
                                 	CELL	BUFEND,2	; top of usable text RAM
-  0630'                         MVGTOP	EQU	BUFEND+1	; MOVGAP upper bound = high byte of BUFEND
+  0631'                         MVGTOP	EQU	BUFEND+1	; MOVGAP upper bound = high byte of BUFEND
                                 	PUBLIC	MVGTOP
                                 	CELL	ERRFLG,1	; nonzero after ERRMSG fired (harness reads it)
                                 ;The search pattern, in WM's SRCHBUF layout (WM 6900): the length, then the
@@ -637,8 +640,8 @@
                                 	CELL	LNDLT,2		; (appended) lines the cursor moved since the last
                                 				;   screen layout (signed; SCRN.MAC consumes it)
                                 
-  024B                          RSVZN	EQU	RZ-RVSIZE		; bytes ZINIT clears
-  0679'                         RSVTOP	EQU	RSVBAS+RZ		; BUF.MAC's PBEGMEM: the arena base
+  024C                          RSVZN	EQU	RZ-RVSIZE		; bytes ZINIT clears
+  067A'                         RSVTOP	EQU	RSVBAS+RZ		; BUF.MAC's PBEGMEM: the arena base
                                 
                                 	END
 	MACRO-80 3.44	09-Dec-81	PAGE	S
@@ -648,136 +651,136 @@ Macros:
 CELL            
 
 Symbols:
-05D9I'	AUXCNT          05A8I'	BAKFCB          05CAI'	BAKPOS          
-05A7I'	BAKRDY          05D4I'	BAKREC          0005 	BDOS            
-0007 	BEL             0001 	BF_CONIN        0002 	BF_CONOUT       
-000B 	BF_CONST        0019 	BF_CURDSK       0009 	BF_PRTSTR       
-053FI'	BRKARM          0540I'	BRKHIT          0008 	BS              
-0619I'	BUFBEG          062FI'	BUFEND          0610I'	BUFHI           
-060EI'	BUFLO           0459I'	CBOL            05E2I'	CLCNT           
-0487I'	CMDCNT          0080 	CMDTAIL         04D0I'	CNTV            
-001A 	CPMEOF          000D 	CR              0456I'	CSUB            
-045BI'	CURDCL          04BBI'	CWEOL           048DI'	DCHBS           
-0480I'	DCOL            04B9I'	DDSNG           007F 	DEL             
-005C 	DFTFCB          05DBI'	DIRFLG          0100I'	DOTBUF          
-04ADI'	DOTCHG          04B2I'	DOTIX           04B1I'	DOTLEN          
-04B0I'	DOTLK           0080 	DOTMAX          04B3I'	DOTNCT          
-04AFI'	DOTOVF          04AEI'	DOTRPL          0080I'	DOTSCR          
-05D7I'	DSTDRV          0441I'	EDA             0442I'	EDB             
-0486I'	EDMODE          0444I'	EDP             0443I'	EDR             
-0000 	EM_CMD          0003 	EM_EX           0001 	EM_INS          
-0002 	EM_REP          0631I'	ERRFLG          001B 	ESC             
-04E7I'	EXARG           04E8I'	EXBAK           04F9I'	EXBANG          
-0195I'	EXBUF           04E9I'	EXCMD           0028 	EXMAX           
-04E6I'	EXOP            0180I'	FNAME           0511I'	FNDCH           
-0516I'	FNDCUR          0510I'	FNDKND          0518I'	FNDLIM          
-0514I'	FNDN            0512I'	FNDRUN          0513I'	FNDSTP          
-0451I'	FORCEF          0629I'	GAPBEG          062BI'	GAPEND          
-04B5I'	GPEND           051AI'	GPKEEP          04B6I'	GSAVE           
-0492I'	HFAMT           0493I'	HFN             0494I'	HFTP            
-061FI'	HOLEQP          032FI'	HTAB            049AI'	HTBOF           
-0497I'	HTCUR           0499I'	HTEOF           046BI'	HTLIM           
-0496I'	HTN             044DI'	HTTOPC          0498I'	HTTP            
-048CI'	ICHAPP          048FI'	ILABOV          05D6I'	INLEN           
-0616I'	IOBATCH         04A5I'	JKBK            049FI'	JKCNT           
-04ABI'	JKLS            04A8I'	JKLST           04A3I'	JKMOV           
-04A1I'	JKN             04A7I'	JKPHN           04A9I'	JKVC            
-057EI'	KBHEAD          01BEI'	KBRING          0020 	KBRSIZ          
-057FI'	KBTAIL          0652I'	L2756           000A 	LF              
-048EI'	LNALL           0677I'	LNDLT           044AI'	LQKC            
-045DI'	LYDLT           0460I'	LYIB            046DI'	LYLAST          
-0463I'	LYLIM           0466I'	LYMAB           0467I'	LYMBL           
-0468I'	LYND            0449I'	LYOK            044FI'	LYPG            
-0469I'	LYPRF           045FI'	LYROW           046AI'	LYSVR           
-044BI'	LYTOP           0465I'	LYUSE           0462I'	LYVB            
-046CI'	LYXE            0614I'	MARGLO          051EI'	MKEDIT          
-0528I'	MKHOLD          0003 	MKMAX           0521I'	MKN             
-0524I'	MKPOS           0317I'	MKSAV           0004 	MKSIZ           
-030BI'	MKTAB           0523I'	MKTYP           0323I'	MKUND           
-051BI'	MKVAL           0527I'	MKWHAT          048AI'	MODF            
-04F8I'	MSGNEW          04F7I'	MSGWHT          0630I'	MVGTOP          
-0004 	MW_BIG          0003 	MW_CTG          0001 	MW_FIL          
-0000 	MW_NON          0002 	MW_WRT          05D8I'	NEWFIL          
-0000 	NUL             0452I'	OEDMOD          043AI'	OLDAB           
-0439I'	OLDBOT          043DI'	OLDCR           043CI'	OLDCS           
+053FI'	ABTFLG          05DAI'	AUXCNT          05A9I'	BAKFCB          
+05CBI'	BAKPOS          05A8I'	BAKRDY          05D5I'	BAKREC          
+0005 	BDOS            0007 	BEL             0001 	BF_CONIN        
+0002 	BF_CONOUT       000B 	BF_CONST        0019 	BF_CURDSK       
+0009 	BF_PRTSTR       0540I'	BRKARM          0541I'	BRKHIT          
+0008 	BS              061AI'	BUFBEG          0630I'	BUFEND          
+0611I'	BUFHI           060FI'	BUFLO           0459I'	CBOL            
+05E3I'	CLCNT           0487I'	CMDCNT          0080 	CMDTAIL         
+04D0I'	CNTV            001A 	CPMEOF          000D 	CR              
+0456I'	CSUB            045BI'	CURDCL          04BBI'	CWEOL           
+048DI'	DCHBS           0480I'	DCOL            04B9I'	DDSNG           
+007F 	DEL             005C 	DFTFCB          05DCI'	DIRFLG          
+0100I'	DOTBUF          04ADI'	DOTCHG          04B2I'	DOTIX           
+04B1I'	DOTLEN          04B0I'	DOTLK           0080 	DOTMAX          
+04B3I'	DOTNCT          04AFI'	DOTOVF          04AEI'	DOTRPL          
+0080I'	DOTSCR          05D8I'	DSTDRV          0441I'	EDA             
+0442I'	EDB             0486I'	EDMODE          0444I'	EDP             
+0443I'	EDR             0000 	EM_CMD          0003 	EM_EX           
+0001 	EM_INS          0002 	EM_REP          0632I'	ERRFLG          
+001B 	ESC             04E7I'	EXARG           04E8I'	EXBAK           
+04F9I'	EXBANG          0195I'	EXBUF           04E9I'	EXCMD           
+0028 	EXMAX           04E6I'	EXOP            0180I'	FNAME           
+0511I'	FNDCH           0516I'	FNDCUR          0510I'	FNDKND          
+0518I'	FNDLIM          0514I'	FNDN            0512I'	FNDRUN          
+0513I'	FNDSTP          0451I'	FORCEF          062AI'	GAPBEG          
+062CI'	GAPEND          04B5I'	GPEND           051AI'	GPKEEP          
+04B6I'	GSAVE           0492I'	HFAMT           0493I'	HFN             
+0494I'	HFTP            0620I'	HOLEQP          032FI'	HTAB            
+049AI'	HTBOF           0497I'	HTCUR           0499I'	HTEOF           
+046BI'	HTLIM           0496I'	HTN             044DI'	HTTOPC          
+0498I'	HTTP            048CI'	ICHAPP          048FI'	ILABOV          
+05D7I'	INLEN           0617I'	IOBATCH         04A5I'	JKBK            
+049FI'	JKCNT           04ABI'	JKLS            04A8I'	JKLST           
+04A3I'	JKMOV           04A1I'	JKN             04A7I'	JKPHN           
+04A9I'	JKVC            057FI'	KBHEAD          01BEI'	KBRING          
+0020 	KBRSIZ          0580I'	KBTAIL          0653I'	L2756           
+000A 	LF              048EI'	LNALL           0678I'	LNDLT           
+044AI'	LQKC            045DI'	LYDLT           0460I'	LYIB            
+046DI'	LYLAST          0463I'	LYLIM           0466I'	LYMAB           
+0467I'	LYMBL           0468I'	LYND            0449I'	LYOK            
+044FI'	LYPG            0469I'	LYPRF           045FI'	LYROW           
+046AI'	LYSVR           044BI'	LYTOP           0465I'	LYUSE           
+0462I'	LYVB            046CI'	LYXE            0615I'	MARGLO          
+051EI'	MKEDIT          0528I'	MKHOLD          0003 	MKMAX           
+0521I'	MKN             0524I'	MKPOS           0317I'	MKSAV           
+0004 	MKSIZ           030BI'	MKTAB           0523I'	MKTYP           
+0323I'	MKUND           051BI'	MKVAL           0527I'	MKWHAT          
+048AI'	MODF            04F8I'	MSGNEW          04F7I'	MSGWHT          
+0631I'	MVGTOP          0004 	MW_BIG          0003 	MW_CTG          
+0001 	MW_FIL          0005 	MW_MEM          0000 	MW_NON          
+0002 	MW_WRT          05D9I'	NEWFIL          0000 	NUL             
+0452I'	OEDMOD          043AI'	OLDAB           0439I'	OLDBOT          
 	MACRO-80 3.44	09-Dec-81	PAGE	S-1
 
 
-043EI'	OLDNR           0435I'	OLDSC           0433I'	OLDSK           
-0437I'	OLDTX           0431I'	OLDWR           04BAI'	OPCLSV          
-04BEI'	OPEND2          04CEI'	OPHI            04CCI'	OPLO            
-0440I'	OPM             043FI'	OPN             04C0I'	OPSFP           
-04C6I'	OPSHI           04C3I'	OPSLO           04BCI'	OPSTA           
-04C9I'	OPTOGO          0581I'	OUTACT          0582I'	OUTFCB          
-05D0I'	OUTHI           05A4I'	OUTPOS          05CEI'	OUTREC          
-058BI'	OUTTYP          049EI'	OVDIR           0503I'	PCNT            
-050AI'	PCPY            0445I'	PEND            04B7I'	PENDOP          
-0615I'	PGMARGN         0612I'	PGSCAL          0613I'	PGSCL2          
-0617I'	PGSCRA          05CCI'	PGTOPM          0455I'	PLACE           
-0508I'	PLFS            018FI'	PLUSB           04FBI'	PLUSF           
-0000 	PL_ASK          0002 	PL_MID          0001 	PL_SET          
-0505I'	PPFP            047DI'	PROWN           062EI'	PRTERM          
-04B8I'	PSAVE           047EI'	PSKN            061BI'	QBEG            
-0654I'	QCPDON          061DI'	QEND            0489I'	QUITF           
-0551I'	RDANY           0479I'	RDBC            0552I'	RDBRK           
-0477I'	RDHL            060CI'	RDLIM           0475I'	RDN             
-0473I'	RDP             047BI'	RDSEG           048BI'	RINTENT         
-04E4I'	RLLEN           04E5I'	RLMAX           04E2I'	RLPTR           
-04FAI'	ROFLAG          04DEI'	RPAPP           04DCI'	RPDEL           
-04E0I'	RPGE            0000'	RSVBAS          0679I'	RSVTOP          
-042EI'	RSVZ            024BI 	RSVZN           0100 	RVDOTB          
-0080 	RVDOTS          0195 	RVEXB           0180 	RVFNM           
-000C 	RVFNMN          032F 	RVHTB           00FF 	RVHTN           
-01BE 	RVKBR           0317 	RVMKS           030B 	RVMKT           
-0323 	RVMKU           018F 	RVPLS           0006 	RVPLSN          
-01E2 	RVSEC           0080 	RVSECN          042E 	RVSIZE          
-0000 	RVSTK           0080 	RVSTKN          0263 	RVUND           
-00A8 	RVUNDN          01DE 	RVWRT           0003 	RVWRTN          
-018C 	RVZTP           0003 	RVZTPN          0550I'	RWERR           
-049DI'	RWMV            054FI'	RWPTR           049BI'	RWR             
-0679 	RZ              0007 	R_DCH           0003 	R_DLIN          
-0000 	R_FULL          0004 	R_ICH           0005 	R_ILIN          
-0006 	R_JOIN          0002 	R_LINE          0001 	R_MOVE          
-0549I'	SANY            054BI'	SBACK           0454I'	SCBOF           
-0453I'	SCEOF           0538I'	SCNT            0447I'	SCRLN           
-0547I'	SDELIM          050DI'	SDIR            050EI'	SDIRE           
-01E2I'	SECBUF          0548I'	SGFLAG          050FI'	SHAVE           
-05DFI'	SKBYT           047CI'	SKPN            05DDI'	SKREC           
-054AI'	SLCHG           053DI'	SLDLT           0556I'	SLDLTS          
-054DI'	SLINES          053AI'	SOFF            0553I'	SOFFS           
-0618I'	SPLCNT          0632I'	SRCHBF          0633I'	SRCHST          
-05D2I'	SRCREC          0559I'	SREPL           0558I'	SREPLN          
-0024 	SREPMX          0543I'	SRNG1           0545I'	SRNG2           
-0542I'	SRNGF           0541I'	SSKIP           0470I'	SVAUX           
-046EI'	SVCNT           0472I'	SVDIR           0009 	TAB             
-0008 	TABWID          0446I'	TALLF           042EI'	TCOK            
-042FI'	TCPOS           05E6I'	TFCB            0484I'	TMPC            
-0482I'	TMPR            0457I'	TOPLEN          05E0I'	TOPLF           
-04D2I'	TTI             0621I'	TXTBAS          0627I'	TXTBEG          
-062DI'	TXTEND          0623I'	UBEG            0625I'	UEND            
-066BI'	UNDB1           0658I'	UNDBAD          0661I'	UNDBO           
-0663I'	UNDCL           066EI'	UNDCUR          065AI'	UNDDIR          
-0675I'	UNDL0           0671I'	UNDLC           0670I'	UNDLK           
-0672I'	UNDLL0          065FI'	UNDLN           0665I'	UNDLSA          
+043DI'	OLDCR           043CI'	OLDCS           043EI'	OLDNR           
+0435I'	OLDSC           0433I'	OLDSK           0437I'	OLDTX           
+0431I'	OLDWR           04BAI'	OPCLSV          04BEI'	OPEND2          
+04CEI'	OPHI            04CCI'	OPLO            0440I'	OPM             
+043FI'	OPN             04C0I'	OPSFP           04C6I'	OPSHI           
+04C3I'	OPSLO           04BCI'	OPSTA           04C9I'	OPTOGO          
+0582I'	OUTACT          0583I'	OUTFCB          05D1I'	OUTHI           
+05A5I'	OUTPOS          05CFI'	OUTREC          058CI'	OUTTYP          
+049EI'	OVDIR           0503I'	PCNT            050AI'	PCPY            
+0445I'	PEND            04B7I'	PENDOP          0616I'	PGMARGN         
+0613I'	PGSCAL          0614I'	PGSCL2          0618I'	PGSCRA          
+05CDI'	PGTOPM          0455I'	PLACE           0508I'	PLFS            
+018FI'	PLUSB           04FBI'	PLUSF           0000 	PL_ASK          
+0002 	PL_MID          0001 	PL_SET          0505I'	PPFP            
+047DI'	PROWN           062FI'	PRTERM          04B8I'	PSAVE           
+047EI'	PSKN            061CI'	QBEG            0655I'	QCPDON          
+061EI'	QEND            0489I'	QUITF           0552I'	RDANY           
+0479I'	RDBC            0553I'	RDBRK           0477I'	RDHL            
+060DI'	RDLIM           0475I'	RDN             0473I'	RDP             
+047BI'	RDSEG           048BI'	RINTENT         04E4I'	RLLEN           
+04E5I'	RLMAX           04E2I'	RLPTR           04FAI'	ROFLAG          
+04DEI'	RPAPP           04DCI'	RPDEL           04E0I'	RPGE            
+0000'	RSVBAS          067AI'	RSVTOP          042EI'	RSVZ            
+024CI 	RSVZN           0100 	RVDOTB          0080 	RVDOTS          
+0195 	RVEXB           0180 	RVFNM           000C 	RVFNMN          
+032F 	RVHTB           00FF 	RVHTN           01BE 	RVKBR           
+0317 	RVMKS           030B 	RVMKT           0323 	RVMKU           
+018F 	RVPLS           0006 	RVPLSN          01E2 	RVSEC           
+0080 	RVSECN          042E 	RVSIZE          0000 	RVSTK           
+0080 	RVSTKN          0263 	RVUND           00A8 	RVUNDN          
+01DE 	RVWRT           0003 	RVWRTN          018C 	RVZTP           
+0003 	RVZTPN          0551I'	RWERR           049DI'	RWMV            
+0550I'	RWPTR           049BI'	RWR             067A 	RZ              
+0007 	R_DCH           0003 	R_DLIN          0000 	R_FULL          
+0004 	R_ICH           0005 	R_ILIN          0006 	R_JOIN          
+0002 	R_LINE          0001 	R_MOVE          054AI'	SANY            
+054CI'	SBACK           0454I'	SCBOF           0453I'	SCEOF           
+0538I'	SCNT            0447I'	SCRLN           0548I'	SDELIM          
+050DI'	SDIR            050EI'	SDIRE           01E2I'	SECBUF          
+0549I'	SGFLAG          050FI'	SHAVE           05E0I'	SKBYT           
+047CI'	SKPN            05DEI'	SKREC           054BI'	SLCHG           
+053DI'	SLDLT           0557I'	SLDLTS          054EI'	SLINES          
+053AI'	SOFF            0554I'	SOFFS           0619I'	SPLCNT          
+0633I'	SRCHBF          0634I'	SRCHST          05D3I'	SRCREC          
+055AI'	SREPL           0559I'	SREPLN          0024 	SREPMX          
+0544I'	SRNG1           0546I'	SRNG2           0543I'	SRNGF           
+0542I'	SSKIP           0470I'	SVAUX           046EI'	SVCNT           
+0472I'	SVDIR           0009 	TAB             0008 	TABWID          
+0446I'	TALLF           042EI'	TCOK            042FI'	TCPOS           
+05E7I'	TFCB            0484I'	TMPC            0482I'	TMPR            
+0457I'	TOPLEN          05E1I'	TOPLF           04D2I'	TTI             
+0622I'	TXTBAS          0628I'	TXTBEG          062EI'	TXTEND          
+0624I'	UBEG            0626I'	UEND            066CI'	UNDB1           
+0659I'	UNDBAD          0662I'	UNDBO           0664I'	UNDCL           
+066FI'	UNDCUR          065BI'	UNDDIR          0676I'	UNDL0           
+0672I'	UNDLC           0671I'	UNDLK           0673I'	UNDLL0          
 	MACRO-80 3.44	09-Dec-81	PAGE	S-2
 
 
-0674I'	UNDML           0656I'	UNDN            065DI'	UNDOF           
-066CI'	UNDPCU          0667I'	UNDPG           0669I'	UNDPTR          
-0263I'	UNDREC          0659I'	UNDRPL          0657I'	UNDST           
-065CI'	UNDTY           065BI'	UNDWHY          0080I'	VISTK           
-04DBI'	VRCH            0490I'	WBIG            0000 	WBOOT           
-04D8I'	WKBOL           04DAI'	WKCLS           04D4I'	WKI             
-04D6I'	WKTERM          04ECI'	WPBYT           04EDI'	WPREC           
-04EBI'	WPROW           0491I'	WPULL           05DCI'	WRKMAD          
-060AI'	WRLIM           01DEI'	WRTYP           0481I'	XC              
-0529I'	YACT            052FI'	YCOL            04FDI'	YDCHG           
-050BI'	YLDLT           04FCI'	YMODF           0536I'	YNCNT           
-0534I'	YNPG            04FFI'	YOFF            0531I'	YPFP            
-0501I'	YPT             052BI'	YTGT            04FEI'	YURPL           
-052DI'	YWAS            04EFI'	ZDIF            04F1I'	ZLF             
-04F4I'	ZSVAUX          04F2I'	ZSVCNT          04F6I'	ZSVDIR          
-018CI'	ZTOP            
+0660I'	UNDLN           0666I'	UNDLSA          0675I'	UNDML           
+0657I'	UNDN            065EI'	UNDOF           066DI'	UNDPCU          
+0668I'	UNDPG           066AI'	UNDPTR          0263I'	UNDREC          
+065AI'	UNDRPL          0658I'	UNDST           065DI'	UNDTY           
+065CI'	UNDWHY          0080I'	VISTK           04DBI'	VRCH            
+0490I'	WBIG            0000 	WBOOT           04D8I'	WKBOL           
+04DAI'	WKCLS           04D4I'	WKI             04D6I'	WKTERM          
+04ECI'	WPBYT           04EDI'	WPREC           04EBI'	WPROW           
+0491I'	WPULL           05DDI'	WRKMAD          060BI'	WRLIM           
+01DEI'	WRTYP           0481I'	XC              0529I'	YACT            
+052FI'	YCOL            04FDI'	YDCHG           050BI'	YLDLT           
+04FCI'	YMODF           0536I'	YNCNT           0534I'	YNPG            
+04FFI'	YOFF            0531I'	YPFP            0501I'	YPT             
+052BI'	YTGT            04FEI'	YURPL           052DI'	YWAS            
+04EFI'	ZDIF            04F1I'	ZLF             04F4I'	ZSVAUX          
+04F2I'	ZSVCNT          04F6I'	ZSVDIR          018CI'	ZTOP            
 
 
 

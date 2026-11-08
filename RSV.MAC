@@ -345,6 +345,8 @@ RSVZ	EQU	RSVBAS+RZ
 	CELL	SOFF,3		; BRKON: where in the FILE the command began
 	CELL	SLDLT,2		; ... and LNDLT: for a search that fails, and
 				;   any move an ESC stops
+	CELL	ABTFLG,1	; MEMABT ran since the last key: a second
+				;   shortage ends the editor
 	CELL	BRKARM,1	; nonzero: CNTTST looks for an ESC
 	CELL	BRKHIT,1	; nonzero: one was found, and the count spent
 	CELL	SSKIP,1		; skip the character under the cursor (not

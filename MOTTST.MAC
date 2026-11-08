@@ -33,6 +33,8 @@
 	PUBLIC	EXPRM, EXRUB, OUTCH	; CMD.MAC's ':' line echo (no renderer here)
 	PUBLIC	EXMSG, OUTSTR		; CMD.MAC's ex message (no renderer here)
 	PUBLIC	SCURS			; CMD.MAC's '^G' cursor restore
+	PUBLIC	MLDRAW			; CMD.MAC's MEMABT (never reached: no
+					;   MEMHK here, so ERRMSG is fatal)
 	EXTRN	SCEOF, SCBOF		; RSV.MAC -- the renderer's cells that start
 					;   at zero are there for every program:
 					;   PLACE CSUB TALLF CBOL CURDCL too
@@ -61,6 +63,7 @@ EXMSG:
 OUTSTR:
 EXRUB:
 OUTCH:
+MLDRAW:
 BCONOU:				; CMD.MAC's find-char miss bell -- swallowed here
 	RET
 

@@ -404,14 +404,16 @@ The limits:
                 memory at once.
     Register    One, of whole lines, about {z['REGK']}.  What it holds is taken
                 from the text's share, so after a big yank less of the
-                file is in memory and every move pages sooner.
+                file is in memory and every move pages sooner.  If a
+                command then finds no room, it stops part way, the
+                register is emptied and the bottom row says "Out of
+                memory: register emptied".  The text is kept.
     Undo        One change, of up to {z['undo']} bytes.
     Lines       A long line wraps and is edited like any other.  The
                 one limit is a line of about 13,000 characters or more,
                 which is over half the memory.  A put into such a line
                 can land in the middle of it, and going to the end of
-                one of 26,000 or more ENDS THE EDITOR, and what was not
-                written is lost.  Write the file first.
+                one of 26,000 or more runs out of memory, as above.
     CPU, disk   The file moves through the window 128 bytes at a time, at
                 about {z['RATEK']} a second.  Text that has left the window is in
                 two work files on the file's own drive, NAME.$$$ and

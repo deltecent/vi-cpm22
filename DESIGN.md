@@ -42,7 +42,8 @@ When two of these pull against each other, the higher one wins.
    is shown, edited and written correctly however long it is. Nothing is built
    only to make such lines quick. The one limit is a line that is most of the
    arena, 13,000 characters and up: a put into it can land inside the line,
-   and running to the end of one of 26,000 exits with the work lost. That is
+   and running to the end of one of 26,000 runs out of memory: the key stops,
+   the yank register is emptied and the text is kept (issue #39). That is
    accepted. A fix would have every load of every file pay for it.
 6. **Size comes after those.** Every byte of program is a byte less of arena,
    so it still matters, and 20 K on disk is preferred; a responsive editor
@@ -144,6 +145,19 @@ WordMaster. The engine changes only for a stated reason.
   screen leaves it on a `RET`), so the message is on the bottom row and not
   over the text at the cursor, and `DISCRD` drops `name.$$$` and `VIBACKUP.$$$`
   before the warm boot. The edit itself is lost; the file on disk is untouched.
+- **Running out of memory ends the key, not the editor** (issue #39). The three
+  out-of-memory errors — `MEM SHORTAGE` (`NEEDIN`/`FREEREC`), `MEM FULL`
+  (`MKGAP`) and `QBUF FULL` (`QROOM`) — call `MEMERR`, which goes through
+  `MEMHK`. Each is raised before a byte moves, which is why WordMaster could
+  send them back to its prompt. `MEMHK` is `ERRMSG` until the first paint;
+  then VI.MAC points it at `MEMABT` (CMD.MAC), which drops the key's stack and
+  whatever was half typed, empties the yank register (what holds the room),
+  says "Out of memory: register emptied" and repaints. A big register can
+  leave the text too little room for the next page-in. It used to take a
+  `247dd` on a 100 K file of 80-byte lines, and the repaint after it ended
+  the editor. A second shortage before the next key still ends it, and so
+  does one inside a yank's take-and-put-back (`MKHOLD`), whose lines are
+  then only in the register.
 - WordMaster's `GETKEY` is replaced by `KBPOLL` (KEY.MAC) in `RDSEC` and
   `POLLBRK`, so the long engine loops drain type-ahead into VI's ring.
 - `OPENFIL` wraps WordMaster's inline open sequence as a callable routine

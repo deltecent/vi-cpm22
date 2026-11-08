@@ -42,6 +42,9 @@
 ;      record; see DISCRD.
 ;   6. The backup work file is VIBACKUP.$$$, where WM names it WMBACKUP.$$$
 ;      (BAKNAM).  Same length, so no layout moves.
+;   7. MEMSHT calls BUF.MAC's MEMERR, not ERRMSG: running out of room ends
+;      the key and leaves the editor up, as WM's prompt is left up (issue
+;      #39; BUF.MAC's deviation 3).
 ;
 ; APPENDED (not WM), tagged where each starts: REOPEN/SEEKTO/OPENZ (':w' keeps
 ; editing), TFCB/WRTO/TEXIST/DISCRD/CNTLF (':w name', ':e', a buffer with no
@@ -78,7 +81,7 @@ PGINIT	EQU	200H		; WM 20 -- cold WRLIM/RDLIM (no-spill window)
 
 ;--- gap-buffer primitives + cells this layer drives (from BUF.MAC) ---------
 	EXTRN	MEMCPY, CMP16, LDHLI, PRSPAN, BUFSUM
-	EXTRN	PUTHOLE, PUTCUR, SUBHD, SUBCP2, POPRET, ERRMSG
+	EXTRN	PUTHOLE, PUTCUR, SUBHD, SUBCP2, POPRET, ERRMSG, MEMERR
 	EXTRN	TXTBEG, GAPBEG, GAPEND, TXTEND, BUFEND
 	EXTRN	KBPOLL		; KEY.MAC -- WM GETKEY (type-ahead drain)
 
@@ -724,7 +727,8 @@ FRECOK:				 ; WM 4813
 	ORA	A
 	RNZ
 MEMSHT:				 ; WM 4817
-	CALL	ERRMSG
+	CALL	MEMERR		; DEVIATION 7: out of room ends the key, not
+				;   the editor (BUF.MAC's deviation 3)
 	DB	'MEM SHORTAGE, TRY CLEARING QBUF',0H
 
 ;DISPKEY -- WM 2846: PCHL trampoline (call the reserve routine held in HL).

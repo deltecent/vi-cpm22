@@ -9037,8 +9037,10 @@ def limits_cmds():
                                f'written ({got})', got == [2, n, n, n, 2, 0])
         finally:
             e.close()
-    # Running to the end of a line the arena cannot hold still exits to CP/M
-    # with the work lost.  The same accepted limit.
+    # Running to the end of a line the arena cannot hold used to exit to CP/M
+    # with the work lost.  Now it is the arena running out like any other
+    # (#39, mem_out_cmds): the key is abandoned, the bottom row says so, and
+    # the editor keeps running.
     # (The typed text is 2000 characters so that the line passes the arena by
     # a margin whatever the image's size has done to it: 400 sat on the edge,
     # and stopped overflowing when the arena moved by 74 bytes.)
@@ -9048,8 +9050,11 @@ def limits_cmds():
             before = len(e.cap.getvalue())
             e.s.send(keys)
             idle(e)
-            accepted_limit(f'a line of {n}, {keys[:6]}: the editor keeps running',
-                           not PROMPT.search(e.cap.getvalue()[before:]))
+            out = e.cap.getvalue()[before:]
+            check(f'a line of {n}, {keys[:6]}: the editor keeps running',
+                  not PROMPT.search(out))
+            check(f'a line of {n}, {keys[:6]}: it says it ran out of memory',
+                  'Out of memory: register emptied' in out)
         finally:
             e.close()
 
@@ -10164,6 +10169,58 @@ def rdwr_cmds():
         e.close()
 
 
+def mem_out_cmds():
+    """#39: running out of memory ends the KEY, not the editor.  The register
+    shares the arena with the text, and the largest 'Ndd' it takes leaves the
+    text so little room that the next read the pager must make room for --
+    the repaint after the 'dd' on 80-byte lines, the page back for 'G' on
+    257-byte ones -- finds nothing it may write out.  That is WordMaster's
+    'MEM SHORTAGE, TRY CLEARING QBUF', and WordMaster answers it by ending the
+    command and going back to its prompt.  This editor used to end ITSELF
+    there, at the CP/M prompt with every unsaved edit gone.  Now the key is
+    abandoned, the register emptied (it is what took the room), and the bottom
+    row says 'Out of memory'; the text is what the commands before it made.
+
+    The count is derived, not written down: the most lines QFIT lets the
+    register take on this build (the arena less RESVMEM, 0D80H)."""
+    def mk(n, w):
+        return [b'%06d ' % i + bytes(48 + j % 10 for j in range(w - 9))
+                for i in range(1, n + 1)]
+    for w, at, keys in ((80, 625, ('G', '1G', '625G', 'gg', 'G')),
+                        (257, 194, ('G', '1G', 'gg', '194G'))):
+        lines = mk(100000 // w, w)
+        e = Editor(b''.join(x + b'\r\n' for x in lines))
+        tag = f'{w}-byte lines'
+        try:
+            e.key(f'{at}G')
+            n = (word(e, 'BUFEND') - word(e, 'BUFBEG') - 0xD81) // w
+            start = len(e.cap.getvalue())
+            alive = True
+            for k in (f'{n}dd',) + keys:
+                e.key(k)
+                e.s.run_until_quiet(quiet=1.5, timeout=300)
+                out = e.cap.getvalue()[start:]
+                alive = not PROMPT.search(out)
+                check(f'{tag}: {at}G {n}dd ... {k}: the editor is still running',
+                      alive)
+                if not alive:
+                    break
+            if not alive:
+                continue
+            out = e.cap.getvalue()[start:]
+            check(f'{tag}: the bottom row said Out of memory',
+                  'Out of memory' in out)
+            check(f'{tag}: Too large to yank was not the answer',
+                  'Too large' not in out)
+            e.key(':w\r'); ex_settled(e)
+            want = b''.join(x + b'\r\n' for x in lines[:at - 1] + lines[at - 1 + n:])
+            got = saved_bytes(e)
+            check(f'{tag}: the {n} lines went and the rest saved byte-exact '
+                  f'({len(got)} bytes for {len(want)})', got == want)
+        finally:
+            e.close()
+
+
 def qfull_cmds():
     """A 'dd' or 'yy' whose lines the yank register cannot hold is REFUSED:
     'Too large to yank' on the bottom row, the editor still running, the file,
@@ -10448,6 +10505,7 @@ def main():
     if not args or 'vim' in args or 'qfull' in args:
         print('\n=== dd / yy past the yank register ===', flush=True)
         qfull_cmds()
+        mem_out_cmds()
     if not args or 'vim' in args or 'rdwr' in args:
         print('\n=== :N,Mw {file} / :r {file} vs vim ===', flush=True)
         rdwr_like_vim()

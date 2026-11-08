@@ -36,6 +36,14 @@
 ;      reaches UPDMARK through SETGAPB, so a byte stored in the LAST byte of
 ;      a 128-byte record leaves that record counted as unchanged; after a
 ;      page back the save then keeps its old copy on disk.  See PUTGAP.
+;   3. RUNNING OUT OF ROOM ends the key, not the editor (issue #39).  WM's
+;      three out-of-memory errors -- 'MEM FULL' (MKGAP), 'QBUF FULL' (QROOM)
+;      and 'MEM SHORTAGE' (PAGE.MAC's MEMSHT) -- go through ERRMSG back to
+;      WM's own prompt, the command abandoned and the text whole: each is
+;      raised before a byte moves.  Deviation 1 made them end the editor.
+;      They now call MEMERR, which goes where MEMHK points: ERRMSG (as
+;      before) until the editor points it at its own recovery (CMD.MAC's
+;      MEMABT), which abandons the key and empties the register.
 ;
 ; APPENDED (non-WM), each section tagged where it starts:
 ;   * the LOGICAL-OFFSET API (CUROFF/LOGLEN/CHARAT/GOTO/LFCNT, DELFWD, UNDELF,
@@ -112,6 +120,7 @@ RESVMEM EQU	0D80H		; WM 25: the arena QROOM keeps free past
 	EXTRN	PGTOPM			; PAGE.MAC -- the paged-window signature
 	EXTRN	DISCRD			; PAGE.MAC -- drop the work files (ERRMSG)
 	PUBLIC	ERRHK			; VI.MAC   -- ERRMSG's screen hook
+	PUBLIC	MEMERR, MEMHK		; PAGE.MAC / VI.MAC -- out of room (dev. 3)
 	PUBLIC	EDTHK			; VI.MAC   -- UNDCHG's hook for the marks
 	EXTRN	KBPOLL			; KEY.MAC  -- WM GETKEY (type-ahead drain)
 	EXTRN	UNDREC, RSVTOP		; RSV.MAC  -- the captured change, and the
@@ -314,7 +323,7 @@ MKGAPL:				; WM 1919
 	JNZ	MOVGAP
 	CALL	MKROOM
 	JNC	MKGAPL
-	CALL	ERRMSG
+	CALL	MEMERR		; DEVIATION 3: out of room ends the key
 	DB	'MEM FULL',0H
 
 ;CKLEN -- WM 1934: set up the chunked-copy B/C counters; Z if count is zero.
@@ -359,7 +368,7 @@ QROOM:				; WM 1594
 	LXI	D,RESVMEM
 	CALL	CMP16
 	JC	POPRET
-	CALL	ERRMSG
+	CALL	MEMERR		; DEVIATION 3: out of room ends the key
 	DB	'QBUF FULL',0H
 
 ;QCOPY -- WM 1563: copy the span BC out of the text into the Q-buffer whose
@@ -1420,6 +1429,15 @@ ERMEND:
 ERMGO:	PCHL
 ERMNUL: RET
 ERRHK:	DW	ERMNUL		; the screen's teardown, once there is a screen
+
+;MEMERR -- DEVIATION 3 (see header): the arena has no room for what the key
+;asked.  Called as ERRMSG is, the message inline after the CALL, and goes on
+;through MEMHK with the stack as it found it, so whatever MEMHK names reads the
+;message where ERRMSG would.  MEMHK is ERRMSG until the editor is up.
+MEMERR:
+	LHLD	MEMHK
+	PCHL
+MEMHK:	DW	ERRMSG		; VI.MAC points it at CMD.MAC's MEMABT
 
 ;============================================================
 ; LOGICAL-OFFSET API  (APPENDED -- NOT WordMaster).

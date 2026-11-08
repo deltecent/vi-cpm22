@@ -115,10 +115,11 @@
   0002                   C      MW_WRT	EQU	2		; ':w' wrote it
   0003                   C      MW_CTG	EQU	3		; '^G' -- where am I
   0004                   C      MW_BIG	EQU	4		; the yank register cannot hold that
-                         C      
+  0005                   C      MW_MEM	EQU	5		; out of memory: the key abandoned (MEMABT)
 	MACRO-80 3.44	09-Dec-81	PAGE	1-2
 
 
+                         C      
   0028                   C      EXMAX	EQU	40		; max chars on the ':' ex command line
                          C      
                          C      ;------------------------------------------------------------
@@ -142,6 +143,9 @@
                                 
                                 	EXTRN	ZINIT			; BUF.MAC -- stand up the arena
                                 	EXTRN	ERRHK			; BUF.MAC -- where a fatal message goes
+                                	EXTRN	MEMHK			; BUF.MAC -- where running out of room goes
+                                	EXTRN	MEMABT			; CMD.MAC -- ... once there is a screen
+                                	PUBLIC	MLDRAW			; MEMABT comes back to the repaint
                                 	EXTRN	EDTHK			; BUF.MAC -- who hears of an edit
                                 	EXTRN	MKSHFT			; CMD.MAC  -- the marks do
                                 	EXTRN	FOPEN			; CMD.MAC  -- open + load the file (or none)
@@ -171,34 +175,37 @@
   000F'   22 0000*              	SHLD	ERRHK			;   leaves the cursor: bottom left
   0012'   21 0000*              	LXI	H,MKSHFT		; the marks follow every edit
   0015'   22 0000*              	SHLD	EDTHK
+	MACRO-80 3.44	09-Dec-81	PAGE	1-3
+
+
   0018'   CD 0000*              	CALL	FOPEN			; open the source FCB staged at 005CH
   001B'   CD 0000*              	CALL	LAYOUT			; the screen the file opens on: '+{n}'
                                 					;   is a move from there, as in vim
   001E'   CD 0000*              	CALL	ARGGO			; '+{n}': the line to start on
-	MACRO-80 3.44	09-Dec-81	PAGE	1-3
-
-
   0021'   3E 00                 	MVI	A,R_FULL		; nothing is on the screen yet, and
   0023'   32 0000*              	STA	RINTENT			;   ARGGO dispatched real keys that
                                 					;   may have lowered the intent
   0026'   CD 0000*              	CALL	SCDRAW			; first full paint
   0029'   CD 0000*              	CALL	MSGPST			; ... and vim's load line under it
-  002C'                         MLOOP:
-  002C'   CD 0000*              	CALL	GETKEY			; C = the key
-  002F'   CD 0000*              	CALL	SCPRE			; snapshot the displayed viewport pre-dispatch
-  0032'   3E 00                 	MVI	A,R_FULL		; default: full repaint unless a motion lowers it
-  0034'   32 0000*              	STA	RINTENT
-  0037'   CD 0000*              	CALL	CMDDIS			; dispatch through the vi core (may set R_MOVE)
-  003A'   3A 0000*              	LDA	QUITF
-  003D'   B7                    	ORA	A
-  003E'   C2 004D'              	JNZ	MQUIT			; quitting: do not repaint what we are leaving
-  0041'   CD 0000*              	CALL	SCDRAW			; repaint: full, or cursor-only for a still motion
-  0044'   CD 0000*              	CALL	MODEMS			; '-- INSERT --' when the mode changed
-  0047'   CD 0000*              	CALL	MSGPST			; ... or whatever this key asked to say
-  004A'   C3 002C'              	JMP	MLOOP
-  004D'                         MQUIT:
-  004D'   CD 0000*              	CALL	SCDONE			; restore the terminal
-  0050'   C3 0000               	JMP	WBOOT			; back to CP/M
+  002C'   21 0000*              	LXI	H,MEMABT		; from here, running out of room ends
+  002F'   22 0000*              	SHLD	MEMHK			;   the key and not the editor (#39)
+  0032'                         MLOOP:
+  0032'   CD 0000*              	CALL	GETKEY			; C = the key
+  0035'   CD 0000*              	CALL	SCPRE			; snapshot the displayed viewport pre-dispatch
+  0038'   3E 00                 	MVI	A,R_FULL		; default: full repaint unless a motion lowers it
+  003A'   32 0000*              	STA	RINTENT
+  003D'   CD 0000*              	CALL	CMDDIS			; dispatch through the vi core (may set R_MOVE)
+  0040'   3A 0000*              	LDA	QUITF
+  0043'   B7                    	ORA	A
+  0044'   C2 0053'              	JNZ	MQUIT			; quitting: do not repaint what we are leaving
+  0047'                         MLDRAW:
+  0047'   CD 0000*              	CALL	SCDRAW			; repaint: full, or cursor-only for a still motion
+  004A'   CD 0000*              	CALL	MODEMS			; '-- INSERT --' when the mode changed
+  004D'   CD 0000*              	CALL	MSGPST			; ... or whatever this key asked to say
+  0050'   C3 0032'              	JMP	MLOOP
+  0053'                         MQUIT:
+  0053'   CD 0000*              	CALL	SCDONE			; restore the terminal
+  0056'   C3 0000               	JMP	WBOOT			; back to CP/M
                                 
                                 	END	START
 	MACRO-80 3.44	09-Dec-81	PAGE	S
@@ -210,26 +217,27 @@ Symbols:
 001F*	ARGGO           0007*	ARGSCN          0005 	BDOS            
 0007 	BEL             0001 	BF_CONIN        0002 	BF_CONOUT       
 000B 	BF_CONST        0019 	BF_CURDSK       0009 	BF_PRTSTR       
-0008 	BS              0038*	CMDDIS          0080 	CMDTAIL         
+0008 	BS              003E*	CMDDIS          0080 	CMDTAIL         
 001A 	CPMEOF          000D 	CR              007F 	DEL             
 005C 	DFTFCB          0080 	DOTMAX          0016*	EDTHK           
 0000 	EM_CMD          0003 	EM_EX           0001 	EM_INS          
 0002 	EM_REP          0010*	ERRHK           001B 	ESC             
-0028 	EXMAX           0019*	FOPEN           002D*	GETKEY          
+0028 	EXMAX           0019*	FOPEN           0033*	GETKEY          
 0020 	KBRSIZ          001C*	LAYOUT          000A 	LF              
-0003 	MKMAX           0013*	MKSHFT          0004 	MKSIZ           
-002C'	MLOOP           0045*	MODEMS          004D'	MQUIT           
-0048*	MSGPST          0004 	MW_BIG          0003 	MW_CTG          
-0001 	MW_FIL          0000 	MW_NON          0002 	MW_WRT          
-0000 	NUL             0000 	PL_ASK          0002 	PL_MID          
-0001 	PL_SET          003B*	QUITF           0035*	RINTENT         
-0007 	R_DCH           0003 	R_DLIN          0000 	R_FULL          
-0004 	R_ICH           0005 	R_ILIN          0006 	R_JOIN          
-0002 	R_LINE          0001 	R_MOVE          004E*	SCDONE          
-0042*	SCDRAW          000A*	SCINIT          0030*	SCPRE           
-0024 	SREPMX          0000'	START           0009 	TAB             
-0008 	TABWID          0001*	VISTK           0000 	WBOOT           
-0004*	ZINIT           
+002D*	MEMABT          0030*	MEMHK           0003 	MKMAX           
+0013*	MKSHFT          0004 	MKSIZ           0047I'	MLDRAW          
+0032'	MLOOP           004B*	MODEMS          0053'	MQUIT           
+004E*	MSGPST          0004 	MW_BIG          0003 	MW_CTG          
+0001 	MW_FIL          0005 	MW_MEM          0000 	MW_NON          
+0002 	MW_WRT          0000 	NUL             0000 	PL_ASK          
+0002 	PL_MID          0001 	PL_SET          0041*	QUITF           
+003B*	RINTENT         0007 	R_DCH           0003 	R_DLIN          
+0000 	R_FULL          0004 	R_ICH           0005 	R_ILIN          
+0006 	R_JOIN          0002 	R_LINE          0001 	R_MOVE          
+0054*	SCDONE          0048*	SCDRAW          000A*	SCINIT          
+0036*	SCPRE           0024 	SREPMX          0000'	START           
+0009 	TAB             0008 	TABWID          0001*	VISTK           
+0000 	WBOOT           0004*	ZINIT           
 
 
 
