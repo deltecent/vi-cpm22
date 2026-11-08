@@ -119,7 +119,10 @@ class Probe:
         self.io[key] = self.io.get(key, 0) + 1
         if LOG:
             f = self.e.s.mem(r["DE"], 36)
-            ev = [self.t, r["C"], fcbfile(f), fcbrec(r["C"], f)]
+            # SRCFCB reads the source too; tag it, since a CP/M FCB keeps
+            # its own extent and the model must price the two apart.
+            front = " (front)" if r["DE"] == SYM.get("SRCFCB") else ""
+            ev = [self.t, r["C"], fcbfile(f) + front, fcbrec(r["C"], f)]
             # Run the call to its return, so the log separates the time the
             # editor spends between calls from the time BDOS and the BIOS take.
             m = self.e.s.mem(r["SP"], 2)

@@ -262,6 +262,7 @@ class Disk:
         return hits
 
     def _find(self, name, ext):
+        name = ondisk(name)
         return self._search(lambda e: self.dir[e] is not None and
                             self.dir[e][0] == name and self.dir[e][1] == ext)
 
@@ -317,7 +318,7 @@ class Disk:
                 f[:] = [hit[0], False]
             elif write:
                 e = self._search(lambda e: self.dir[e] is None)[0]
-                self.dir[e] = [name, ext, [0] * ENTBLKS, 0]
+                self.dir[e] = [ondisk(name), ext, [0] * ENTBLKS, 0]
                 self._dir_write(e // 4)
                 f[:] = [e, False]
             else:
@@ -342,6 +343,13 @@ class Disk:
 
     def idle(self):
         self.bios.idle()
+
+
+def ondisk(name):
+    """The file a traced name is on.  The trace tags the calls made through
+    `SRCFCB` as "TEST.TXT (front)": the same file as the source, but a second
+    FCB, so it keeps its own extent and is opened on its own."""
+    return name.split(" (")[0]
 
 
 # ------------------------------------------------------------ the scenarios
@@ -387,21 +395,23 @@ SCENARIOS = {
 }
 
 # Every scenario's per-key reads and writes, from PAGING.md section 3: the
-# replay refuses a trace that does not reproduce them.
+# replay refuses a trace that does not reproduce them.  "TEST.TXT (front)" is
+# the source read through SRCFCB (PAGE.MAC deviation 8).
 PAGING_MD = {
-    ("browse", "G"): {"r TEST.TXT": 625, "w TEST.$$$": 607},
-    ("browse", "gg"): {"r TEST.$$$": 607},
+    ("browse", "G"): {"r TEST.TXT": 625},
+    ("browse", "gg"): {"r TEST.TXT": 16},
     ("savenone", ":w"): {"r TEST.TXT": 641, "w TEST.$$$": 640},
-    ("saveback", ":w"): {"r TEST.TXT": 497, "w TEST.$$$": 33},
-    ("endedit", "gg"): {"r TEST.$$$": 607, "w VIBACKUP.$$$": 480},
-    ("endedit", ":w"): {"r TEST.TXT": 640, "w TEST.$$$": 591},
-    ("midedit", "gg"): {"r TEST.$$$": 288, "w VIBACKUP.$$$": 185},
-    ("midedit", "G"): {"r VIBACKUP.$$$": 185, "r TEST.TXT": 328, "w TEST.$$$": 240},
-    ("twoedit", "gg"): {"r TEST.$$$": 446, "w VIBACKUP.$$$": 340},
-    ("local", "100G"): {"r TEST.$$$": 288},
-    ("bigdd", "3000dd"): {"r TEST.TXT": 158, "w TEST.$$$": 156, "r TEST.$$$": 156,
-                          "w VIBACKUP.$$$": 18},
-    ("bigdel", "d3099G"): {"r TEST.TXT": 240, "w TEST.$$$": 48, "r TEST.$$$": 48},
+    ("saveback", ":w"): {"r TEST.TXT": 641, "w TEST.$$$": 640},
+    ("endedit", "gg"): {"r TEST.TXT (front)": 587, "w VIBACKUP.$$$": 512},
+    ("endedit", ":w"): {"r TEST.TXT": 640, "r TEST.TXT (front)": 496, "w TEST.$$$": 640},
+    ("midedit", "gg"): {"r TEST.TXT (front)": 288, "w VIBACKUP.$$$": 189},
+    ("midedit", "G"): {"r VIBACKUP.$$$": 189, "r TEST.TXT": 328, "w TEST.$$$": 216},
+    ("twoedit", "gg"): {"r TEST.$$$": 318, "r TEST.TXT (front)": 124,
+                        "w VIBACKUP.$$$": 376},
+    ("local", "100G"): {"r TEST.TXT": 16},
+    ("bigdd", "3000dd"): {"r TEST.TXT": 140, "r TEST.TXT (front)": 6, "w TEST.$$$": 130,
+                          "r TEST.$$$": 130, "w VIBACKUP.$$$": 20},
+    ("bigdel", "d3099G"): {"r TEST.TXT": 396},
 }
 
 

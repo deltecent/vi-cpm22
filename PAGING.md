@@ -10,12 +10,14 @@ is cited to name what a measurement shows; the few statements that come from
 the code alone say so. Every scenario that saves was checked: the
 saved file matches, byte for byte, what its edits should have produced.
 
-* **Build:** `VI.COM` of the #34 part B change (`PGJUMP`), 22,912 bytes, on
-  the harness machine (`vi.toml`). It has `PAGE.MAC` deviation 8 (`SAMREC`,
-  section 1) and the jump back to the file's start (section 2). Section 5
-  compares a2abca7, the first build with deviation 8, with aabc816, which had
-  WordMaster's pager unchanged; section 6 compares this build with a2abca7.
-* **Memory:** the arena is 21,743 bytes (`6116H`–`B605H`), and the first
+* **Build:** `VI.COM` of 74f46c0, 23,040 bytes, on the harness machine
+  (`vi.toml`). It has `PAGE.MAC` deviation 8 (`SAMREC`, section 1) and the
+  jump back to the file's start (section 2). Section 5 compares a2abca7, the
+  first build with deviation 8, with aabc816, which had WordMaster's pager
+  unchanged; section 6 compares 924a8ff, the jump's build, with a2abca7. The
+  pager has not changed since 924a8ff; the arena is 192 bytes smaller, which
+  moves the window's edges by a record or two in places.
+* **Memory:** the arena is 21,551 bytes (`61D6H`–`B605H`), and the first
   command claims 1 K of it for undo, so about 20 K holds text.
 * **Test file:** `TEST.TXT`, 81,920 bytes, which is 640 records of 128 bytes.
   It has 10,240 lines of 8 bytes (`000001` CR LF ...). Line *n* starts at byte
@@ -90,11 +92,11 @@ some sequence of these, and each one's rule is confirmed by a measurement.
 
 | Edge | Move | Routine | What it costs |
 |---|---|---|---|
-| top | text **leaves** (scrolling forward, or an insert needs room) | `SPILL` → `PAGEOUT` | **nothing** if the record is below `SAMREC` (the source still holds it) or below `OUTREC` (`TEST.$$$` already holds it). Otherwise a **write** to `TEST.$$$`. Confirmed by 3.2 (`G` on an unchanged file writes none), 3.6 (an `x` on line 1: 587 written) and 3.7 (`ihello` on line 5000: only the records from 312 on are written). |
-| top | text **comes back** (scrolling back) | `REWIND` | a **read**, backward: from the source through `SRCFCB` below `SAMREC`, from `TEST.$$$` above it. Confirmed by 3.5 (600 from the source) and 3.8 (319 from `TEST.$$$`, then 124 from the source). |
+| top | text **leaves** (scrolling forward, or an insert needs room) | `SPILL` → `PAGEOUT` | **nothing** if the record is below `SAMREC` (the source still holds it) or below `OUTREC` (`TEST.$$$` already holds it). Otherwise a **write** to `TEST.$$$`. Confirmed by 3.2 (`G` on an unchanged file writes none), 3.6 (an `x` on line 1: 586 written) and 3.7 (`ihello` on line 5000: only the records from 312 on are written). |
+| top | text **comes back** (scrolling back) | `REWIND` | a **read**, backward: from the source through `SRCFCB` below `SAMREC`, from `TEST.$$$` above it. Confirmed by 3.5 (587 from the source) and 3.8 (318 from `TEST.$$$`, then 124 from the source). |
 | top | a **far move up** on a file not changed since it was opened or written | `PGJUMP` | **16 reads**, from the source's start: the window is dropped and filled again as an open fills it, and the move goes on forward. VI's own (#34 part B). Confirmed by 3.2 (`gg`: 1.5 s where paging back took 27.1), 3.3 and 3.11 (`100G`). |
 | bottom | text **comes in** (scrolling forward) | `FILLBUF` / `RDIN` | a **read**, from the `VIBACKUP.$$$` stack first, then from the source |
-| bottom | text **leaves** (scrolling back, or room needed at the bottom) | `SPILLB` → `PAGEBOT` | **nothing** if the record lies after every edit: the source's read pointer just steps back one (`RECDEC`). Otherwise it is **written** to `VIBACKUP.$$$`. Confirmed by 3.6 (none written), 3.5 (all 512 written), 3.7 (4 handed back, then 188 written) and 3.8 (two edits: 9 handed back, then 375 written). |
+| bottom | text **leaves** (scrolling back, or room needed at the bottom) | `SPILLB` → `PAGEBOT` | **nothing** if the record lies after every edit: the source's read pointer just steps back one (`RECDEC`). Otherwise it is **written** to `VIBACKUP.$$$`. Confirmed by 3.6 (none written), 3.5 (all 512 written), 3.7 (3 handed back, then 189 written) and 3.8 (two edits: 8 handed back, then 376 written). |
 
 The two edges mirror each other. A record at the top that lies **before**
 every edit is still the source's, in its own place, so it need not be
@@ -149,7 +151,7 @@ more.
   deblocking makes each call about ten times dearer.
 
 The growing batch is why the first forward sweep through a file empties
-the window: after 3.2's first `G` it holds 5 K. A sweep over records that are
+the window: after 3.2's first `G` it holds under 7 K. A sweep over records that are
 already valid moves only 16 at a time and keeps the window at 18 K (3.5's
 second `G`).
 
@@ -172,7 +174,7 @@ Measured by `pagerprobe.py small`.
 | `G` | 1.9 | 65 r source | 10,240: the whole file |
 | `gg` | 1.3 | none | 10,240 |
 | `x` | 0.1 | none | 10,239 |
-| `:w` | 9.8 | 80 w `TEST.$$$`, rename, then 16 r source | 2,048 |
+| `:w` | 9.9 | 80 w `TEST.$$$`, rename, then 16 r source | 2,048 |
 
 Nothing pages: the whole file reads into memory on the way down, and nothing
 is written until the save. The `x` makes `SAMREC` 0, so the save has no
@@ -188,9 +190,9 @@ Measured by `pagerprobe.py browse`.
 | Key | s | Disk | Window after | valid | same | src | stack |
 |---|---|---|---|---|---|---|---|
 | (open) | | 16 r source | 2,048 | 0 | all | 16 | 0 |
-| `G` | 17.6 | 625 r source, **0 w** | 5,120 (the last 40 records) | 600 | all | 640 (end) | 0 |
+| `G` | 17.8 | 625 r source, **0 w** | 6,784 (the last 53 records) | 587 | all | 640 (end) | 0 |
 | `gg` | 1.5 | **16 r source** | 2,048 (the first 16 records) | 0 | all | 16 | 0 |
-| `G` | 17.4 | 625 r source, 0 w | 11,264 | 552 | all | 640 | 0 |
+| `G` | 17.6 | 625 r source, 0 w | 12,928 | 539 | all | 640 | 0 |
 | `:q!` | 2.0 | none | | | | | |
 
 * **`G`** is `MVLMAX`: a forward line move with count FFFFH. Each pass of
@@ -198,7 +200,7 @@ Measured by `pagerprobe.py browse`.
   `SCRLST` puts the cursor there, so all the resident text is behind it and
   free to leave. `PAGESTP` → `FILLBUF` then reads more. Nothing has been
   edited, so `SAMREC` is FFFFH and no record leaving the top is written.
-  `OUTREC` still rises to 600, the records now valid above the window.
+  `OUTREC` still rises to 587, the records now valid above the window.
 * **`gg`** gets the cursor's line from `TOPLF` with no disk read. Line 1 is
   less than half as far down as the window's top, and nothing has changed,
   so `PGJUMP` drops the window, puts the source's pointer back at record 0
@@ -218,12 +220,12 @@ Measured by `pagerprobe.py local`.
 
 | Key | s | Disk | Window after | line |
 |---|---|---|---|---|
-| `6000G` | 9.9 | 365 r source | 11,904 (records 288–380) | 6000 |
-| `6100G` | 2.0 | 16 r source | 13,952 | 6100 |
-| `5900G` | 0.9 | none | 13,952 | 5900 |
-| `^F` | 0.4 | none | 13,952 | 5910 |
-| `^B` | 0.5 | none | 13,952 | 5911 |
-| `100G` | 1.8 | 16 r source | 2,048 (records 0–15) | 100 |
+| `6000G` | 10.0 | 364 r source | 11,776 (records 288–379) | 6000 |
+| `6100G` | 1.9 | 16 r source | 13,824 | 6100 |
+| `5900G` | 0.8 | none | 13,824 | 5900 |
+| `^F` | 0.4 | none | 13,824 | 5910 |
+| `^B` | 0.5 | none | 13,824 | 5911 |
+| `100G` | 1.7 | 16 r source | 2,048 (records 0–15) | 100 |
 
 Inside the window nothing touches the disk. `6100G` reads 16 records because
 the window ends short of line 6100 after `6000G` (the window's edges move
@@ -237,8 +239,8 @@ Measured by `pagerprobe.py savenone saveback`.
 
 | Sequence | `:w` s | `:w` disk |
 |---|---|---|
-| `:w` straight after opening | 40.8 | 641 r source, **640 w** `TEST.$$$` |
-| `G` `gg` `:w` | 40.7 | 641 r source, **640 w** `TEST.$$$` |
+| `:w` straight after opening | 42.4 | 641 r source, **640 w** `TEST.$$$` |
+| `G` `gg` `:w` | 42.3 | 641 r source, **640 w** `TEST.$$$` |
 
 A save is `SAVCLO`. It flushes the window to `TEST.$$$`, refills it from the
 input side, and repeats to the end, then renames. Nothing above the window
@@ -257,11 +259,11 @@ Measured by `pagerprobe.py endedit`.
 
 | Key | s | Disk | Window after | valid | same | src | stack |
 |---|---|---|---|---|---|---|---|
-| `G` | 17.6 | 625 r source, 0 w | 5,120 | 600 | all | 640 | 0 |
-| `x` | 0.0 | none | 5,119 | 600 | 639 | 640 | 0 |
-| `gg` | 42.2 | 600 r source front, **512 w `VIBACKUP.$$$`** | 16,383 | 600 | 639 | 640 | 512 |
-| `G` | 21.5 | **512 r `VIBACKUP.$$$`**, 0 w | 18,431 | 600 | 639 | 640 | 0 |
-| `:w` | 54.3 | 496 r source front + 640 w `TEST.$$$`; then 640 r source | 15,487 | | | | |
+| `G` | 17.8 | 625 r source, 0 w | 6,784 | 587 | all | 640 | 0 |
+| `x` | 0.0 | none | 6,783 | 587 | 639 | 640 | 0 |
+| `gg` | 42.2 | 587 r source front, **512 w `VIBACKUP.$$$`** | 16,383 | 587 | 639 | 640 | 512 |
+| `G` | 21.7 | **512 r `VIBACKUP.$$$`**, 0 w | 18,431 | 587 | 639 | 640 | 0 |
+| `:w` | 56.0 | 496 r source front + 640 w `TEST.$$$`; then 640 r source | 15,871 | | | | |
 
 * **`x`** on the last line sets `SRCREC` to that record (827FH: record 639)
   and lowers `SAMREC` to 639.
@@ -287,9 +289,9 @@ Measured by `pagerprobe.py topedit`.
 | Key | s | Disk | Window after | valid | same | src | stack |
 |---|---|---|---|---|---|---|---|
 | `x` | 0.1 | none | 2,047 | 0 | 0 | 16 | 0 |
-| `G` | 37.3 | 625 r source, **587 w `TEST.$$$`** | 6,783 | 587 | 0 | 640 | 0 |
-| `gg` | 24.2 | 587 r `TEST.$$$`, **0 w** | 18,431 | 587 | 0 | 144 | 0 |
-| `:w` | 21.7 | 513 r source, 53 w `TEST.$$$` | 2,048 | | | | |
+| `G` | 37.5 | 625 r source, **586 w `TEST.$$$`** | 6,911 | 586 | 0 | 640 | 0 |
+| `gg` | 24.5 | 586 r `TEST.$$$`, **0 w** | 18,431 | 586 | 0 | 144 | 0 |
+| `:w` | 22.5 | 513 r source, 54 w `TEST.$$$` | 2,048 | | | | |
 
 The edit is in record 0, so `SAMREC` is 0 and the pager behaves exactly as
 WordMaster's: every record leaving the top is written, and `gg` reads them
@@ -305,20 +307,20 @@ Measured by `pagerprobe.py midedit`.
 
 | Key | s | Disk | Window after | valid | same | src | stack |
 |---|---|---|---|---|---|---|---|
-| `5000G` | 8.7 | 301 r source, 0 w | 3,712 | 288 | all | 317 | 0 |
-| `ihello` `<Esc>` | 0.3 | none | 3,717 | 288 | 312 | 317 | 0 |
-| `gg` | 18.6 | 288 r source front, **188 w `VIBACKUP.$$$`** | 16,005 | 288 | 312 | 313 | 188 |
-| `G` | 31.3 | 188 r `VIBACKUP.$$$`, 328 r source, **216 w `TEST.$$$`** | 14,341 | 528 | 312 | 640 | 0 |
-| `:w` | 41.9 | 312 r source front + 425 w `TEST.$$$`; then 641 r source | 15,493 | | | | |
+| `5000G` | 8.9 | 300 r source, 0 w | 3,584 | 288 | all | 316 | 0 |
+| `ihello` `<Esc>` | 0.3 | none | 3,589 | 288 | 312 | 316 | 0 |
+| `gg` | 18.7 | 288 r source front, **189 w `VIBACKUP.$$$`** | 15,877 | 288 | 312 | 313 | 189 |
+| `G` | 31.6 | 189 r `VIBACKUP.$$$`, 328 r source, **216 w `TEST.$$$`** | 14,341 | 528 | 312 | 640 | 0 |
+| `:w` | 41.5 | 312 r source front + 425 w `TEST.$$$`; then 641 r source | 15,877 | | | | |
 
 * **The insert** is in record 312 (line 5000), so `SRCREC` = 8138H and
   `SAMREC` = 312.
 * **`gg`:** the 288 records above the window are before the insert and come
-  back from the source. The first 4 records to leave the bottom (313–316) lie
-  after the insert and go back to the source, whose pointer steps from 317
+  back from the source. The first 3 records to leave the bottom (313–315) lie
+  after the insert and go back to the source, whose pointer steps from 316
   to 313. Every record from the insert upward is shifted 5 bytes and goes to
-  `VIBACKUP.$$$`: 188 of them.
-* **`G`** reads those 188 back off the stack, then the source from record
+  `VIBACKUP.$$$`: 189 of them.
+* **`G`** reads those 189 back off the stack, then the source from record
   313. Records 0–311 leave the top unwritten; every one from the insert's
   record 312 on is written: 216, records 312–527.
 * **`:w`** writes the window and the rest of the file (113 records), copies
@@ -333,22 +335,22 @@ Measured by `pagerprobe.py twoedit`.
 | Key | s | Disk | Window after | valid | same | src | stack |
 |---|---|---|---|---|---|---|---|
 | `2000G` | 2.7 | 112 r source | 16,384 | 0 | all | 128 | 0 |
-| `x` | 0.1 | none | 16,383 | 0 | 124 | 128 | 0 |
-| `8000G` | 23.4 | 381 r source, 319 w `TEST.$$$` | 8,447 | 443 | 124 | 509 | 0 |
-| `x` | 0.1 | none | 8,446 | 443 | 124 | 509 | 0 |
-| `gg` | 33.8 | 319 r `TEST.$$$` + 124 r source front, **375 w `VIBACKUP.$$$`** | 15,998 | 443 | 124 | 500 | 375 |
-| `G` | 28.6 | 375 r `VIBACKUP.$$$`, 141 r source, 144 w `TEST.$$$` | 6,782 | 587 | 124 | 640 | 0 |
-| `:w` | 28.6 | 124 r source front + 177 w `TEST.$$$`; then 640 r source | 15,486 | | | | |
+| `x` | 0.0 | none | 16,383 | 0 | 124 | 128 | 0 |
+| `8000G` | 23.5 | 380 r source, 318 w `TEST.$$$` | 8,447 | 442 | 124 | 508 | 0 |
+| `x` | 0.1 | none | 8,446 | 442 | 124 | 508 | 0 |
+| `gg` | 34.0 | 318 r `TEST.$$$` + 124 r source front, **376 w `VIBACKUP.$$$`** | 15,870 | 442 | 124 | 500 | 376 |
+| `G` | 28.8 | 376 r `VIBACKUP.$$$`, 141 r source, 144 w `TEST.$$$` | 6,910 | 586 | 124 | 640 | 0 |
+| `:w` | 28.8 | 124 r source front + 178 w `TEST.$$$`; then 640 r source | 15,870 | | | | |
 
 * **The first `x`** (record 124) sets `SRCREC` to 807CH and `SAMREC` to 124.
   **The second** (record 499) raises `SRCREC` to 81F3H and leaves `SAMREC`
   alone. `SAMREC` follows the edit nearest the top, `SRCREC` the one
   furthest down.
-* **`8000G`** writes records 124–442 and not 0–123.
+* **`8000G`** writes records 124–441 and not 0–123.
 * **`gg`** reads back from `TEST.$$$` down to record 124, then from the
-  source. Only the 9 records after the second edit (500–508) go back to the
-  source at the bottom. Every record above it that leaves the window, the 375
-  from record 499 up to record 125, goes to `VIBACKUP.$$$`. They are shifted
+  source. Only the 8 records after the second edit (500–507) go back to the
+  source at the bottom. Every record above it that leaves the window, the 376
+  from record 499 up to record 124, goes to `VIBACKUP.$$$`. They are shifted
   one byte by the second `x`, however far they are from it.
 * **The rule, as measured:** records before the first edit are never
   written above the window; once the window scrolls back past the edit
@@ -362,8 +364,8 @@ Measured by `pagerprobe.py bigdel`.
 | Key | s | Disk | Window after | valid | same |
 |---|---|---|---|---|---|
 | `100G` | 0.5 | none | 2,048 | 0 | all |
-| `d3099G` | 9.7 | 397 r source | 2,624 | 0 | 6 |
-| `:w` | 31.8 | 449 r source, 453 w `TEST.$$$` | 2,048 | | |
+| `d3099G` | 9.8 | 396 r source | 2,624 | 0 | 6 |
+| `:w` | 31.9 | 449 r source, 453 w `TEST.$$$` | 2,048 | | |
 
 The saved file is 57,920 bytes: 3,000 lines (24 K) gone, exactly. `d3099G`
 first runs the motion forward to line 3099, which moves 48 records off the
@@ -373,7 +375,7 @@ the file read again from its start (where `REWIND` read 48 records back).
 Then it deletes forward from the cursor, and `DELTO`'s `PAGESTP` reads the
 source in as the gap swallows it. The deleted text is never written. The
 jump costs this one 0.7 s: the delete reads again the records the motion had
-read (397 reads, 288 before).
+read (396 reads, 288 before).
 
 ### 3.10 80 K, a `dd` the register cannot hold: `100G` `3000dd` `:w`
 
@@ -381,8 +383,8 @@ Measured by `pagerprobe.py bigdd`.
 
 | Key | s | Disk | Window after | message |
 |---|---|---|---|---|
-| `3000dd` | 17.6 | 141 r source + 6 r source front, 130 w + 130 r `TEST.$$$`, 19 w `VIBACKUP.$$$` | 16,000 | Too large to yank |
-| `:w` | 36.3 | 513 r source + 19 r `VIBACKUP.$$$`, 510 w `TEST.$$$` | 2,048 | |
+| `3000dd` | 17.7 | 140 r source + 6 r source front, 130 w + 130 r `TEST.$$$`, 20 w `VIBACKUP.$$$` | 15,872 | Too large to yank |
+| `:w` | 37.9 | 513 r source + 20 r `VIBACKUP.$$$`, 510 w `TEST.$$$` | 2,048 | |
 
 `dd` keeps its lines in the yank register, and 24 K does not fit, so it is
 refused (`QFIT`/`QREFUS`, VI's code, documented in `COMMANDS.md`). The text is
@@ -390,7 +392,7 @@ unchanged and the save matches the original. The refusal is not free,
 though. `QPUTLN` takes the lines pass by pass and `QREFUS` puts them back, so
 the window paged forward and back, and the take and the put-back are edits
 as far as the marks know: `SAMREC` falls to 6, and the 130 records from there
-that left the top were written, and 19 that left the bottom. `d3099G` (3.9) takes the same lines for less,
+that left the top were written, and 20 that left the bottom. `d3099G` (3.9) takes the same lines for less,
 because it keeps nothing.
 
 ### 3.11 80 K, an insert bigger than memory: `6000G` `:6000,9000w T.TXT` `100G` `:r T.TXT` `:w`
@@ -399,11 +401,11 @@ Measured by `pagerprobe.py bigput`.
 
 | Key | s | Disk | Window after | valid | same | src | stack |
 |---|---|---|---|---|---|---|---|
-| `6000G` | 9.9 | 365 r source | 11,904 | 288 | all | 381 | 0 |
-| `:6000,9000w T.TXT` | 26.2 | 188 w `T.TXT`; 192 r source, 80 r source front | 18,688 | 443 | all | 509 | 0 |
+| `6000G` | 10.0 | 364 r source | 11,776 | 288 | all | 380 | 0 |
+| `:6000,9000w T.TXT` | 26.3 | 188 w `T.TXT`; 192 r source, 80 r source front | 18,688 | 442 | all | 508 | 0 |
 | `100G` | 1.5 | 16 r source | 2,048 | 0 | all | 16 | 0 |
-| `:r T.TXT` | 20.5 | 188 r `T.TXT`; 6 r source front, 142 w + 142 r `TEST.$$$`, 55 w `VIBACKUP.$$$` | 17,864 | 148 | 6 | 7 | 55 |
-| `:w` | 49.9 | 650 r source, 55 r `VIBACKUP.$$$`, 686 w `TEST.$$$` | 2,048 | | | | |
+| `:r T.TXT` | 20.5 | 188 r `T.TXT`; 3 r source front, 141 w + 141 r `TEST.$$$`, 55 w `VIBACKUP.$$$` | 17,480 | 147 | 6 | 7 | 55 |
+| `:w` | 52.9 | 650 r source + 3 r source front, 55 r `VIBACKUP.$$$`, 687 w `TEST.$$$` | 2,048 | | | | |
 
 The saved file is 105,928 bytes, with lines 6000–9000 after line 100,
 exactly. Writing out lines 6000–9000 pages the window forward and back
@@ -415,8 +417,8 @@ is the jump (17.1 s when it paged back).
   spills the top (the inserted text, already behind the cursor) to
   `TEST.$$$`. The insert streams through memory into the work file.
 * Afterwards the cursor must go back to the first line put (line 101), so the
-  window pages back 148 records: 142 from `TEST.$$$`, then the last 6
-  (records 0–5, before `SAMREC`) from the source. The
+  window pages back 144 records: 141 from `TEST.$$$`, then the last 3
+  (records 3–5, before `SAMREC`) from the source. The
   first text pushed out of the bottom is the text after the insert, which is
   unchanged: it goes back to the source (its pointer falls to 7). Then comes
   the end of the inserted text, which the window can no longer hold. It is
@@ -427,7 +429,7 @@ is the jump (17.1 s when it paged back).
 Measured by `pagerprobe.py undo`.
 
 `u` answers "Cannot undo: change has paged out" and changes nothing. The `x`
-was made with `PGTOPM` at 600, and `gg` `G` moved the window's top 1,096 more
+was made with `PGTOPM` at 587, and `gg` `G` moved the window's top 1,083 more
 times. An undo offset is measured from `TXTBEG`, so once the top has moved it
 no longer names the right byte, and undo refuses rather than guess.
 
@@ -441,15 +443,15 @@ a change carries.
 
 | What | Measured | Whose code |
 |---|---|---|
-| A transfer, at the simulator's floor | about 0.028 s per record read forward and scanned for lines (3.2's first `G`: 625 reads, 17.6 s); about 0.041 s per record read backward (3.6's `gg`: 587 reads, 24.2 s); about 0.036 s per record written (3.4's first `:w`, less its reads at 0.028) | WM |
-| A far move up on an unchanged file starts the file again | `gg` from the end: 16 reads, 1.5 s (3.2); `100G` from line 6000: 1.8 s (3.3); the next key past the first 2 K reads more, as after an open | **VI** (`PGJUMP`, #34 part B) |
+| A transfer, at the simulator's floor | about 0.028 s per record read forward and scanned for lines (3.2's first `G`: 625 reads, 17.8 s); about 0.042 s per record read backward (3.6's `gg`: 586 reads, 24.5 s); about 0.038 s per record written (3.4's first `:w`, less its reads at 0.028) | WM |
+| A far move up on an unchanged file starts the file again | `gg` from the end: 16 reads, 1.5 s (3.2); `100G` from line 6000: 1.7 s (3.3); the next key past the first 2 K reads more, as after an open | **VI** (`PGJUMP`, #34 part B) |
 | A save copies the unchanged front from the source into `TEST.$$$` | `G` `gg` `:w`: 640 writes where WordMaster's wrote 33 (3.4); `x` on the last line then `:w`: 496 reads and writes of the front (3.5) | **VI** (`SVFRNT`, deviation 8) |
 | `:w` pages the saved file back to the cursor | `:w` on the last line re-reads all 640 records (3.5); since deviation 8 it writes none of them | **VI** (`SEEKTO`) |
-| Scrolling back past an edit writes everything above the edit to `VIBACKUP.$$$` | `x` on the last line, then `gg`: 512 writes, 42.2 s against 1.5 without the `x` (3.5, 3.2); two edits: 375 (3.8) | WM (`PAGEBOT`, `SRCREC`) |
+| Scrolling back past an edit writes everything above the edit to `VIBACKUP.$$$` | `x` on the last line, then `gg`: 512 writes, 42.2 s against 1.5 without the `x` (3.5, 3.2); two edits: 376 (3.8) | WM (`PAGEBOT`, `SRCREC`) |
 | An edit makes `TEST.$$$` invalid from the edit's record on, and makes the front up to it the save's to copy | 3.7: records 312–527 written by the next `G`, 0–311 copied by `:w`; 3.9: `SAMREC` falls to 6 | WM (`UPDMARK`, `OUTREC`); VI (`SAMREC`) |
-| A refused `dd` still pages forward and back, and counts as an edit | `3000dd`: 17.6 s, 130 + 19 writes, nothing changed (3.10) | **VI** (`QPUTLN`/`QREFUS` on WM's Q-buffer) |
-| The growing `SPILL` batch empties the window on a first forward sweep | 5 K left after `G` (3.2) | WM (`SPILL`, `SPLCNT`) |
-| `:w` with no edits still saves | 40.8 s from the top, plus a `.BAK` (3.4) | **VI** (no modified check before the save) |
+| A refused `dd` still pages forward and back, and counts as an edit | `3000dd`: 17.7 s, 130 + 20 writes, nothing changed (3.10) | **VI** (`QPUTLN`/`QREFUS` on WM's Q-buffer) |
+| The growing `SPILL` batch empties the window on a first forward sweep | 7 K left after `G` (3.2) | WM (`SPILL`, `SPLCNT`) |
+| `:w` with no edits still saves | 42.4 s from the top, plus a `.BAK` (3.4) | **VI** (no modified check before the save) |
 | A real drive adds seeks | the pager alternates between the source, `SRCFCB`'s place in it, and `TEST.$$$` (or `VIBACKUP.$$$`) every batch; the simulator does not price that | WM (batch sizes) |
 
 ## 5. What deviation 8 changed
@@ -499,13 +501,15 @@ pages as WordMaster's did, and it moved by those two alone (`G` 36.9 → 36.8,
 
 ## 6. What the jump changed
 
-`PGJUMP` (issue #34 part B) is the only pager change since a2abca7, but the
-arena shrank too: 22,556 bytes then, 21,743 now (813 bytes, most of it the
-search's reader, #35), and that moves the window's edges. `topedit` is again
+These are the figures of 924a8ff against a2abca7, as measured then; section
+3 has the current build's. `PGJUMP` (issue #34 part B) is the only pager
+change between them, but the arena shrank too: 22,556 bytes at a2abca7,
+21,743 at 924a8ff (813 bytes, most of it the search's reader, #35), and that
+moves the window's edges. `topedit` is again
 the control, since its `x` on line 1 stops the jump: `G` 36.8 → 37.3, `gg`
 24.7 → 24.2, `:w` 21.2 → 21.7, with 587 records written where 606 were.
 
-| Scenario, key | a2abca7 s | disk then | now s | disk now |
+| Scenario, key | a2abca7 s | disk | 924a8ff s | disk |
 |---|---|---|---|---|
 | browse `gg` | 27.1 | 607 r source front | 1.5 | 16 r source |
 | browse second `G` | 21.9 | 481 r | 17.4 | 625 r |
@@ -538,12 +542,65 @@ python3 pagerprobe.py browse --log=F.jsonl  # every disk call, timed, for pagerm
 
 `pagermodel.py` (issue #29) replays the logged calls, `pagertrace.jsonl.gz`,
 onto an Altair 8" floppy and compares them with a piece table on the same
-drive. That trace, and the per-key counts `pagermodel.py` checks it against,
-are still aabc816's (section 5's "then" columns); re-recording them belongs
-to #29.
+drive (section 8). The trace is section 3's runs, recorded on the same
+build, and `pagermodel.py` refuses it unless it reproduces section 3's
+per-key counts. To record it again after a pager change:
+
+```
+python3 pagerprobe.py --log=pagertrace.jsonl
+gzip -9 -n -f pagertrace.jsonl
+python3 pagermodel.py        # refuses until its PAGING_MD table matches section 3
+```
 
 Build first (`python3 build_vi.py VI`), and never run it beside a test
 battery. Each scenario takes one to four minutes of wall time. Separate
 invocations get separate sandboxes, so several can run at once. The figures
 in this document change whenever the image size changes the arena. Re-run
 the probe after such a change before quoting them.
+
+## 8. On a floppy
+
+`pagermodel.py` prices section 3's disk calls on an Altair 8" floppy, through
+CP/M 2.2's file system: directory searches, extents and block allocation, the
+guest BIOS's skew, and head movement between files, which the simulator does
+not charge. Step, settle and head-load times are assumed (10, 20, 40 ms).
+Beside it, the same edits on a piece table (issue #29): the source is never
+written, typed text goes to an add file, and the document is a list of
+pieces, with a line index built by reading forward. The piece table's CPU
+costs are estimates. Seconds on the track-buffered BIOS (the guest's):
+
+| Scenario | simulator | floppy | piece table |
+|---|---|---|---|
+| small | 13.1 | 7.5 | 5.7 |
+| browse | 38.9 | 37.4 | 16.2 |
+| savenone | 42.4 | 36.3 | 31.6 |
+| saveback | 61.6 | 54.6 | 46.6 |
+| endedit | 137.7 | 139.6 | 48.2 |
+| topedit | 84.6 | 80.1 | 47.5 |
+| midedit | 100.9 | 99.9 | 50.1 |
+| twoedit | 117.9 | 125.7 | 47.7 |
+| local | 15.4 | 14.7 | 13.3 |
+| bigdd | 56.1 | 50.8 | 29.0 |
+| bigdel | 42.2 | 35.9 | 29.0 |
+| bigput | 111.3 | 104.7 | 78.6 |
+| undo | 81.8 | 83.8 | 16.3 |
+| all thirteen | 904.2 | 871.0 | 459.9 |
+
+On aabc816, before deviation 8 and the jump, the floppy column totalled
+1,065 s and the piece table's 459 s. On a BIOS that reads one sector at a
+time, all thirteen take 2,059 s against 1,025 s (2,515 s on aabc816).
+
+* **Where the two now cost the same:** moving near the cursor (`local`), a
+  far move up on an unchanged file (`gg`, `100G`: 1.2–1.5 s each), and every
+  save (both make a full pass; `topedit`'s `:w` is cheaper here, 18.0 s
+  against 32.4, because the front copy starts at record 0).
+* **Where the piece table still wins: moving past an edit.** `gg` after an
+  edit at the end costs 43.4 s here and 1.3 s there, and the `G` after it
+  23.0 s against 1.1 s (`endedit`). That is section 2's bottom edge: every
+  record above the edit is shifted against the source, so it goes to
+  `VIBACKUP.$$$` and back. `twoedit`'s `gg` (40.3 s) and `midedit`'s (19.8 s)
+  are the same cost. A piece table never writes text it did not change.
+* **A `G` after a jump reads the whole file again** (browse's second `G`,
+  17.0 s against 1.1 s): the jump keeps no index of where the lines are.
+* `undo` is not like for like: this editor refuses the `u`, the piece table
+  carries it out. `bigdd` neither: this editor refuses the `3000dd`.
