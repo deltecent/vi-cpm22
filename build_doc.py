@@ -415,9 +415,11 @@ The limits:
                 can land in the middle of it, and going to the end of
                 one of 26,000 or more runs out of memory, as above.
     CPU, disk   The file moves through the window 128 bytes at a time, at
-                about {z['RATEK']} a second.  Text that has left the window is in
-                two work files on the file's own drive, NAME.$$$ and
-                VIBACKUP.$$$.
+                about {z['RATEK']} a second.  Text that has left the window is
+                read again from the file itself up to the first change,
+                and from there on is in two work files on the file's own
+                drive, NAME.$$$ and VIBACKUP.$$$: moving about a file you
+                have not changed writes nothing.
     Terminal    960 characters a second: a full repaint is a second and
                 a half.
 

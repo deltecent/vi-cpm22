@@ -48,6 +48,20 @@
                                 ;   7. MEMSHT calls BUF.MAC's MEMERR, not ERRMSG: running out of room ends
                                 ;      the key and leaves the editor up, as WM's prompt is left up (issue
                                 ;      #39; BUF.MAC's deviation 3).
+                                ;   8. The unchanged front (issue #34, part A).  SAMREC counts the records at
+                                ;      the front of the file that are still the source's own: FFFFH at every
+                                ;      open, lowered by UPDMARK beside OUTREC.  PAGEOUT does not write such a
+                                ;      record (it raises OUTREC past it instead), REWIND reads it back from the
+                                ;      source through a second FCB, SRCFCB, and SAVCLO copies them into
+                                ;      name.$$$ first (SVFRNT), then writes the ones the save passes from RAM
+                                ;      (SAVMOD).  So moving through a file writes nothing until it is edited,
+                                ;      and only from the first edit on.  See PAGEOUT, REWIND, SAVCLO.
+                                ;   9. WRREC keeps the record number when it makes the work file.  WM's
+	MACRO-80 3.44	09-Dec-81	PAGE	1-1
+
+
+                                ;      DELRST zeroes it, which is harmless while the first write is always
+                                ;      record 0; with deviation 8 the first can be any record.
                                 ;
                                 ; APPENDED (not WM), tagged where each starts: REOPEN/SEEKTO/OPENZ (':w' keeps
                                 ; editing), TFCB/WRTO/TEXIST/DISCRD/CNTLF (':w name', ':e', a buffer with no
@@ -57,9 +71,6 @@
                                 
   0000                          WBOOT	EQU	0
   0005                          BDOS	EQU	5
-	MACRO-80 3.44	09-Dec-81	PAGE	1-1
-
-
   001A                          EOF	EQU	1AH		; ^Z
   0008                          BS	EQU	08H
   0200                          PGINIT	EQU	200H		; WM 20 -- cold WRLIM/RDLIM (no-spill window)
@@ -104,60 +115,76 @@
   0006'   22 0000*              	SHLD	RDLIM
   0009'   2A 0000*              	LHLD	BUFEND		; WM 388/412 -- H = high byte of BUFEND
   000C'   7C                    	MOV	A,H
-  000D'   CD 021B'              	CALL	PGCONST		; paging constants (BUFHI/BUFLO/IOBATCH/...)
+  000D'   CD 023A'              	CALL	PGCONST		; paging constants (BUFHI/BUFLO/IOBATCH/...)
+	MACRO-80 3.44	09-Dec-81	PAGE	1-2
+
+
   0010'   21 005C               	LXI	H,5CH		; build OUTFCB as a copy of the source FCB
   0013'   11 0000*              	LXI	D,OUTFCB
   0016'   01 0010               	LXI	B,10H
   0019'   CD 0000*              	CALL	MEMCPY		; WM 462-463 -- 16-byte FCB header copy
-  001C'   21 07DC'              	LXI	H,BAKTYP	; set OUTFCB type = '$$$'  (WM 516-517)
+  001C'   21 0946'              	LXI	H,BAKTYP	; set OUTFCB type = '$$$'  (WM 516-517)
   001F'   11 0000*              	LXI	D,OUTTYP
-  0022'   CD 06CD'              	CALL	CPYTYP
+  0022'   CD 0821'              	CALL	CPYTYP
   0025'   11 0000*              	LXI	D,OUTFCB	; zero OUTFCB random-record bytes
-  0028'   CD 0635'              	CALL	ZERORR
+  0028'   CD 0789'              	CALL	ZERORR
   002B'   3A 005C               	LDA	5CH		; build BAKFCB = drive + 'VIBACKUP$$$'
   002E'   32 0000*              	STA	BAKFCB		; WM 479-485
-	MACRO-80 3.44	09-Dec-81	PAGE	1-2
-
-
-  0031'   21 07D4'              	LXI	H,BAKNAM
+  0031'   21 093E'              	LXI	H,BAKNAM
   0034'   11 0000*              	LXI	D,BAKFCB
   0037'   13                    	INX	D
   0038'   01 000B               	LXI	B,0BH
   003B'   CD 0000*              	CALL	MEMCPY
   003E'   11 0000*              	LXI	D,OUTFCB	; delete any stale name.$$$  (WM 513-514)
-  0041'   CD 0664'              	CALL	DELF
-  0044'   21 07DF'              	LXI	H,BAKEXT	; delete any stale name.BAK  (WM 510-517):
+  0041'   CD 07B8'              	CALL	DELF
+  0044'   21 0949'              	LXI	H,BAKEXT	; delete any stale name.BAK  (WM 510-517):
   0047'   11 0000*              	LXI	D,OUTTYP	;   point OUTTYP at 'BAK', delete, restore '$$$'
-  004A'   CD 06CD'              	CALL	CPYTYP
+  004A'   CD 0821'              	CALL	CPYTYP
   004D'   11 0000*              	LXI	D,OUTFCB
-  0050'   CD 0664'              	CALL	DELF
-  0053'   21 07DC'              	LXI	H,BAKTYP
+  0050'   CD 07B8'              	CALL	DELF
+  0053'   21 0946'              	LXI	H,BAKTYP
   0056'   11 0000*              	LXI	D,OUTTYP
-  0059'   CD 06CD'              	CALL	CPYTYP
+  0059'   CD 0821'              	CALL	CPYTYP
   005C'   11 005C               	LXI	D,5CH		; open the source file  (WM 496-505)
-  005F'   CD 0630'              	CALL	OPENF
+  005F'   CD 0784'              	CALL	OPENF
   0062'   3E FF                 	MVI	A,0FFH
-  0064'   CA 006D'              	JZ	OPNEW
+  0064'   CA 0085'              	JZ	OPNEW
   0067'   32 005B               	STA	5BH		; source has data (input side live)
-  006A'   C3 0070'              	JMP	OPRD
-  006D'                         OPNEW:				; source not found -> new file
-  006D'   32 0000*              	STA	NEWFIL
-  0070'                         OPRD:				; cold-start the pager state.  WM does this by
-  0070'   AF                    	XRA	A		;   zeroing its whole work-variable area (WM
-  0071'   32 0000*              	STA	BAKRDY		;   369-373, the L0307 clear loop over TXTROWS..
-  0074'   32 0000*              	STA	OUTACT		 ;   2730): every deque mark -- OUTACT/OUTPOS/BAKPOS/
-  0077'   32 0000*              	STA	INLEN		;   INLEN/OUTREC/SRCREC/BAKREC -- lives in that
-  007A'   32 0000*              	STA	DIRFLG		;   region, so its true cold value is ZERO.  With
-  007D'   21 0000               	LXI	H,0H		;   the real UPDMARK maintaining them (below), no
-  0080'   22 0000*              	SHLD	OUTREC		;   bias is needed: at cold OUTPOS=0 and UPDMARK
-  0083'   22 0000*              	SHLD	SRCREC		;   lowers it on an edit; PAGEOUT raises it.
-  0086'   22 0000*              	SHLD	BAKREC
-  0089'   22 0000*              	SHLD	BAKPOS
-  008C'   22 0000*              	SHLD	OUTPOS
-  008F'   22 0000*              	SHLD	OUTHI		; (appended) name.$$$ holds no record yet
-  0092'   22 0000*              	SHLD	TOPLF		; (appended) no line is behind the window yet
-  0095'   CD 0355'              	CALL	FILLBUF		; WM 518 -- read the file into the buffer
-  0098'   C9                    	RET
+  006A'   21 005C               	LXI	H,5CH		; DEVIATION 8: SRCFCB is the source FCB as the
+  006D'   11 0000*              	LXI	D,SRCFCB	;   open left it, so reading the records above
+  0070'   01 0020               	LXI	B,20H		;   the window back costs no directory search.
+  0073'   CD 0000*              	CALL	MEMCPY		;   CP/M 2.2 keeps nothing of an open file
+  0076'   21 0020*              	LXI	H,SRCFCB+20H	;   outside its FCB.  Record, and the 'written'
+  0079'   06 04                 	MVI	B,4H		;   byte SETREC reads, start at zero.
+  007B'   36 00                 OPSZ:	MVI	M,0H
+  007D'   23                    	INX	H
+  007E'   05                    	DCR	B
+  007F'   C2 007B'              	JNZ	OPSZ
+  0082'   C3 0088'              	JMP	OPRD
+  0085'                         OPNEW:				; source not found -> new file
+  0085'   32 0000*              	STA	NEWFIL
+  0088'                         OPRD:				; cold-start the pager state.  WM does this by
+  0088'   AF                    	XRA	A		;   zeroing its whole work-variable area (WM
+  0089'   32 0000*              	STA	BAKRDY		;   369-373, the L0307 clear loop over TXTROWS..
+  008C'   32 0000*              	STA	OUTACT		 ;   2730): every deque mark -- OUTACT/OUTPOS/BAKPOS/
+  008F'   32 0000*              	STA	INLEN		;   INLEN/OUTREC/SRCREC/BAKREC -- lives in that
+  0092'   32 0000*              	STA	DIRFLG		;   region, so its true cold value is ZERO.  With
+  0095'   32 0000*              	STA	SAVMOD		; (deviation 8) not saving
+  0098'   21 0000               	LXI	H,0H		;   the real UPDMARK maintaining them (below), no
+  009B'   22 0000*              	SHLD	OUTREC		;   bias is needed: at cold OUTPOS=0 and UPDMARK
+  009E'   22 0000*              	SHLD	SRCREC		;   lowers it on an edit; PAGEOUT raises it.
+  00A1'   22 0000*              	SHLD	BAKREC
+  00A4'   22 0000*              	SHLD	BAKPOS
+	MACRO-80 3.44	09-Dec-81	PAGE	1-3
+
+
+  00A7'   22 0000*              	SHLD	OUTPOS
+  00AA'   22 0000*              	SHLD	OUTHI		; (appended) name.$$$ holds no record yet
+  00AD'   22 0000*              	SHLD	TOPLF		; (appended) no line is behind the window yet
+  00B0'   2B                    	DCX	H		; DEVIATION 8: the source holds all of it
+  00B1'   22 0000*              	SHLD	SAMREC
+  00B4'   CD 03B2'              	CALL	FILLBUF		; WM 518 -- read the file into the buffer
+  00B7'   C9                    	RET
                                 
                                 ;============================================================
                                 ; APPENDED (NOT WordMaster): vi ':w' saves and keeps editing.  WM has no such
@@ -169,74 +196,71 @@
                                 ;============================================================
                                 
                                 ;REOPEN -- after a save: re-open the file named at 005CH and load its start.
-  0099'                         REOPEN:
-  0099'   CD 0641'              	CALL	CLSBAK		; WM 526 (EDNEXT)
-  009C'   CD 0000*              	CALL	BINIT		; WM L02F2 -- reset the gap pointers
+  00B8'                         REOPEN:
+  00B8'   CD 0795'              	CALL	CLSBAK		; WM 526 (EDNEXT)
+  00BB'   CD 0000*              	CALL	BINIT		; WM L02F2 -- reset the gap pointers
                                 ;OPENZ -- OPENFIL after WM's L02F2 clears (WM 369-376): the source FCB's input
                                 ; flag, extent, record count and random record, and NEWFIL.  At start-up the
                                 ; input flag (005BH) holds whatever the last program left there; a file that
-	MACRO-80 3.44	09-Dec-81	PAGE	1-3
-
-
                                 ; is not found must not be read from.
-  009F'                         OPENZ:
-  009F'   AF                    	XRA	A
-  00A0'   32 005B               	STA	5BH
-  00A3'   32 0068               	STA	68H
-  00A6'   32 006B               	STA	6BH
-  00A9'   32 007D               	STA	7DH
-  00AC'   32 0000*              	STA	NEWFIL
-  00AF'   C3 0000'              	JMP	OPENFIL		; WM INIT: FCBs, stale-file deletes, open, fill
+  00BE'                         OPENZ:
+  00BE'   AF                    	XRA	A
+  00BF'   32 005B               	STA	5BH
+  00C2'   32 0068               	STA	68H
+  00C5'   32 006B               	STA	6BH
+  00C8'   32 007D               	STA	7DH
+  00CB'   32 0000*              	STA	NEWFIL
+  00CE'   C3 0000'              	JMP	OPENFIL		; WM INIT: FCBs, stale-file deletes, open, fill
                                 
                                 ;SEEKTO -- DE = record, A = byte (0-127) of a file position: page forward
                                 ;until that position is in the window.  HL = its logical offset (the end of
                                 ;the text if the file is shorter).  OUTPOS*128 is TXTBEG's file position.
-  00B2'                         SEEKTO:
-  00B2'   32 0000*              	STA	SKBYT
-  00B5'   EB                    	XCHG
-  00B6'   22 0000*              	SHLD	SKREC
-  00B9'                         SKLP:
-  00B9'   2A 0000*              	LHLD	OUTPOS
-  00BC'   EB                    	XCHG
-  00BD'   2A 0000*              	LHLD	SKREC
-  00C0'   CD 0000*              	CALL	SUBHD		; HL = records past TXTBEG's
-  00C3'   7C                    	MOV	A,H
-  00C4'   FE 02                 	CPI	2H
-  00C6'   D2 00E7'              	JNC	SKMORE		; >= 200H records: not in the window
-  00C9'   1F                    	RAR			; CY = bit 8 (H is 0 or 1)
-  00CA'   7D                    	MOV	A,L
-  00CB'   1F                    	RAR			; A = bits 8-1, CY = bit 0
-  00CC'   57                    	MOV	D,A
-  00CD'   3E 00                 	MVI	A,0
-  00CF'   1F                    	RAR			; A = bit 0 << 7
-  00D0'   5F                    	MOV	E,A
-  00D1'   3A 0000*              	LDA	SKBYT
-  00D4'   B3                    	ORA	E
-  00D5'   5F                    	MOV	E,A		; DE = HL*128 + byte: the target offset
-  00D6'   D5                    	PUSH	D
-  00D7'   2A 0000*              	LHLD	TXTBEG
-  00DA'   EB                    	XCHG
-  00DB'   2A 0000*              	LHLD	TXTEND
-  00DE'   CD 0000*              	CALL	SUBHD
-  00E1'   EB                    	XCHG			; DE = text in the window
-  00E2'   E1                    	POP	H		; HL = target
-  00E3'   CD 0000*              	CALL	CMP16		; CY iff length < target
-  00E6'   D0                    	RNC			; in the window
-  00E7'                         SKMORE:
-  00E7'   CD 02D5'              	CALL	FLUSHTX		; WM 4850 (SAVCLO): write it all, refill
-  00EA'   CD 033B'              	CALL	FILLBF2
-  00ED'   D2 00B9'              	JNC	SKLP
-  00F0'   2A 0000*              	LHLD	TXTBEG		; no more input: the end of the text
-  00F3'   EB                    	XCHG
-  00F4'   2A 0000*              	LHLD	TXTEND
-  00F7'   C3 0000*              	JMP	SUBHD
+  00D1'                         SEEKTO:
+  00D1'   32 0000*              	STA	SKBYT
+  00D4'   EB                    	XCHG
+  00D5'   22 0000*              	SHLD	SKREC
+  00D8'                         SKLP:
+  00D8'   2A 0000*              	LHLD	OUTPOS
+  00DB'   EB                    	XCHG
+  00DC'   2A 0000*              	LHLD	SKREC
+  00DF'   CD 0000*              	CALL	SUBHD		; HL = records past TXTBEG's
+  00E2'   7C                    	MOV	A,H
+  00E3'   FE 02                 	CPI	2H
+  00E5'   D2 0106'              	JNC	SKMORE		; >= 200H records: not in the window
+  00E8'   1F                    	RAR			; CY = bit 8 (H is 0 or 1)
+  00E9'   7D                    	MOV	A,L
+  00EA'   1F                    	RAR			; A = bits 8-1, CY = bit 0
+  00EB'   57                    	MOV	D,A
+  00EC'   3E 00                 	MVI	A,0
+  00EE'   1F                    	RAR			; A = bit 0 << 7
+  00EF'   5F                    	MOV	E,A
+	MACRO-80 3.44	09-Dec-81	PAGE	1-4
+
+
+  00F0'   3A 0000*              	LDA	SKBYT
+  00F3'   B3                    	ORA	E
+  00F4'   5F                    	MOV	E,A		; DE = HL*128 + byte: the target offset
+  00F5'   D5                    	PUSH	D
+  00F6'   2A 0000*              	LHLD	TXTBEG
+  00F9'   EB                    	XCHG
+  00FA'   2A 0000*              	LHLD	TXTEND
+  00FD'   CD 0000*              	CALL	SUBHD
+  0100'   EB                    	XCHG			; DE = text in the window
+  0101'   E1                    	POP	H		; HL = target
+  0102'   CD 0000*              	CALL	CMP16		; CY iff length < target
+  0105'   D0                    	RNC			; in the window
+  0106'                         SKMORE:
+  0106'   CD 0332'              	CALL	FLUSHTX		; WM 4850 (SAVCLO): write it all, refill
+  0109'   CD 0398'              	CALL	FILLBF2
+  010C'   D2 00D8'              	JNC	SKLP
+  010F'   2A 0000*              	LHLD	TXTBEG		; no more input: the end of the text
+  0112'   EB                    	XCHG
+  0113'   2A 0000*              	LHLD	TXTEND
+  0116'   C3 0000*              	JMP	SUBHD
                                 
                                 ;============================================================
                                 ; APPENDED (NOT WordMaster): vi writes the text to a name of its own (:w name,
                                 ; and a buffer that has no name) and drops it for another file (:e).  WM always
-	MACRO-80 3.44	09-Dec-81	PAGE	1-4
-
-
                                 ; writes back to the file it read.  These use WM's own primitives: SAVCLO for
                                 ; the flush, RENAME for the backup, RENF, DELF, MAKEF, OPENF, CLOSEF.
                                 ; TFCB holds the target name; the vi layer fills its drive, name and type
@@ -244,360 +268,395 @@
                                 ;============================================================
                                 
                                 ;TEXIST -- Z iff no file has TFCB's name.
-  00FA'                         TEXIST:
-  00FA'   11 0000*              	LXI	D,TFCB
-  00FD'   CD 0616'              	CALL	BDOSFN
-  0100'   11                    	DB	11H		; search for the first match
-  0101'   3C                    	INR	A
-  0102'   C9                    	RET
+  0119'                         TEXIST:
+  0119'   11 0000*              	LXI	D,TFCB
+  011C'   CD 076A'              	CALL	BDOSFN
+  011F'   11                    	DB	11H		; search for the first match
+  0120'   3C                    	INR	A
+  0121'   C9                    	RET
                                 
                                 ;WRTO -- write the whole text to the file named in TFCB (the edit is flushed
                                 ; to name.$$$, as WM's ENDEDIT does).  A <> 0: a file already there becomes
                                 ; name.BAK (WM ENDEDIT); A = 0: it is deleted (vim overwrites it).  Then
                                 ; name.$$$ takes TFCB's name, by RENF on its own drive or by a copy to another
                                 ; drive.  REOPEN must follow (from TFCB's name).
-  0103'                         WRTO:
-  0103'   F5                    	PUSH	PSW
-  0104'   CD 042C'              	CALL	SAVCLO		; WM 558 (ENDEDIT)
-  0107'   11 0000*              	LXI	D,TFCB
-  010A'   F1                    	POP	PSW
-  010B'   B7                    	ORA	A
-  010C'   CA 0139'              	JZ	WRDEL
-  010F'   21 0009*              	LXI	H,TFCB+9	; delete any old name.BAK
-  0112'   11 0000*              	LXI	D,WRTYP
-  0115'   CD 06CD'              	CALL	CPYTYP
-  0118'   11 0009*              	LXI	D,TFCB+9
-  011B'   CD 06CA'              	CALL	CPYBAK
-  011E'   11 0000*              	LXI	D,TFCB
-  0121'   CD 0664'              	CALL	DELF
-  0124'   21 0000*              	LXI	H,WRTYP
-  0127'   11 0009*              	LXI	D,TFCB+9
-  012A'   CD 06CD'              	CALL	CPYTYP
-  012D'   11 0000*              	LXI	D,TFCB		; name -> name.BAK (WM 562)
-  0130'   21 07DF'              	LXI	H,BAKEXT
-  0133'   CD 068E'              	CALL	RENAME
-  0136'   C3 013C'              	JMP	WRMOV
-  0139'                         WRDEL:
-  0139'   CD 0664'              	CALL	DELF
-  013C'                         WRMOV:
-  013C'   3A 0000*              	LDA	OUTFCB
-  013F'   21 0000*              	LXI	H,TFCB
-  0142'   BE                    	CMP	M
-  0143'   C2 0168'              	JNZ	WRCPY		; another drive
-  0146'   21 0000*              	LXI	H,OUTFCB	; RENF block: name.$$$, then TFCB's name
-  0149'   11 0010*              	LXI	D,OUTFCB+10H
-  014C'   01 0010               	LXI	B,10H
-  014F'   CD 0000*              	CALL	MEMCPY
-  0152'   21 0001*              	LXI	H,TFCB+1
-  0155'   11 0011*              	LXI	D,OUTFCB+11H
-  0158'   01 000B               	LXI	B,0BH
-  015B'   CD 0000*              	CALL	MEMCPY
-  015E'   AF                    	XRA	A
+  0122'                         WRTO:
+  0122'   F5                    	PUSH	PSW
+  0123'   CD 0489'              	CALL	SAVCLO		; WM 558 (ENDEDIT)
+  0126'   11 0000*              	LXI	D,TFCB
+  0129'   F1                    	POP	PSW
+  012A'   B7                    	ORA	A
+  012B'   CA 0158'              	JZ	WRDEL
+  012E'   21 0009*              	LXI	H,TFCB+9	; delete any old name.BAK
+  0131'   11 0000*              	LXI	D,WRTYP
+  0134'   CD 0821'              	CALL	CPYTYP
+  0137'   11 0009*              	LXI	D,TFCB+9
+  013A'   CD 081E'              	CALL	CPYBAK
+  013D'   11 0000*              	LXI	D,TFCB
 	MACRO-80 3.44	09-Dec-81	PAGE	1-5
 
 
-  015F'   32 0010*              	STA	OUTFCB+10H	; the new name's drive byte is 0 (as RENAME)
-  0162'   11 0000*              	LXI	D,OUTFCB
-  0165'   C3 06AD'              	JMP	RENF		; WM 566
-  0168'                         WRCPY:				; name.$$$ copied record by record
-  0168'   AF                    	XRA	A		; extent 0, record 0 on both
-  0169'   32 000C*              	STA	OUTFCB+0CH
-  016C'   32 0020*              	STA	OUTFCB+20H
-  016F'   32 0020*              	STA	TFCB+20H
-  0172'   11 0000*              	LXI	D,OUTFCB
-  0175'   CD 0630'              	CALL	OPENF
-  0178'   11 0000*              	LXI	D,TFCB
-  017B'   CD 0670'              	CALL	DELRST		; make the new file
-  017E'                         WRCLP:
-  017E'   11 0000*              	LXI	D,OUTFCB
-  0181'   CD 0616'              	CALL	BDOSFN
-  0184'   14                    	DB	14H		; read the next record
-  0185'   B7                    	ORA	A
-  0186'   C2 0197'              	JNZ	WRCEND
-  0189'   11 0000*              	LXI	D,TFCB
-  018C'   CD 0616'              	CALL	BDOSFN
-  018F'   15                    	DB	15H		; write it
-  0190'   B7                    	ORA	A
-  0191'   CA 017E'              	JZ	WRCLP
-  0194'   C3 072C'              	JMP	DSKERR
-  0197'                         WRCEND:
+  0140'   CD 07B8'              	CALL	DELF
+  0143'   21 0000*              	LXI	H,WRTYP
+  0146'   11 0009*              	LXI	D,TFCB+9
+  0149'   CD 0821'              	CALL	CPYTYP
+  014C'   11 0000*              	LXI	D,TFCB		; name -> name.BAK (WM 562)
+  014F'   21 0949'              	LXI	H,BAKEXT
+  0152'   CD 07E2'              	CALL	RENAME
+  0155'   C3 015B'              	JMP	WRMOV
+  0158'                         WRDEL:
+  0158'   CD 07B8'              	CALL	DELF
+  015B'                         WRMOV:
+  015B'   3A 0000*              	LDA	OUTFCB
+  015E'   21 0000*              	LXI	H,TFCB
+  0161'   BE                    	CMP	M
+  0162'   C2 0187'              	JNZ	WRCPY		; another drive
+  0165'   21 0000*              	LXI	H,OUTFCB	; RENF block: name.$$$, then TFCB's name
+  0168'   11 0010*              	LXI	D,OUTFCB+10H
+  016B'   01 0010               	LXI	B,10H
+  016E'   CD 0000*              	CALL	MEMCPY
+  0171'   21 0001*              	LXI	H,TFCB+1
+  0174'   11 0011*              	LXI	D,OUTFCB+11H
+  0177'   01 000B               	LXI	B,0BH
+  017A'   CD 0000*              	CALL	MEMCPY
+  017D'   AF                    	XRA	A
+  017E'   32 0010*              	STA	OUTFCB+10H	; the new name's drive byte is 0 (as RENAME)
+  0181'   11 0000*              	LXI	D,OUTFCB
+  0184'   C3 0801'              	JMP	RENF		; WM 566
+  0187'                         WRCPY:				; name.$$$ copied record by record
+  0187'   AF                    	XRA	A		; extent 0, record 0 on both
+  0188'   32 000C*              	STA	OUTFCB+0CH
+  018B'   32 0020*              	STA	OUTFCB+20H
+  018E'   32 0020*              	STA	TFCB+20H
+  0191'   11 0000*              	LXI	D,OUTFCB
+  0194'   CD 0784'              	CALL	OPENF
   0197'   11 0000*              	LXI	D,TFCB
-  019A'   CD 064B'              	CALL	CLOSEF
+  019A'   CD 07C4'              	CALL	DELRST		; make the new file
+  019D'                         WRCLP:
   019D'   11 0000*              	LXI	D,OUTFCB
-  01A0'   C3 0664'              	JMP	DELF
+  01A0'   CD 076A'              	CALL	BDOSFN
+  01A3'   14                    	DB	14H		; read the next record
+  01A4'   B7                    	ORA	A
+  01A5'   C2 01B6'              	JNZ	WRCEND
+  01A8'   11 0000*              	LXI	D,TFCB
+  01AB'   CD 076A'              	CALL	BDOSFN
+  01AE'   15                    	DB	15H		; write it
+  01AF'   B7                    	ORA	A
+  01B0'   CA 019D'              	JZ	WRCLP
+  01B3'   C3 0880'              	JMP	DSKERR
+  01B6'                         WRCEND:
+  01B6'   11 0000*              	LXI	D,TFCB
+  01B9'   CD 079F'              	CALL	CLOSEF
+  01BC'   11 0000*              	LXI	D,OUTFCB
+  01BF'   C3 07B8'              	JMP	DELF
                                 
                                 ;DISCRD -- drop the edit: delete name.$$$ and VIBACKUP$$$ (WM EDEND, 581).
                                 ;DEVIATION (not WordMaster): both are skipped when this session never wrote a
+	MACRO-80 3.44	09-Dec-81	PAGE	1-6
+
+
                                 ;work record at all (WRKMAD clear), because then neither file can exist.  A BDOS
                                 ;delete scans the whole directory whether or not the name is on it -- the best
                                 ;part of a second each on a large drive -- and ':q' on a text that never spilled
                                 ;paid it twice for nothing.  The per-file [FCB-2]/[FCB-1] flags will NOT do:
                                 ;reading the backup back to its end clears them while the file is still there,
                                 ;which is why WM's EDEND deletes unconditionally.
-  01A3'                         DISCRD:
-  01A3'   3A 0000*              	LDA	WRKMAD
-  01A6'   B7                    	ORA	A
-  01A7'   C8                    	RZ			; no work file was ever made: nothing to drop
-  01A8'   AF                    	XRA	A
-  01A9'   32 0000*              	STA	WRKMAD		; the deletes below leave nothing to drop again
-  01AC'   11 0000*              	LXI	D,OUTFCB
-  01AF'   CD 0664'              	CALL	DELF
-  01B2'   C3 065E'              	JMP	KILLBAK
+  01C2'                         DISCRD:
+  01C2'   3A 0000*              	LDA	WRKMAD
+  01C5'   B7                    	ORA	A
+  01C6'   C8                    	RZ			; no work file was ever made: nothing to drop
+  01C7'   AF                    	XRA	A
+  01C8'   32 0000*              	STA	WRKMAD		; the deletes below leave nothing to drop again
+  01CB'   11 0000*              	LXI	D,OUTFCB
+  01CE'   CD 07B8'              	CALL	DELF
+  01D1'   C3 07B2'              	JMP	KILLBAK
                                 
                                 ;CNTLF -- HL = the line feeds before the cursor: TOPLF for the records behind
                                 ;the window, plus a scan of the text from TXTBEG to the gap.  It reads no disk.
-  01B5'                         CNTLF:
-  01B5'   2A 0000*              	LHLD	TOPLF
-  01B8'   22 0000*              	SHLD	CLCNT
-  01BB'   2A 0000*              	LHLD	TXTBEG
-  01BE'   E5                    	PUSH	H
-  01BF'   EB                    	XCHG
-	MACRO-80 3.44	09-Dec-81	PAGE	1-6
-
-
-  01C0'   2A 0000*              	LHLD	GAPBEG
-  01C3'   CD 0000*              	CALL	SUBHD
-  01C6'   EB                    	XCHG			; DE = the text before the gap
-  01C7'   E1                    	POP	H
-  01C8'   CD 0204'              	CALL	CLBYTS
-  01CB'   2A 0000*              	LHLD	CLCNT
-  01CE'   C9                    	RET
+  01D4'                         CNTLF:
+  01D4'   2A 0000*              	LHLD	TOPLF
+  01D7'   22 0000*              	SHLD	CLCNT
+  01DA'   2A 0000*              	LHLD	TXTBEG
+  01DD'   E5                    	PUSH	H
+  01DE'   EB                    	XCHG
+  01DF'   2A 0000*              	LHLD	GAPBEG
+  01E2'   CD 0000*              	CALL	SUBHD
+  01E5'   EB                    	XCHG			; DE = the text before the gap
+  01E6'   E1                    	POP	H
+  01E7'   CD 0223'              	CALL	CLBYTS
+  01EA'   2A 0000*              	LHLD	CLCNT
+  01ED'   C9                    	RET
                                 
                                 ;TLFADD / TLFSUB -- the sector at HL leaves the window's top (PAGEOUT) or comes
                                 ;back to it (REWIND): TOPLF gains or loses its line feeds.  TOPLF is then the
                                 ;line feeds in output records 0 to OUTPOS-1 at all times, which is what CNTLF
                                 ;used to read those records back to find.  Keeps every register and the flags.
-  01CF'                         TLFADD:
-  01CF'   F5                    	PUSH	PSW
-  01D0'   C5                    	PUSH	B
-  01D1'   D5                    	PUSH	D
-  01D2'   E5                    	PUSH	H
-  01D3'   CD 01F2'              	CALL	TLFSEC
-  01D6'   2A 0000*              	LHLD	TOPLF
-  01D9'   19                    	DAD	D
-  01DA'   C3 01EA'              	JMP	TLFSTO
-  01DD'                         TLFSUB:
-  01DD'   F5                    	PUSH	PSW
-  01DE'   C5                    	PUSH	B
-  01DF'   D5                    	PUSH	D
-  01E0'   E5                    	PUSH	H
-  01E1'   CD 01F2'              	CALL	TLFSEC
-  01E4'   2A 0000*              	LHLD	TOPLF
-  01E7'   CD 0000*              	CALL	SUBHD
-  01EA'                         TLFSTO:
-  01EA'   22 0000*              	SHLD	TOPLF
-  01ED'   E1                    	POP	H
-  01EE'   D1                    	POP	D
-  01EF'   C1                    	POP	B
-  01F0'   F1                    	POP	PSW
-  01F1'   C9                    	RET
-                                
-                                ;TLFSEC -- DE = the line feeds in the 128 bytes at HL.
-  01F2'                         TLFSEC:
-  01F2'   11 0000               	LXI	D,0
-  01F5'   06 80                 	MVI	B,80H
-  01F7'                         TLFLP:
-  01F7'   7E                    	MOV	A,M
-  01F8'   23                    	INX	H
-  01F9'   FE 0A                 	CPI	0AH
-  01FB'   C2 01FF'              	JNZ	TLFNX
-  01FE'   13                    	INX	D
-  01FF'                         TLFNX:
-  01FF'   05                    	DCR	B
-  0200'   C2 01F7'              	JNZ	TLFLP
-  0203'   C9                    	RET
-                                
-                                ;CLBYTS -- HL = text, DE = its length: CLCNT += its line feeds.
-  0204'                         CLBYTS:
-  0204'   7A                    	MOV	A,D
-  0205'   B3                    	ORA	E
+  01EE'                         TLFADD:
+  01EE'   F5                    	PUSH	PSW
+  01EF'   C5                    	PUSH	B
+  01F0'   D5                    	PUSH	D
+  01F1'   E5                    	PUSH	H
+  01F2'   CD 0211'              	CALL	TLFSEC
+  01F5'   2A 0000*              	LHLD	TOPLF
+  01F8'   19                    	DAD	D
+  01F9'   C3 0209'              	JMP	TLFSTO
+  01FC'                         TLFSUB:
+  01FC'   F5                    	PUSH	PSW
+  01FD'   C5                    	PUSH	B
+  01FE'   D5                    	PUSH	D
+  01FF'   E5                    	PUSH	H
+  0200'   CD 0211'              	CALL	TLFSEC
+  0203'   2A 0000*              	LHLD	TOPLF
+  0206'   CD 0000*              	CALL	SUBHD
+  0209'                         TLFSTO:
+  0209'   22 0000*              	SHLD	TOPLF
+  020C'   E1                    	POP	H
 	MACRO-80 3.44	09-Dec-81	PAGE	1-7
 
 
-  0206'   C8                    	RZ
-  0207'   7E                    	MOV	A,M
-  0208'   23                    	INX	H
-  0209'   1B                    	DCX	D
-  020A'   FE 0A                 	CPI	0AH
-  020C'   C2 0204'              	JNZ	CLBYTS
-  020F'   E5                    	PUSH	H
-  0210'   2A 0000*              	LHLD	CLCNT
-  0213'   23                    	INX	H
-  0214'   22 0000*              	SHLD	CLCNT
-  0217'   E1                    	POP	H
-  0218'   C3 0204'              	JMP	CLBYTS
+  020D'   D1                    	POP	D
+  020E'   C1                    	POP	B
+  020F'   F1                    	POP	PSW
+  0210'   C9                    	RET
+                                
+                                ;TLFSEC -- DE = the line feeds in the 128 bytes at HL.
+  0211'                         TLFSEC:
+  0211'   11 0000               	LXI	D,0
+  0214'   06 80                 	MVI	B,80H
+  0216'                         TLFLP:
+  0216'   7E                    	MOV	A,M
+  0217'   23                    	INX	H
+  0218'   FE 0A                 	CPI	0AH
+  021A'   C2 021E'              	JNZ	TLFNX
+  021D'   13                    	INX	D
+  021E'                         TLFNX:
+  021E'   05                    	DCR	B
+  021F'   C2 0216'              	JNZ	TLFLP
+  0222'   C9                    	RET
+                                
+                                ;CLBYTS -- HL = text, DE = its length: CLCNT += its line feeds.
+  0223'                         CLBYTS:
+  0223'   7A                    	MOV	A,D
+  0224'   B3                    	ORA	E
+  0225'   C8                    	RZ
+  0226'   7E                    	MOV	A,M
+  0227'   23                    	INX	H
+  0228'   1B                    	DCX	D
+  0229'   FE 0A                 	CPI	0AH
+  022B'   C2 0223'              	JNZ	CLBYTS
+  022E'   E5                    	PUSH	H
+  022F'   2A 0000*              	LHLD	CLCNT
+  0232'   23                    	INX	H
+  0233'   22 0000*              	SHLD	CLCNT
+  0236'   E1                    	POP	H
+  0237'   C3 0223'              	JMP	CLBYTS
                                 
                                 ;============================================================
                                 ; PAGING CONSTANTS -- WM 412-447.  From A/H = high byte of BUFEND, derive the
                                 ; batch/margin sizing and the free-space water marks the load/spill path reads.
                                 ;============================================================
-  021B'                         PGCONST:			; WM 412
-  021B'   7C                    	MOV	A,H
-  021C'   B7                    	ORA	A
-  021D'   1F                    	RAR
-  021E'   1F                    	RAR
-  021F'   1F                    	RAR
-  0220'   3C                    	INR	A
-  0221'   3C                    	INR	A
-  0222'   E6 3C                 	ANI	3CH
-  0224'   47                    	MOV	B,A
-  0225'   32 0000*              	STA	PGSCAL
-  0228'   07                    	RLC
-  0229'   32 0000*              	STA	PGSCL2
-  022C'   78                    	MOV	A,B
-  022D'   FE 08                 	CPI	BS
-  022F'   D2 0234'              	JNC	PGCON1
-  0232'   3E 08                 	MVI	A,BS
-  0234'                         PGCON1:				 ; WM 430
-  0234'   32 0000*              	STA	PGMARGN
-  0237'   7C                    	MOV	A,H
-  0238'   FE 64                 	CPI	64H
-  023A'   21 0400               	LXI	H,400H
-  023D'   22 0000*              	SHLD	BUFLO
-  0240'   DA 0244'              	JC	PGCON2
-  0243'   29                    	DAD	H
-  0244'                         PGCON2:				 ; WM 439
-  0244'   22 0000*              	SHLD	BUFHI
-  0247'   3E 08                 	MVI	A,BS
-  0249'   32 0000*              	STA	PGSCRA
-  024C'   DA 0250'              	JC	PGCON3
-  024F'   87                    	ADD	A
-  0250'                         PGCON3:				 ; WM 446
-  0250'   32 0000*              	STA	IOBATCH
-  0253'   C9                    	RET
+  023A'                         PGCONST:			; WM 412
+  023A'   7C                    	MOV	A,H
+  023B'   B7                    	ORA	A
+  023C'   1F                    	RAR
+  023D'   1F                    	RAR
+  023E'   1F                    	RAR
+  023F'   3C                    	INR	A
+  0240'   3C                    	INR	A
+  0241'   E6 3C                 	ANI	3CH
+  0243'   47                    	MOV	B,A
+  0244'   32 0000*              	STA	PGSCAL
+  0247'   07                    	RLC
+  0248'   32 0000*              	STA	PGSCL2
+  024B'   78                    	MOV	A,B
+  024C'   FE 08                 	CPI	BS
+	MACRO-80 3.44	09-Dec-81	PAGE	1-8
+
+
+  024E'   D2 0253'              	JNC	PGCON1
+  0251'   3E 08                 	MVI	A,BS
+  0253'                         PGCON1:				 ; WM 430
+  0253'   32 0000*              	STA	PGMARGN
+  0256'   7C                    	MOV	A,H
+  0257'   FE 64                 	CPI	64H
+  0259'   21 0400               	LXI	H,400H
+  025C'   22 0000*              	SHLD	BUFLO
+  025F'   DA 0263'              	JC	PGCON2
+  0262'   29                    	DAD	H
+  0263'                         PGCON2:				 ; WM 439
+  0263'   22 0000*              	SHLD	BUFHI
+  0266'   3E 08                 	MVI	A,BS
+  0268'   32 0000*              	STA	PGSCRA
+  026B'   DA 026F'              	JC	PGCON3
+  026E'   87                    	ADD	A
+  026F'                         PGCON3:				 ; WM 446
+  026F'   32 0000*              	STA	IOBATCH
+  0272'   C9                    	RET
                                 
                                 ;============================================================
                                 ; SPILL / PAGEOUT / FLUSHTX -- the output (write-behind) side.  RAM-only, SPILL
                                 ; no-ops (CKWRLIM) on load and FLUSHTX drains the whole buffer on save.
                                 ;============================================================
-	MACRO-80 3.44	09-Dec-81	PAGE	1-8
-
-
                                 
                                 ;SPILL -- WM 4386: write-behind a batch of TXTBEG-side sectors to OUTFCB.
-  0254'                         SPILL:				; WM 4386
-  0254'   C5                    	PUSH	B
-  0255'   D5                    	PUSH	D
-  0256'   E5                    	PUSH	H
-  0257'   CD 0283'              	CALL	PAGEOUT
-  025A'   DA 0000*              	JC	POPRET
-  025D'   21 0000*              	LXI	H,SPLCNT
-  0260'   34                    	INR	M
-  0261'   46                    	MOV	B,M
-  0262'   21 0000*              	LXI	H,PGSCL2
-  0265'   AF                    	XRA	A
-  0266'                         SPLSUM:				 ; WM 4398
-  0266'   86                    	ADD	M
-  0267'   05                    	DCR	B
-  0268'   C2 0266'              	JNZ	SPLSUM
-  026B'   3D                    	DCR	A
-  026C'   F6 07                 	ORI	7H
-  026E'   4F                    	MOV	C,A
-  026F'   3A 0000*              	LDA	IOBATCH
-  0272'   3D                    	DCR	A
-  0273'   47                    	MOV	B,A
-  0274'                         SPLLP:				; WM 4409
-  0274'   CD 0283'              	CALL	PAGEOUT
-  0277'   05                    	DCR	B
-  0278'   CA 027F'              	JZ	SPLDON
-  027B'   0D                    	DCR	C
-  027C'   C2 0274'              	JNZ	SPLLP
-  027F'                         SPLDON:				 ; WM 4416
-  027F'   B7                    	ORA	A
-  0280'   C3 0000*              	JMP	POPRET
-                                
-                                ;PAGEOUT -- WM 4439: spill one sector at TXTBEG to OUTFCB, bump TXTBEG.
-  0283'                         PAGEOUT:			; WM 4439
-  0283'   2A 0000*              	LHLD	TXTBEG
-  0286'   CD 0465'              	CALL	CKWRLIM
-  0289'   D8                    	RC
-  028A'   E5                    	PUSH	H
-  028B'   2A 0000*              	LHLD	OUTPOS
-  028E'   EB                    	XCHG
-  028F'   2A 0000*              	LHLD	OUTREC
-  0292'   CD 0000*              	CALL	CMP16
-  0295'   E1                    	POP	H
-  0296'   11 0000*              	LXI	D,OUTFCB
-  0299'   D2 02A2'              	JNC	POFRSH
-  029C'   CD 074F'              	CALL	RECINC
-  029F'   C3 02C1'              	JMP	POADV
-  02A2'                         POFRSH:				 ; WM 4454 -- write a fresh output record
-  02A2'   CD 0749'              	CALL	WRRECP
-  02A5'   EB                    	XCHG
-  02A6'   2A 0000*              	LHLD	OUTREC
-  02A9'   23                    	INX	H
-  02AA'   22 0000*              	SHLD	OUTREC
-  02AD'   D5                    	PUSH	D		; (appended) OUTHI follows the most records
-  02AE'   2A 0000*              	LHLD	OUTHI		;   name.$$$ has ever held; OUTREC cannot
+  0273'                         SPILL:				; WM 4386
+  0273'   C5                    	PUSH	B
+  0274'   D5                    	PUSH	D
+  0275'   E5                    	PUSH	H
+  0276'   CD 02A2'              	CALL	PAGEOUT
+  0279'   DA 0000*              	JC	POPRET
+  027C'   21 0000*              	LXI	H,SPLCNT
+  027F'   34                    	INR	M
+  0280'   46                    	MOV	B,M
+  0281'   21 0000*              	LXI	H,PGSCL2
+  0284'   AF                    	XRA	A
+  0285'                         SPLSUM:				 ; WM 4398
+  0285'   86                    	ADD	M
+  0286'   05                    	DCR	B
+  0287'   C2 0285'              	JNZ	SPLSUM
+  028A'   3D                    	DCR	A
+  028B'   F6 07                 	ORI	7H
+  028D'   4F                    	MOV	C,A
+  028E'   3A 0000*              	LDA	IOBATCH
+  0291'   3D                    	DCR	A
+  0292'   47                    	MOV	B,A
+  0293'                         SPLLP:				; WM 4409
+  0293'   CD 02A2'              	CALL	PAGEOUT
+  0296'   05                    	DCR	B
+  0297'   CA 029E'              	JZ	SPLDON
+  029A'   0D                    	DCR	C
+  029B'   C2 0293'              	JNZ	SPLLP
+  029E'                         SPLDON:				 ; WM 4416
+  029E'   B7                    	ORA	A
+  029F'   C3 0000*              	JMP	POPRET
 	MACRO-80 3.44	09-Dec-81	PAGE	1-9
 
 
-  02B1'   EB                    	XCHG			;   say, an edit behind it brings it down
-  02B2'   2A 0000*              	LHLD	OUTPOS
-  02B5'   CD 0000*              	CALL	CMP16
-  02B8'   D2 02BE'              	JNC	POHI
-  02BB'   22 0000*              	SHLD	OUTHI
-  02BE'   D1                    POHI:	POP	D
-  02BF'   EB                    	XCHG
-  02C0'   04                    	INR	B
-  02C1'                         POADV:				; WM 4463 -- advance TXTBEG past the sector
-  02C1'   CD 01CF'              	CALL	TLFADD		; (appended) its line feeds are behind the
+                                
+                                ;PAGEOUT -- WM 4439: spill one sector at TXTBEG to OUTFCB, bump TXTBEG.
+                                ;DEVIATION 8: a record below SAMREC is the source's own and is not written;
+                                ;OUTREC rises past it, so OUTREC still equals OUTPOS at every fresh write
+                                ;(POFRSH adds one to OUTREC, not to OUTPOS).  OUTREC then means "valid in
+                                ;name.$$$ or in the source".  While SAVCLO saves (SAVMOD), such a record IS
+                                ;written, from RAM, and OUTREC is left alone.
+  02A2'                         PAGEOUT:			; WM 4439
+  02A2'   2A 0000*              	LHLD	TXTBEG
+  02A5'   CD 057C'              	CALL	CKWRLIM
+  02A8'   D8                    	RC
+  02A9'   E5                    	PUSH	H
+  02AA'   2A 0000*              	LHLD	OUTPOS
+  02AD'   EB                    	XCHG
+  02AE'   2A 0000*              	LHLD	SAMREC		; DEVIATION 8
+  02B1'   CD 0000*              	CALL	CMP16		; CY iff OUTPOS < SAMREC
+  02B4'   DA 02FD'              	JC	POSAME
+  02B7'   2A 0000*              	LHLD	OUTREC
+  02BA'   CD 0000*              	CALL	CMP16
+  02BD'   E1                    	POP	H
+  02BE'   11 0000*              	LXI	D,OUTFCB
+  02C1'   D2 02CA'              	JNC	POFRSH
+  02C4'   CD 08B9'              	CALL	RECINC
+  02C7'   C3 02E9'              	JMP	POADV
+  02CA'                         POFRSH:				 ; WM 4454 -- write a fresh output record
+  02CA'   CD 08B3'              	CALL	WRRECP
+  02CD'   EB                    	XCHG
+  02CE'   2A 0000*              	LHLD	OUTREC
+  02D1'   23                    	INX	H
+  02D2'   22 0000*              	SHLD	OUTREC
+  02D5'   D5                    POWHI:	PUSH	D		; (appended) OUTHI follows the most records
+  02D6'   2A 0000*              	LHLD	OUTHI		;   name.$$$ has ever held; OUTREC cannot
+  02D9'   EB                    	XCHG			;   say, an edit behind it brings it down
+  02DA'   2A 0000*              	LHLD	OUTPOS
+  02DD'   CD 0000*              	CALL	CMP16
+  02E0'   D2 02E6'              	JNC	POHI
+  02E3'   22 0000*              	SHLD	OUTHI
+  02E6'   D1                    POHI:	POP	D
+  02E7'   EB                    	XCHG
+  02E8'   04                    	INR	B
+  02E9'                         POADV:				; WM 4463 -- advance TXTBEG past the sector
+  02E9'   CD 01EE'              	CALL	TLFADD		; (appended) its line feeds are behind the
                                 				;   window now
-  02C4'   11 0080               	LXI	D,80H
-  02C7'   19                    	DAD	D
-  02C8'   22 0000*              	SHLD	TXTBEG
-  02CB'   E5                    	PUSH	H
-  02CC'   2A 0000*              	LHLD	PGTOPM		; (appended) the window's top moved: 'u' reads
-  02CF'   23                    	INX	H		;   this to know its offsets have shifted
-  02D0'   22 0000*              	SHLD	PGTOPM
-  02D3'   E1                    	POP	H
-  02D4'   C9                    	RET
-                                
-                                ;FLUSHTX -- WM 4471: collapse the gap and PAGEOUT every remaining sector.
-  02D5'                         FLUSHTX:			; WM 4471
-  02D5'   C5                    	PUSH	B
-  02D6'   D5                    	PUSH	D
-  02D7'   E5                    	PUSH	H
-  02D8'   21 0081               	LXI	H,81H
-  02DB'   22 0000*              	SHLD	WRLIM
-  02DE'   21 0000*              	LXI	H,BUFEND
-  02E1'   CD 0000*              	CALL	PUTHOLE
-  02E4'   2A 0000*              	LHLD	TXTEND
-  02E7'   CD 0000*              	CALL	PUTCUR
-  02EA'                         FLXLP:				; WM 4482 -- flush loop
-  02EA'   CD 0283'              	CALL	PAGEOUT
-  02ED'   D2 02EA'              	JNC	FLXLP
-  02F0'   C3 0000*              	JMP	POPRET
-                                
-                                ;STAGSEC -- WM 4588: stage a short final record into SECBUF, ^Z-pad the tail.
-  02F3'                         STAGSEC:			; WM 4588
-  02F3'   C5                    	PUSH	B
-  02F4'   D5                    	PUSH	D
-  02F5'   11 0000*              	LXI	D,SECBUF
-  02F8'   D5                    	PUSH	D
-  02F9'   47                    	MOV	B,A
-  02FA'   0E 82                 	MVI	C,82H
-  02FC'   04                    	INR	B
-  02FD'   2B                    	DCX	H
-  02FE'   1B                    	DCX	D
-  02FF'                         STGCPY:				 ; WM 4599 -- copy the partial sector
-  02FF'   7E                    	MOV	A,M
-  0300'   12                    	STAX	D
-  0301'   23                    	INX	H
-  0302'   13                    	INX	D
-  0303'   0D                    	DCR	C
-  0304'   05                    	DCR	B
-  0305'   C2 02FF'              	JNZ	STGCPY
+  02EC'   11 0080               	LXI	D,80H
+  02EF'   19                    	DAD	D
+  02F0'   22 0000*              	SHLD	TXTBEG
+  02F3'   E5                    	PUSH	H
+  02F4'   2A 0000*              	LHLD	PGTOPM		; (appended) the window's top moved: 'u' reads
+  02F7'   23                    	INX	H		;   this to know its offsets have shifted
+  02F8'   22 0000*              	SHLD	PGTOPM
+  02FB'   E1                    	POP	H
+  02FC'   C9                    	RET
+  02FD'                         POSAME:				; DEVIATION 8: the source holds this record
+  02FD'   3A 0000*              	LDA	SAVMOD
+  0300'   B7                    	ORA	A
+  0301'   C2 0327'              	JNZ	POSAVE
 	MACRO-80 3.44	09-Dec-81	PAGE	1-10
 
 
-  0308'                         STGPAD:				 ; WM 4608 -- pad the rest with ^Z
-  0308'   3E 1A                 	MVI	A,EOF
-  030A'   12                    	STAX	D
-  030B'   13                    	INX	D
-  030C'   0D                    	DCR	C
-  030D'   C2 0308'              	JNZ	STGPAD
-  0310'   C3 0000*              	JMP	POPRET
+  0304'   2A 0000*              	LHLD	OUTREC
+  0307'   CD 0000*              	CALL	CMP16		; CY iff OUTPOS < OUTREC: counted already, as
+  030A'   DA 031D'              	JC	POSAM1		;   WM skips a record already written
+  030D'   13                    	INX	D
+  030E'   EB                    	XCHG
+  030F'   22 0000*              	SHLD	OUTREC		; OUTREC = OUTPOS+1
+  0312'   E1                    	POP	H
+  0313'   11 0000*              	LXI	D,OUTFCB
+  0316'   CD 08B9'              	CALL	RECINC		; past it, unwritten -- and where WM would have
+  0319'   04                    	INR	B		;   written it, SPILL's batch counts it as WM's
+  031A'   C3 02E9'              	JMP	POADV		;   does, so a first pass empties the window
+  031D'   E1                    POSAM1:	POP	H
+  031E'   11 0000*              	LXI	D,OUTFCB
+  0321'   CD 08B9'              	CALL	RECINC
+  0324'   C3 02E9'              	JMP	POADV
+  0327'   E1                    POSAVE:	POP	H		; saving: write it from RAM
+  0328'   11 0000*              	LXI	D,OUTFCB
+  032B'   CD 08B3'              	CALL	WRRECP
+  032E'   EB                    	XCHG
+  032F'   C3 02D5'              	JMP	POWHI
+                                
+                                ;FLUSHTX -- WM 4471: collapse the gap and PAGEOUT every remaining sector.
+  0332'                         FLUSHTX:			; WM 4471
+  0332'   C5                    	PUSH	B
+  0333'   D5                    	PUSH	D
+  0334'   E5                    	PUSH	H
+  0335'   21 0081               	LXI	H,81H
+  0338'   22 0000*              	SHLD	WRLIM
+  033B'   21 0000*              	LXI	H,BUFEND
+  033E'   CD 0000*              	CALL	PUTHOLE
+  0341'   2A 0000*              	LHLD	TXTEND
+  0344'   CD 0000*              	CALL	PUTCUR
+  0347'                         FLXLP:				; WM 4482 -- flush loop
+  0347'   CD 02A2'              	CALL	PAGEOUT
+  034A'   D2 0347'              	JNC	FLXLP
+  034D'   C3 0000*              	JMP	POPRET
+                                
+                                ;STAGSEC -- WM 4588: stage a short final record into SECBUF, ^Z-pad the tail.
+  0350'                         STAGSEC:			; WM 4588
+  0350'   C5                    	PUSH	B
+  0351'   D5                    	PUSH	D
+  0352'   11 0000*              	LXI	D,SECBUF
+  0355'   D5                    	PUSH	D
+  0356'   47                    	MOV	B,A
+  0357'   0E 82                 	MVI	C,82H
+  0359'   04                    	INR	B
+  035A'   2B                    	DCX	H
+  035B'   1B                    	DCX	D
+  035C'                         STGCPY:				 ; WM 4599 -- copy the partial sector
+  035C'   7E                    	MOV	A,M
+  035D'   12                    	STAX	D
+  035E'   23                    	INX	H
+  035F'   13                    	INX	D
+  0360'   0D                    	DCR	C
+  0361'   05                    	DCR	B
+  0362'   C2 035C'              	JNZ	STGCPY
+	MACRO-80 3.44	09-Dec-81	PAGE	1-11
+
+
+  0365'                         STGPAD:				 ; WM 4608 -- pad the rest with ^Z
+  0365'   3E 1A                 	MVI	A,EOF
+  0367'   12                    	STAX	D
+  0368'   13                    	INX	D
+  0369'   0D                    	DCR	C
+  036A'   C2 0365'              	JNZ	STGPAD
+  036D'   C3 0000*              	JMP	POPRET
                                 
                                 ;============================================================
                                 ; FILLBUF / RDIN / CLNSEC -- the input (read) side.
@@ -605,253 +664,358 @@
                                 
                                 ;NEEDIN -- WM 4617: page input in when the forward read (RGET) runs dry.
                                 ;SPILL first if free space is under a record, then reserve and fill.
-  0313'                         NEEDIN:				; WM 4617
-  0313'   CD 03B6'              	CALL	INRDY
-  0316'   C8                    	RZ
-  0317'   C5                    	PUSH	B
-  0318'   D5                    	PUSH	D
-  0319'   E5                    	PUSH	H
-  031A'   CD 0000*              	CALL	BUFSUM
-  031D'   21 0080               	LXI	H,80H
-  0320'   CD 0000*              	CALL	CMP16
-  0323'   EB                    	XCHG
-  0324'   2A 0000*              	LHLD	BUFHI
-  0327'   D2 0331'              	JNC	NDIRSV
-  032A'   CD 0254'              	CALL	SPILL
-  032D'   DA 03F4'              	JC	MEMSHT
-  0330'   EB                    	XCHG
-  0331'                         NDIRSV:				 ; WM 4633 -- reserve free space, then fill
-  0331'   EB                    	XCHG
-  0332'   21 0000*              	LXI	H,BUFEND
-  0335'   CD 03E7'              	CALL	FREEREC
-  0338'   C3 0364'              	JMP	FILLRD
+  0370'                         NEEDIN:				; WM 4617
+  0370'   CD 0413'              	CALL	INRDY
+  0373'   C8                    	RZ
+  0374'   C5                    	PUSH	B
+  0375'   D5                    	PUSH	D
+  0376'   E5                    	PUSH	H
+  0377'   CD 0000*              	CALL	BUFSUM
+  037A'   21 0080               	LXI	H,80H
+  037D'   CD 0000*              	CALL	CMP16
+  0380'   EB                    	XCHG
+  0381'   2A 0000*              	LHLD	BUFHI
+  0384'   D2 038E'              	JNC	NDIRSV
+  0387'   CD 0273'              	CALL	SPILL
+  038A'   DA 0451'              	JC	MEMSHT
+  038D'   EB                    	XCHG
+  038E'                         NDIRSV:				 ; WM 4633 -- reserve free space, then fill
+  038E'   EB                    	XCHG
+  038F'   21 0000*              	LXI	H,BUFEND
+  0392'   CD 0444'              	CALL	FREEREC
+  0395'   C3 03C1'              	JMP	FILLRD
                                 
                                 ;FILLBF2 -- WM 4640: fill from input, capped at 7800H.
-  033B'                         FILLBF2:			; WM 4640
-  033B'   C5                    	PUSH	B
-  033C'   D5                    	PUSH	D
-  033D'   E5                    	PUSH	H
-  033E'   21 0000*              	LXI	H,BUFEND
-  0341'   11 7800               	LXI	D,7800H
-  0344'   CD 0418'              	CALL	BUFFREE
-  0347'   CD 03B6'              	CALL	INRDY
-  034A'   CA 037F'              	JZ	FILRET
-  034D'   79                    	MOV	A,C
-  034E'   B7                    	ORA	A
-  034F'   C2 0364'              	JNZ	FILLRD
-  0352'   C3 0000*              	JMP	POPRET
+  0398'                         FILLBF2:			; WM 4640
+  0398'   C5                    	PUSH	B
+  0399'   D5                    	PUSH	D
+  039A'   E5                    	PUSH	H
+  039B'   21 0000*              	LXI	H,BUFEND
+  039E'   11 7800               	LXI	D,7800H
+  03A1'   CD 0475'              	CALL	BUFFREE
+  03A4'   CD 0413'              	CALL	INRDY
+  03A7'   CA 03DC'              	JZ	FILRET
+  03AA'   79                    	MOV	A,C
+  03AB'   B7                    	ORA	A
+  03AC'   C2 03C1'              	JNZ	FILLRD
+  03AF'   C3 0000*              	JMP	POPRET
                                 
                                 ;FILLBUF -- WM 4659: top the window up from the input file(s).
-  0355'                         FILLBUF:			; WM 4659
-  0355'   C5                    	PUSH	B
-  0356'   D5                    	PUSH	D
-  0357'   E5                    	PUSH	H
-  0358'   CD 03B6'              	CALL	INRDY
-	MACRO-80 3.44	09-Dec-81	PAGE	1-11
-
-
-  035B'   CA 037F'              	JZ	FILRET
-  035E'   21 0000*              	LXI	H,BUFEND
-  0361'   CD 03CD'              	CALL	RESVBF0
-  0364'                         FILLRD:				 ; WM 4668
-  0364'   2A 0000*              	LHLD	TXTEND
-  0367'                         FILRLP:				 ; WM 4671 -- read & clean one input record
-  0367'   CD 0382'              	CALL	RDIN
-  036A'   D4 039B'              	CNC	CLNSEC
-  036D'   D2 0374'              	JNC	FILRSV		; DEVIATION (WM bug): WM is JC L1C6B, which
-  0370'   B7                    	ORA	A		;   skips the store for a full record (CY,
-  0371'   CA 0377'              	JZ	FILRST		;   A=80H), so a file ending on a record
-  0374'   32 0000*              FILRSV: STA	INLEN		;   boundary w/o ^Z leaves INLEN=0 and PAGEBOT
-                                				;   RECDECs one record too far (record saved
-                                				;   twice).  Skip only RDIN's no-record case
-                                				;   (CY, A=0).
-  0377'                         FILRST:				 ; WM 4677
-  0377'   22 0000*              	SHLD	TXTEND
-  037A'   0D                    	DCR	C
-  037B'   C2 0367'              	JNZ	FILRLP
-  037E'   B7                    	ORA	A
-  037F'                         FILRET:				 ; WM 4683
-  037F'   C3 0000*              	JMP	POPRET
-                                
-                                ;RDIN -- WM 4689: read the next input record into [HL] (backup then source).
-  0382'                         RDIN:				; WM 4689
-  0382'   CD 07CE'              	CALL	POLLBRK
-  0385'   11 0000*              	LXI	D,BAKRDY
-  0388'   1A                    	LDAX	D
-  0389'   13                    	INX	D
-  038A'   B7                    	ORA	A
-  038B'   37                    	STC
-  038C'   C4 06DA'              	CNZ	RDPREV
-  038F'   D0                    	RNC
-  0390'   11 005B               	LXI	D,5BH
-  0393'   1A                    	LDAX	D
-  0394'   13                    	INX	D
-  0395'   B7                    	ORA	A
-  0396'   37                    	STC
-  0397'   C4 06D3'              	CNZ	RDNEXT
-  039A'   C9                    	RET
-                                
-                                ;CLNSEC -- WM 4709: mask bit 7, stop at ^Z; return live byte count in A.
-  039B'                         CLNSEC:				; WM 4709
-  039B'   06 80                 	MVI	B,80H
-  039D'                         CLNLP:				; WM 4712
-  039D'   7E                    	MOV	A,M
-  039E'   E6 7F                 	ANI	7FH
-  03A0'   77                    	MOV	M,A
-  03A1'   FE 1A                 	CPI	EOF
-  03A3'   CA 03AF'              	JZ	CLNEOF
-  03A6'   23                    	INX	H
-  03A7'   05                    	DCR	B
-  03A8'   C2 039D'              	JNZ	CLNLP
-  03AB'   37                    	STC
-  03AC'   3E 80                 	MVI	A,80H
-  03AE'   C9                    	RET
+  03B2'                         FILLBUF:			; WM 4659
+  03B2'   C5                    	PUSH	B
+  03B3'   D5                    	PUSH	D
+  03B4'   E5                    	PUSH	H
+  03B5'   CD 0413'              	CALL	INRDY
 	MACRO-80 3.44	09-Dec-81	PAGE	1-12
 
 
-  03AF'                         CLNEOF:				 ; WM 4725 -- input EOF: return the byte count
-  03AF'   CD 06EF'              	CALL	IOEOF
-  03B2'   3E 80                 	MVI	A,80H
-  03B4'   90                    	SUB	B
-  03B5'   C9                    	RET
+  03B8'   CA 03DC'              	JZ	FILRET
+  03BB'   21 0000*              	LXI	H,BUFEND
+  03BE'   CD 042A'              	CALL	RESVBF0
+  03C1'                         FILLRD:				 ; WM 4668
+  03C1'   2A 0000*              	LHLD	TXTEND
+  03C4'                         FILRLP:				 ; WM 4671 -- read & clean one input record
+  03C4'   CD 03DF'              	CALL	RDIN
+  03C7'   D4 03F8'              	CNC	CLNSEC
+  03CA'   D2 03D1'              	JNC	FILRSV		; DEVIATION (WM bug): WM is JC L1C6B, which
+  03CD'   B7                    	ORA	A		;   skips the store for a full record (CY,
+  03CE'   CA 03D4'              	JZ	FILRST		;   A=80H), so a file ending on a record
+  03D1'   32 0000*              FILRSV: STA	INLEN		;   boundary w/o ^Z leaves INLEN=0 and PAGEBOT
+                                				;   RECDECs one record too far (record saved
+                                				;   twice).  Skip only RDIN's no-record case
+                                				;   (CY, A=0).
+  03D4'                         FILRST:				 ; WM 4677
+  03D4'   22 0000*              	SHLD	TXTEND
+  03D7'   0D                    	DCR	C
+  03D8'   C2 03C4'              	JNZ	FILRLP
+  03DB'   B7                    	ORA	A
+  03DC'                         FILRET:				 ; WM 4683
+  03DC'   C3 0000*              	JMP	POPRET
+                                
+                                ;RDIN -- WM 4689: read the next input record into [HL] (backup then source).
+  03DF'                         RDIN:				; WM 4689
+  03DF'   CD 0938'              	CALL	POLLBRK
+  03E2'   11 0000*              	LXI	D,BAKRDY
+  03E5'   1A                    	LDAX	D
+  03E6'   13                    	INX	D
+  03E7'   B7                    	ORA	A
+  03E8'   37                    	STC
+  03E9'   C4 082E'              	CNZ	RDPREV
+  03EC'   D0                    	RNC
+  03ED'   11 005B               	LXI	D,5BH
+  03F0'   1A                    	LDAX	D
+  03F1'   13                    	INX	D
+  03F2'   B7                    	ORA	A
+  03F3'   37                    	STC
+  03F4'   C4 0827'              	CNZ	RDNEXT
+  03F7'   C9                    	RET
+                                
+                                ;CLNSEC -- WM 4709: mask bit 7, stop at ^Z; return live byte count in A.
+  03F8'                         CLNSEC:				; WM 4709
+  03F8'   06 80                 	MVI	B,80H
+  03FA'                         CLNLP:				; WM 4712
+  03FA'   7E                    	MOV	A,M
+  03FB'   E6 7F                 	ANI	7FH
+  03FD'   77                    	MOV	M,A
+  03FE'   FE 1A                 	CPI	EOF
+  0400'   CA 040C'              	JZ	CLNEOF
+  0403'   23                    	INX	H
+  0404'   05                    	DCR	B
+  0405'   C2 03FA'              	JNZ	CLNLP
+  0408'   37                    	STC
+  0409'   3E 80                 	MVI	A,80H
+  040B'   C9                    	RET
+	MACRO-80 3.44	09-Dec-81	PAGE	1-13
+
+
+  040C'                         CLNEOF:				 ; WM 4725 -- input EOF: return the byte count
+  040C'   CD 0843'              	CALL	IOEOF
+  040F'   3E 80                 	MVI	A,80H
+  0411'   90                    	SUB	B
+  0412'   C9                    	RET
                                 
                                 ;INRDY -- WM 4733: NZ while any input data is still unread.
-  03B6'                         INRDY:				; WM 4733
-  03B6'   E5                    	PUSH	H
-  03B7'   3A 005B               	LDA	5BH
-  03BA'   21 0000*              	LXI	H,BAKRDY
-  03BD'   B6                    	ORA	M
-  03BE'   37                    	STC
-  03BF'   E1                    	POP	H
-  03C0'   C9                    	RET
+  0413'                         INRDY:				; WM 4733
+  0413'   E5                    	PUSH	H
+  0414'   3A 005B               	LDA	5BH
+  0417'   21 0000*              	LXI	H,BAKRDY
+  041A'   B6                    	ORA	M
+  041B'   37                    	STC
+  041C'   E1                    	POP	H
+  041D'   C9                    	RET
                                 
                                 ;MOREIN -- WM 4743: NZ if more input remains in the current direction
                                 ;(WM's L26AA is OUTACT, the byte before OUTFCB).
-  03C1'                         MOREIN:				; WM 4743
-  03C1'   3A 0000*              	LDA	DIRFLG
-  03C4'   B7                    	ORA	A
-  03C5'   3A 0000*              	LDA	OUTACT
-  03C8'   F4 03B6'              	CP	INRDY
-  03CB'   B7                    	ORA	A
-  03CC'   C9                    	RET
+  041E'                         MOREIN:				; WM 4743
+  041E'   3A 0000*              	LDA	DIRFLG
+  0421'   B7                    	ORA	A
+  0422'   3A 0000*              	LDA	OUTACT
+  0425'   F4 0413'              	CP	INRDY
+  0428'   B7                    	ORA	A
+  0429'   C9                    	RET
                                 
                                 ;============================================================
                                 ; FREE-SPACE ACCOUNTING -- WM 4786-4841.  Reserve/compute the read-ahead room.
                                 ;============================================================
                                 
                                 ;RESVBF0/RESVBUF -- WM 4786/4790: reserve free buffer space up to BUFHI.
-  03CD'                         RESVBF0:			; WM 4786
-  03CD'   11 0254'              	LXI	D,SPILL
-  03D0'                         RESVBUF:			; WM 4790
-  03D0'   E5                    	PUSH	H
-  03D1'   2A 0000*              	LHLD	BUFHI
-  03D4'   D5                    	PUSH	D
-  03D5'   CD 0000*              	CALL	BUFSUM
-  03D8'   CD 0000*              	CALL	CMP16
-  03DB'   E1                    	POP	H
-  03DC'   DC 0417'              	CC	DISPKEY
-  03DF'   2A 0000*              	LHLD	BUFLO
-  03E2'   29                    	DAD	H
-  03E3'   24                    	INR	H
-  03E4'   24                    	INR	H
-  03E5'   EB                    	XCHG
-  03E6'   E1                    	POP	H
-  03E7'                         FREEREC:			; WM 4806 -- free bytes -> capped record count
-  03E7'   CD 0418'              	CALL	BUFFREE
-  03EA'   FE 08                 	CPI	BS
-  03EC'   DA 03F2'              	JC	FRECOK
-  03EF'   D6 04                 	SUI	4H
-  03F1'   4F                    	MOV	C,A
-  03F2'                         FRECOK:				 ; WM 4813
-  03F2'   B7                    	ORA	A
-  03F3'   C0                    	RNZ
-	MACRO-80 3.44	09-Dec-81	PAGE	1-13
+  042A'                         RESVBF0:			; WM 4786
+  042A'   11 0273'              	LXI	D,SPILL
+  042D'                         RESVBUF:			; WM 4790
+  042D'   E5                    	PUSH	H
+  042E'   2A 0000*              	LHLD	BUFHI
+  0431'   D5                    	PUSH	D
+  0432'   CD 0000*              	CALL	BUFSUM
+  0435'   CD 0000*              	CALL	CMP16
+  0438'   E1                    	POP	H
+  0439'   DC 0474'              	CC	DISPKEY
+  043C'   2A 0000*              	LHLD	BUFLO
+  043F'   29                    	DAD	H
+  0440'   24                    	INR	H
+  0441'   24                    	INR	H
+  0442'   EB                    	XCHG
+  0443'   E1                    	POP	H
+  0444'                         FREEREC:			; WM 4806 -- free bytes -> capped record count
+  0444'   CD 0475'              	CALL	BUFFREE
+  0447'   FE 08                 	CPI	BS
+  0449'   DA 044F'              	JC	FRECOK
+  044C'   D6 04                 	SUI	4H
+  044E'   4F                    	MOV	C,A
+  044F'                         FRECOK:				 ; WM 4813
+  044F'   B7                    	ORA	A
+  0450'   C0                    	RNZ
+	MACRO-80 3.44	09-Dec-81	PAGE	1-14
 
 
-  03F4'                         MEMSHT:				 ; WM 4817
-  03F4'   CD 0000*              	CALL	MEMERR		; DEVIATION 7: out of room ends the key, not
+  0451'                         MEMSHT:				 ; WM 4817
+  0451'   CD 0000*              	CALL	MEMERR		; DEVIATION 7: out of room ends the key, not
                                 				;   the editor (BUF.MAC's deviation 3)
-  03F7'   4D 45 4D 20           	DB	'MEM SHORTAGE, TRY CLEARING QBUF',0H
-  03FB'   53 48 4F 52           
-  03FF'   54 41 47 45           
-  0403'   2C 20 54 52           
-  0407'   59 20 43 4C           
-  040B'   45 41 52 49           
-  040F'   4E 47 20 51           
-  0413'   42 55 46 00           
+  0454'   4D 45 4D 20           	DB	'MEM SHORTAGE, TRY CLEARING QBUF',0H
+  0458'   53 48 4F 52           
+  045C'   54 41 47 45           
+  0460'   2C 20 54 52           
+  0464'   59 20 43 4C           
+  0468'   45 41 52 49           
+  046C'   4E 47 20 51           
+  0470'   42 55 46 00           
                                 
                                 ;DISPKEY -- WM 2846: PCHL trampoline (call the reserve routine held in HL).
-  0417'                         DISPKEY:			; WM 2846
-  0417'   E9                    	PCHL
+  0474'                         DISPKEY:			; WM 2846
+  0474'   E9                    	PCHL
                                 
                                 ;BUFFREE -- WM 4827: collapse the gap and report free bytes (A/C = pages).
-  0418'                         BUFFREE:			; WM 4827
-  0418'   CD 0000*              	CALL	PUTHOLE
-  041B'   D5                    	PUSH	D
-  041C'   CD 0000*              	CALL	BUFSUM
-  041F'   E1                    	POP	H
-  0420'   CD 0000*              	CALL	SUBCP2
-  0423'   EB                    	XCHG
-  0424'   29                    	DAD	H
-  0425'                         BFRLP:				; WM 4836
-  0425'   DA 0425'              	JC	BFRLP
-  0428'   EB                    	XCHG
-  0429'   7A                    	MOV	A,D
-  042A'   4A                    	MOV	C,D
-  042B'   C9                    	RET
+  0475'                         BUFFREE:			; WM 4827
+  0475'   CD 0000*              	CALL	PUTHOLE
+  0478'   D5                    	PUSH	D
+  0479'   CD 0000*              	CALL	BUFSUM
+  047C'   E1                    	POP	H
+  047D'   CD 0000*              	CALL	SUBCP2
+  0480'   EB                    	XCHG
+  0481'   29                    	DAD	H
+  0482'                         BFRLP:				; WM 4836
+  0482'   DA 0482'              	JC	BFRLP
+  0485'   EB                    	XCHG
+  0486'   7A                    	MOV	A,D
+  0487'   4A                    	MOV	C,D
+  0488'   C9                    	RET
                                 
                                 ;============================================================
                                 ; SAVCLO -- WM 4846: flush all buffered text to OUTFCB and close it.
                                 ;============================================================
-  042C'                         SAVCLO:				; WM 4846
-  042C'   CD 033B'              	CALL	FILLBF2
-  042F'                         SAVLP:				; WM 4849 -- flush all, refill, repeat
-  042F'   CD 02D5'              	CALL	FLUSHTX
-  0432'   CD 033B'              	CALL	FILLBF2
-  0435'   D2 042F'              	JNC	SAVLP
-  0438'   21 0000*              	LXI	H,TXTBEG
-  043B'   CD 0000*              	CALL	PRSPAN
-  043E'   CD 0000*              	CALL	LDHLI
-  0441'   79                    	MOV	A,C
-  0442'   CD 02F3'              	CALL	STAGSEC
-  0445'   11 0000*              	LXI	D,OUTFCB
-  0448'   CD 0749'              	CALL	WRRECP
-  044B'   2A 0000*              	LHLD	OUTPOS		; DEVIATION (not WM): WM closes here.  Text
-  044E'   EB                    	XCHG			;   that was paged out, rewound and then cut
-  044F'   2A 0000*              	LHLD	OUTHI		;   short leaves the old records after the
-  0452'   CD 0000*              	CALL	CMP16		;   last one, and CP/M cannot drop them.  A
-  0455'   11 0000*              	LXI	D,OUTFCB	;   part-filled last record hides them behind
-  0458'   D2 064B'              	JNC	CLOSEF		;   its ^Z padding; a full one has none, and
-  045B'   AF                    	XRA	A		;   the old text was read back as the file's
-  045C'   CD 02F3'              	CALL	STAGSEC		;   end.  So a record of ^Z goes over the
-	MACRO-80 3.44	09-Dec-81	PAGE	1-14
+  0489'                         SAVCLO:				; WM 4846
+  0489'   CD 04CC'              	CALL	SVBEG		; DEVIATION 8: the source's front, counted
+  048C'   CD 0398'              	CALL	FILLBF2
+  048F'                         SAVLP:				; WM 4849 -- flush all, refill, repeat
+  048F'   CD 0332'              	CALL	FLUSHTX
+  0492'   CD 04E9'              	CALL	SVFRNT		; DEVIATION 8: ... and copied, the first time
+  0495'   CD 0398'              	CALL	FILLBF2
+  0498'   D2 048F'              	JNC	SAVLP
+  049B'   AF                    	XRA	A		; DEVIATION 8: the pass is over
+  049C'   32 0000*              	STA	SAVMOD
+  049F'   21 0000*              	LXI	H,TXTBEG
+  04A2'   CD 0000*              	CALL	PRSPAN
+  04A5'   CD 0000*              	CALL	LDHLI
+  04A8'   79                    	MOV	A,C
+  04A9'   CD 0350'              	CALL	STAGSEC
+  04AC'   11 0000*              	LXI	D,OUTFCB
+  04AF'   CD 08B3'              	CALL	WRRECP
+  04B2'   2A 0000*              	LHLD	OUTPOS		; DEVIATION (not WM): WM closes here.  Text
+  04B5'   EB                    	XCHG			;   that was paged out, rewound and then cut
+  04B6'   2A 0000*              	LHLD	OUTHI		;   short leaves the old records after the
+  04B9'   CD 0000*              	CALL	CMP16		;   last one, and CP/M cannot drop them.  A
+	MACRO-80 3.44	09-Dec-81	PAGE	1-15
 
 
-  045F'   CD 0749'              	CALL	WRRECP		;   first of them.  It is there already:
-  0462'   C3 064B'              	JMP	CLOSEF		;   this write cannot fill the disk.
+  04BC'   11 0000*              	LXI	D,OUTFCB	;   part-filled last record hides them behind
+  04BF'   D2 079F'              	JNC	CLOSEF		;   its ^Z padding; a full one has none, and
+  04C2'   AF                    	XRA	A		;   the old text was read back as the file's
+  04C3'   CD 0350'              	CALL	STAGSEC		;   end.  So a record of ^Z goes over the
+  04C6'   CD 08B3'              	CALL	WRRECP		;   first of them.  It is there already:
+  04C9'   C3 079F'              	JMP	CLOSEF		;   this write cannot fill the disk.
+                                
+                                ;SVBEG / SVFRNT -- DEVIATION 8: the records above the window that the source
+                                ;still holds (0 to the lower of SAMREC and OUTPOS) are not in name.$$$.  SVBEG
+                                ;counts them as the save begins (SVFCNT) and sets SAVMOD, so the save writes
+                                ;the other records below SAMREC from RAM as it passes them; the records from
+                                ;SAMREC to OUTPOS are in name.$$$ already.  SVFRNT, after the save's first
+                                ;FLUSHTX has emptied the window, copies them from the source, bit 7 cleared
+                                ;as a load clears it, through the free RAM above TXTEND: as many as it holds
+                                ;are read, then written.  One record at a time, read and write alternate,
+                                ;and the BIOS's deblocking makes each call about ten times dearer (0.37 s a
+                                ;read, measured on the simulator's 8 MB drive).  The free RAM is at least the
+                                ;0D80H a full register leaves.  OUTPOS, the save's place, is put back.
+  04CC'                         SVBEG:
+  04CC'   3E FF                 	MVI	A,0FFH
+  04CE'   32 0000*              	STA	SAVMOD
+  04D1'   2A 0000*              	LHLD	OUTPOS
+  04D4'   EB                    	XCHG
+  04D5'   2A 0000*              	LHLD	SAMREC
+  04D8'   CD 0000*              	CALL	CMP16		; CY iff OUTPOS < SAMREC
+  04DB'   D2 04DF'              	JNC	SVBN
+  04DE'   EB                    	XCHG
+  04DF'   22 0000*              SVBN:	SHLD	SVFCNT
+  04E2'   21 0000               	LXI	H,0H
+  04E5'   22 0022*              	SHLD	SRCFCB+22H
+  04E8'   C9                    	RET
+  04E9'                         SVFRNT:
+  04E9'   2A 0000*              	LHLD	SVFCNT
+  04EC'   7C                    	MOV	A,H
+  04ED'   B5                    	ORA	L
+  04EE'   C8                    	RZ
+  04EF'   2A 0000*              	LHLD	OUTPOS
+  04F2'   E5                    	PUSH	H
+  04F3'   2A 0022*              	LHLD	SRCFCB+22H	; the next record: OUTPOS keeps pace with it
+  04F6'   22 0000*              	SHLD	OUTPOS
+  04F9'   21 0000*              	LXI	H,BUFEND	; all the free RAM above the text (FILLBF2's
+  04FC'   CD 0000*              	CALL	PUTHOLE		;   BUFFREE does the same next)
+  04FF'   2A 0000*              	LHLD	TXTEND
+  0502'   EB                    	XCHG
+  0503'   2A 0000*              	LHLD	BUFEND
+  0506'   CD 0000*              	CALL	SUBHD		; HL = the free bytes above the text
+  0509'   29                    	DAD	H
+  050A'   4C                    	MOV	C,H
+  050B'   06 00                 	MVI	B,0H		; BC = the records they hold
+  050D'   79                    	MOV	A,C
+  050E'   B7                    	ORA	A
+  050F'   C2 0522'              	JNZ	SVFFIT
+  0512'   CD 0781'              	CALL	FATAL		; cannot happen (see above): stop, never loop
+  0515'   4D 45 4D 20           	DB	'MEM SHORTAGE',0H
+  0519'   53 48 4F 52           
+  051D'   54 41 47 45           
+	MACRO-80 3.44	09-Dec-81	PAGE	1-16
+
+
+  0521'   00                    
+  0522'   2A 0000*              SVFFIT:	LHLD	SVFCNT
+  0525'   50                    	MOV	D,B
+  0526'   59                    	MOV	E,C
+  0527'   CD 0000*              	CALL	CMP16		; CY iff they hold fewer than are left
+  052A'   DA 052F'              	JC	SVFN
+  052D'   44                    	MOV	B,H
+  052E'   4D                    	MOV	C,L		; BC = this batch
+  052F'   50                    SVFN:	MOV	D,B
+  0530'   59                    	MOV	E,C
+  0531'   CD 0000*              	CALL	SUBHD		; HL = what is left after it
+  0534'   22 0000*              	SHLD	SVFCNT
+  0537'   C5                    	PUSH	B
+  0538'   2A 0000*              	LHLD	TXTEND
+  053B'   11 0000*              SVFRD:	LXI	D,SRCFCB
+  053E'   CD 0827'              	CALL	RDNEXT
+  0541'   D2 0550'              	JNC	SVFOK
+  0544'   CD 0781'              	CALL	FATAL		; the source ends early: never save half of it
+  0547'   52 45 41 44           	DB	'READ ERR',0H
+  054B'   20 45 52 52           
+  054F'   00                    
+  0550'   C5                    SVFOK:	PUSH	B
+  0551'   E5                    	PUSH	H
+  0552'   CD 03F8'              	CALL	CLNSEC
+  0555'   E1                    	POP	H
+  0556'   C1                    	POP	B
+  0557'   11 0080               	LXI	D,80H
+  055A'   19                    	DAD	D
+  055B'   0B                    	DCX	B
+  055C'   78                    	MOV	A,B
+  055D'   B1                    	ORA	C
+  055E'   C2 053B'              	JNZ	SVFRD
+  0561'   C1                    	POP	B
+  0562'   2A 0000*              	LHLD	TXTEND
+  0565'   11 0000*              SVFWR:	LXI	D,OUTFCB
+  0568'   CD 08B3'              	CALL	WRRECP
+  056B'   11 0080               	LXI	D,80H
+  056E'   19                    	DAD	D
+  056F'   0B                    	DCX	B
+  0570'   78                    	MOV	A,B
+  0571'   B1                    	ORA	C
+  0572'   C2 0565'              	JNZ	SVFWR
+  0575'   E1                    	POP	H
+  0576'   22 0000*              	SHLD	OUTPOS
+  0579'   C3 04E9'              	JMP	SVFRNT		; the next batch, if any
                                 
                                 ;CKWRLIM -- WM 4863: CY if GAPBEG is below the PAGEOUT write limit.
-  0465'                         CKWRLIM:			; WM 4863
-  0465'   E5                    	PUSH	H
-  0466'   2A 0000*              	LHLD	WRLIM
-  0469'   EB                    	XCHG
-  046A'   2A 0000*              	LHLD	GAPBEG
-  046D'   CD 0000*              	CALL	SUBHD
-  0470'   EB                    	XCHG
-  0471'   E1                    	POP	H
-  0472'   C3 0000*              	JMP	CMP16
+  057C'                         CKWRLIM:			; WM 4863
+  057C'   E5                    	PUSH	H
+  057D'   2A 0000*              	LHLD	WRLIM
+  0580'   EB                    	XCHG
+  0581'   2A 0000*              	LHLD	GAPBEG
+  0584'   CD 0000*              	CALL	SUBHD
+  0587'   EB                    	XCHG
+  0588'   E1                    	POP	H
+  0589'   C3 0000*              	JMP	CMP16
+	MACRO-80 3.44	09-Dec-81	PAGE	1-17
+
+
                                 
                                 ;CKRDLIM -- WM 4874: compare GAPEND against the read limit (PAGEBOT guard).
-  0475'                         CKRDLIM:			; WM 4874
-  0475'   E5                    	PUSH	H
-  0476'   2A 0000*              	LHLD	RDLIM
-  0479'   EB                    	XCHG
-  047A'   2A 0000*              	LHLD	GAPEND
-  047D'   19                    	DAD	D
-  047E'   D1                    	POP	D
-  047F'   CD 0000*              	CALL	CMP16
-  0482'   EB                    	XCHG
-  0483'   C9                    	RET
+  058C'                         CKRDLIM:			; WM 4874
+  058C'   E5                    	PUSH	H
+  058D'   2A 0000*              	LHLD	RDLIM
+  0590'   EB                    	XCHG
+  0591'   2A 0000*              	LHLD	GAPEND
+  0594'   19                    	DAD	D
+  0595'   D1                    	POP	D
+  0596'   CD 0000*              	CALL	CMP16
+  0599'   EB                    	XCHG
+  059A'   C9                    	RET
                                 
                                 ;============================================================
                                 ; EVICTION SEAM + DEQUE MARKS.  Transcribed VERBATIM (WM 4335-4962).
@@ -870,201 +1034,229 @@
                                 ;PAGEDIR -- WM 4320: page more text into the window in the current scroll
                                 ;direction -- REWIND (re-read text previously spilled to OUTFCB) when DIRFLG is
                                 ;backward, else FILLBUF (read more of the input) when forward.
-  0484'                         PAGEDIR:			; WM 4320
-  0484'   CD 07CE'              	CALL	POLLBRK
-  0487'   3A 0000*              	LDA	DIRFLG
-  048A'   B7                    	ORA	A
-  048B'   FA 055D'              	JM	REWIND
-  048E'   C3 0355'              	JMP	FILLBUF
+  059B'                         PAGEDIR:			; WM 4320
+  059B'   CD 0938'              	CALL	POLLBRK
+  059E'   3A 0000*              	LDA	DIRFLG
+  05A1'   B7                    	ORA	A
+  05A2'   FA 0674'              	JM	REWIND
+  05A5'   C3 03B2'              	JMP	FILLBUF
                                 
                                 ;MKROOM -- WM 4335: free gap space by evicting a window edge (DIRFLG picks).
-  0491'                         MKROOM:				; WM 4335
-  0491'   3A 0000*              	LDA	DIRFLG
-  0494'   B7                    	ORA	A
-  0495'   37                    	STC
-  0496'   FC 04D0'              	CM	SPILLB
-	MACRO-80 3.44	09-Dec-81	PAGE	1-15
-
-
-  0499'   D0                    	RNC
-  049A'   CD 0254'              	CALL	SPILL
-  049D'   D0                    	RNC
-  049E'   C3 04D0'              	JMP	SPILLB
+  05A8'                         MKROOM:				; WM 4335
+  05A8'   3A 0000*              	LDA	DIRFLG
+  05AB'   B7                    	ORA	A
+  05AC'   37                    	STC
+  05AD'   FC 05E7'              	CM	SPILLB
+  05B0'   D0                    	RNC
+  05B1'   CD 0273'              	CALL	SPILL
+  05B4'   D0                    	RNC
+  05B5'   C3 05E7'              	JMP	SPILLB
                                 
                                 ;PAGEWIN -- WM 4350: keep PGMARGN bytes of text buffered around the cursor on
                                 ;the active edge (for a whole-file search); PAGEDIR one increment at a time
                                 ;until PGNEED is satisfied or the source runs out.
-  04A1'                         PAGEWIN:			; WM 4350
-  04A1'   CD 04B1'              	CALL	PGNEED
-  04A4'   D8                    	RC
-  04A5'   CD 0484'              	CALL	PAGEDIR
-  04A8'   D8                    	RC
-  04A9'   CD 04B1'              	CALL	PGNEED
-  04AC'   D4 0484'              	CNC	PAGEDIR
-  04AF'   B7                    	ORA	A
-  04B0'   C9                    	RET
+  05B8'                         PAGEWIN:			; WM 4350
+  05B8'   CD 05C8'              	CALL	PGNEED
+  05BB'   D8                    	RC
+  05BC'   CD 059B'              	CALL	PAGEDIR
+  05BF'   D8                    	RC
+	MACRO-80 3.44	09-Dec-81	PAGE	1-18
+
+
+  05C0'   CD 05C8'              	CALL	PGNEED
+  05C3'   D4 059B'              	CNC	PAGEDIR
+  05C6'   B7                    	ORA	A
+  05C7'   C9                    	RET
                                 
                                 ;PGNEED -- WM 4361: CY if the active edge (TXTBEG scanning back, GAPEND scanning
                                 ;forward) is still within PGMARGN*256 bytes -- i.e. the resident text on that
                                 ;side is shorter than the margin, so more must be paged in.  LHLD MARGLO reads
                                 ;the word whose high byte is PGMARGN and whose low byte (MARGLO) is a fixed 0,
                                 ;yielding PGMARGN*256 (WM does this as LHLD 272F).
-  04B1'                         PGNEED:				; WM 4361
-  04B1'   C5                    	PUSH	B
-  04B2'   D5                    	PUSH	D
-  04B3'   E5                    	PUSH	H
-  04B4'   3A 0000*              	LDA	DIRFLG
-  04B7'   B7                    	ORA	A
-  04B8'   11 0000*              	LXI	D,TXTBEG
-  04BB'   FA 04C1'              	JM	PGNCMP
-  04BE'   11 0000*              	LXI	D,GAPEND
-  04C1'                         PGNCMP:				 ; WM 4371 -- span the active edge, compare to margin
-  04C1'   2A 0000*              	LHLD	MARGLO
-  04C4'   EB                    	XCHG
-  04C5'   CD 0000*              	CALL	PRSPAN
-  04C8'   60                    	MOV	H,B
-  04C9'   69                    	MOV	L,C
-  04CA'   CD 0000*              	CALL	CMP16
-  04CD'   C3 0000*              	JMP	POPRET
+  05C8'                         PGNEED:				; WM 4361
+  05C8'   C5                    	PUSH	B
+  05C9'   D5                    	PUSH	D
+  05CA'   E5                    	PUSH	H
+  05CB'   3A 0000*              	LDA	DIRFLG
+  05CE'   B7                    	ORA	A
+  05CF'   11 0000*              	LXI	D,TXTBEG
+  05D2'   FA 05D8'              	JM	PGNCMP
+  05D5'   11 0000*              	LXI	D,GAPEND
+  05D8'                         PGNCMP:				 ; WM 4371 -- span the active edge, compare to margin
+  05D8'   2A 0000*              	LHLD	MARGLO
+  05DB'   EB                    	XCHG
+  05DC'   CD 0000*              	CALL	PRSPAN
+  05DF'   60                    	MOV	H,B
+  05E0'   69                    	MOV	L,C
+  05E1'   CD 0000*              	CALL	CMP16
+  05E4'   C3 0000*              	JMP	POPRET
                                 
                                 ;SPILLB -- WM 4491: evict a batch of bottom (TXTEND-side) sectors via PAGEBOT.
-  04D0'                         SPILLB:				; WM 4491
-  04D0'   C5                    	PUSH	B
-  04D1'   D5                    	PUSH	D
-  04D2'   E5                    	PUSH	H
-  04D3'   CD 04F0'              	CALL	PAGEBOT
-  04D6'   DA 0000*              	JC	POPRET
-  04D9'   3A 0000*              	LDA	IOBATCH
-  04DC'   47                    	MOV	B,A
-  04DD'   05                    	DCR	B
-  04DE'   87                    	ADD	A
-  04DF'   4F                    	MOV	C,A
-  04E0'   0D                    	DCR	C
-  04E1'                         SPBLP:				; WM 4504 -- evict-batch loop
-  04E1'   CD 04F0'              	CALL	PAGEBOT
-	MACRO-80 3.44	09-Dec-81	PAGE	1-16
-
-
-  04E4'   05                    	DCR	B
-  04E5'   CA 04EC'              	JZ	SPBDON
-  04E8'   0D                    	DCR	C
-  04E9'   C2 04E1'              	JNZ	SPBLP
-  04EC'                         SPBDON:				 ; WM 4511
-  04EC'   B7                    	ORA	A
-  04ED'   C3 0000*              	JMP	POPRET
+  05E7'                         SPILLB:				; WM 4491
+  05E7'   C5                    	PUSH	B
+  05E8'   D5                    	PUSH	D
+  05E9'   E5                    	PUSH	H
+  05EA'   CD 0607'              	CALL	PAGEBOT
+  05ED'   DA 0000*              	JC	POPRET
+  05F0'   3A 0000*              	LDA	IOBATCH
+  05F3'   47                    	MOV	B,A
+  05F4'   05                    	DCR	B
+  05F5'   87                    	ADD	A
+  05F6'   4F                    	MOV	C,A
+  05F7'   0D                    	DCR	C
+  05F8'                         SPBLP:				; WM 4504 -- evict-batch loop
+  05F8'   CD 0607'              	CALL	PAGEBOT
+  05FB'   05                    	DCR	B
+  05FC'   CA 0603'              	JZ	SPBDON
+  05FF'   0D                    	DCR	C
+  0600'   C2 05F8'              	JNZ	SPBLP
+  0603'                         SPBDON:				 ; WM 4511
+  0603'   B7                    	ORA	A
+  0604'   C3 0000*              	JMP	POPRET
                                 
                                 ;PAGEBOT -- WM 4520: evict the window's bottom sector back to the input side.
                                 ;If it still aligns with the original, un-read the source (RECDEC); otherwise
                                 ;write it to VIBACKUP$$$ -- SRCREC/BAKREC decide which.  Then TXTEND -= 128.
-  04F0'                         PAGEBOT:			; WM 4520
-  04F0'   2A 0000*              	LHLD	TXTEND
-  04F3'   CD 03B6'              	CALL	INRDY
-  04F6'   C2 0508'              	JNZ	PBSTEP
-  04F9'   3A 0000*              	LDA	INLEN
-  04FC'   57                    	MOV	D,A
-  04FD'   CD 060B'              	CALL	SUBHA
-  0500'   E5                    	PUSH	H
-  0501'   7A                    	MOV	A,D
-  0502'   CD 02F3'              	CALL	STAGSEC
-  0505'   C3 050D'              	JMP	PBRDLM
-  0508'                         PBSTEP:				 ; WM 4532 -- step back one sector at TXTEND
-  0508'   11 FF80               	LXI	D,0FF80H
-  050B'   19                    	DAD	D
-  050C'   E5                    	PUSH	H
-  050D'                         PBRDLM:				 ; WM 4537 -- check the read limit
-  050D'   E3                    	XTHL
-  050E'   CD 0475'              	CALL	CKRDLIM
-  0511'   E3                    	XTHL
-  0512'   D2 0517'              	JNC	PBSRC
-  0515'   E1                    	POP	H
-  0516'   C9                    	RET
-  0517'                         PBSRC:				; WM 4545 -- read from the source if its rec is due
-  0517'   E5                    	PUSH	H
-  0518'   2A 0000*              	LHLD	SRCREC
-  051B'   EB                    	XCHG
-  051C'   CD 05EC'              	CALL	RECBASE
-  051F'   CD 0000*              	CALL	CMP16
-  0522'   E1                    	POP	H
-  0523'   D2 052F'              	JNC	PBBAK
-  0526'   11 005C               	LXI	D,5CH
-  0529'   CD 0756'              	CALL	RECDEC
-  052C'   C3 0554'              	JMP	PBFIN
-  052F'                         PBBAK:				; WM 4557 -- else read / recycle from the backup
-  052F'   E5                    	PUSH	H
-  0530'   2A 0000*              	LHLD	BAKREC
-  0533'   EB                    	XCHG
-  0534'   CD 05EC'              	CALL	RECBASE
-  0537'   CD 0000*              	CALL	CMP16
-  053A'   E1                    	POP	H
-  053B'   11 0000*              	LXI	D,BAKFCB
-  053E'   D2 0547'              	JNC	PBWBAK
-  0541'   CD 074F'              	CALL	RECINC
-  0544'   C3 0554'              	JMP	PBFIN
-  0547'                         PBWBAK:				 ; WM 4569 -- write back a backup record; step BAKREC
-	MACRO-80 3.44	09-Dec-81	PAGE	1-17
+  0607'                         PAGEBOT:			; WM 4520
+  0607'   2A 0000*              	LHLD	TXTEND
+	MACRO-80 3.44	09-Dec-81	PAGE	1-19
 
 
-  0547'   CD 0749'              	CALL	WRRECP
-  054A'   E5                    	PUSH	H
-  054B'   2A 0000*              	LHLD	BAKREC
-  054E'   2B                    	DCX	H
-  054F'   22 0000*              	SHLD	BAKREC
-  0552'   E1                    	POP	H
-  0553'   04                    	INR	B
-  0554'                         PBFIN:				; WM 4578 -- store new TXTEND; note input remaining
-  0554'   CD 03B6'              	CALL	INRDY
-  0557'   B7                    	ORA	A
-  0558'   E1                    	POP	H
-  0559'   22 0000*              	SHLD	TXTEND
-  055C'   C9                    	RET
+  060A'   CD 0413'              	CALL	INRDY
+  060D'   C2 061F'              	JNZ	PBSTEP
+  0610'   3A 0000*              	LDA	INLEN
+  0613'   57                    	MOV	D,A
+  0614'   CD 075F'              	CALL	SUBHA
+  0617'   E5                    	PUSH	H
+  0618'   7A                    	MOV	A,D
+  0619'   CD 0350'              	CALL	STAGSEC
+  061C'   C3 0624'              	JMP	PBRDLM
+  061F'                         PBSTEP:				 ; WM 4532 -- step back one sector at TXTEND
+  061F'   11 FF80               	LXI	D,0FF80H
+  0622'   19                    	DAD	D
+  0623'   E5                    	PUSH	H
+  0624'                         PBRDLM:				 ; WM 4537 -- check the read limit
+  0624'   E3                    	XTHL
+  0625'   CD 058C'              	CALL	CKRDLIM
+  0628'   E3                    	XTHL
+  0629'   D2 062E'              	JNC	PBSRC
+  062C'   E1                    	POP	H
+  062D'   C9                    	RET
+  062E'                         PBSRC:				; WM 4545 -- read from the source if its rec is due
+  062E'   E5                    	PUSH	H
+  062F'   2A 0000*              	LHLD	SRCREC
+  0632'   EB                    	XCHG
+  0633'   CD 0740'              	CALL	RECBASE
+  0636'   CD 0000*              	CALL	CMP16
+  0639'   E1                    	POP	H
+  063A'   D2 0646'              	JNC	PBBAK
+  063D'   11 005C               	LXI	D,5CH
+  0640'   CD 08C0'              	CALL	RECDEC
+  0643'   C3 066B'              	JMP	PBFIN
+  0646'                         PBBAK:				; WM 4557 -- else read / recycle from the backup
+  0646'   E5                    	PUSH	H
+  0647'   2A 0000*              	LHLD	BAKREC
+  064A'   EB                    	XCHG
+  064B'   CD 0740'              	CALL	RECBASE
+  064E'   CD 0000*              	CALL	CMP16
+  0651'   E1                    	POP	H
+  0652'   11 0000*              	LXI	D,BAKFCB
+  0655'   D2 065E'              	JNC	PBWBAK
+  0658'   CD 08B9'              	CALL	RECINC
+  065B'   C3 066B'              	JMP	PBFIN
+  065E'                         PBWBAK:				 ; WM 4569 -- write back a backup record; step BAKREC
+  065E'   CD 08B3'              	CALL	WRRECP
+  0661'   E5                    	PUSH	H
+  0662'   2A 0000*              	LHLD	BAKREC
+  0665'   2B                    	DCX	H
+  0666'   22 0000*              	SHLD	BAKREC
+  0669'   E1                    	POP	H
+  066A'   04                    	INR	B
+  066B'                         PBFIN:				; WM 4578 -- store new TXTEND; note input remaining
+  066B'   CD 0413'              	CALL	INRDY
+  066E'   B7                    	ORA	A
+  066F'   E1                    	POP	H
+  0670'   22 0000*              	SHLD	TXTEND
+  0673'   C9                    	RET
+	MACRO-80 3.44	09-Dec-81	PAGE	1-20
+
+
                                 
                                 ;REWIND -- WM 4755: scrolling back, re-read sectors previously spilled to
                                 ;OUTFCB (by random record, stepping backward) and prepend them at TXTBEG.
                                 ;Enabled only when OUTACT marks that text has actually been written out.
-  055D'                         REWIND:				; WM 4755
-  055D'   C5                    	PUSH	B
-  055E'   D5                    	PUSH	D
-  055F'   E5                    	PUSH	H
-  0560'   3A 0000*              	LDA	OUTACT
-  0563'   B7                    	ORA	A
-  0564'   37                    	STC
-  0565'   CA 0598'              	JZ	RWNRET
-  0568'   11 04D0'              	LXI	D,SPILLB
-  056B'   21 0000*              	LXI	H,TXTBEG
-  056E'   CD 03D0'              	CALL	RESVBUF
-  0571'   2A 0000*              	LHLD	TXTBEG
-  0574'                         RWNLP:				; WM 4768 -- re-read one output record backward
-  0574'   CD 07CE'              	CALL	POLLBRK
-  0577'   11 FF80               	LXI	D,0FF80H
-  057A'   19                    	DAD	D
-  057B'   11 0000*              	LXI	D,OUTFCB
-  057E'   CD 06DA'              	CALL	RDPREV
-  0581'   DA 0597'              	JC	RWNDON
-  0584'   22 0000*              	SHLD	TXTBEG
-  0587'   CD 01DD'              	CALL	TLFSUB		; (appended) its line feeds are back in the
+  0674'                         REWIND:				; WM 4755
+  0674'   C5                    	PUSH	B
+  0675'   D5                    	PUSH	D
+  0676'   E5                    	PUSH	H
+  0677'   3A 0000*              	LDA	OUTACT
+  067A'   B7                    	ORA	A
+  067B'   37                    	STC
+  067C'   CA 06AF'              	JZ	RWNRET
+  067F'   11 05E7'              	LXI	D,SPILLB
+  0682'   21 0000*              	LXI	H,TXTBEG
+  0685'   CD 042D'              	CALL	RESVBUF
+  0688'   2A 0000*              	LHLD	TXTBEG
+  068B'                         RWNLP:				; WM 4768 -- re-read one output record backward
+  068B'   CD 0938'              	CALL	POLLBRK
+  068E'   11 FF80               	LXI	D,0FF80H
+  0691'   19                    	DAD	D
+  0692'   11 0000*              	LXI	D,OUTFCB
+  0695'   CD 06B2'              	CALL	RWNREC		; DEVIATION 8: RDPREV, or from the source
+  0698'   DA 06AE'              	JC	RWNDON
+  069B'   22 0000*              	SHLD	TXTBEG
+  069E'   CD 01FC'              	CALL	TLFSUB		; (appended) its line feeds are back in the
                                 				;   window
-  058A'   E5                    	PUSH	H
-  058B'   2A 0000*              	LHLD	PGTOPM		; (appended) the window's top moved: 'u' reads
-  058E'   23                    	INX	H		;   this to know its offsets have shifted
-  058F'   22 0000*              	SHLD	PGTOPM
-  0592'   E1                    	POP	H
-  0593'   0D                    	DCR	C
-  0594'   C2 0574'              	JNZ	RWNLP
-  0597'                         RWNDON:				 ; WM 4779
-  0597'   B7                    	ORA	A
-  0598'                         RWNRET:				 ; WM 4782
-  0598'   C3 0000*              	JMP	POPRET
+  06A1'   E5                    	PUSH	H
+  06A2'   2A 0000*              	LHLD	PGTOPM		; (appended) the window's top moved: 'u' reads
+  06A5'   23                    	INX	H		;   this to know its offsets have shifted
+  06A6'   22 0000*              	SHLD	PGTOPM
+  06A9'   E1                    	POP	H
+  06AA'   0D                    	DCR	C
+  06AB'   C2 068B'              	JNZ	RWNLP
+  06AE'                         RWNDON:				 ; WM 4779
+  06AE'   B7                    	ORA	A
+  06AF'                         RWNRET:				 ; WM 4782
+  06AF'   C3 0000*              	JMP	POPRET
+                                
+                                ;RWNREC -- DEVIATION 8: RDPREV on OUTFCB (DE), except that a record below
+                                ;SAMREC is the source's own, never written to name.$$$: it is read from the
+                                ;source through SRCFCB and cleaned as FILLBUF cleans it.  HL = where.
+  06B2'                         RWNREC:
+  06B2'   CD 08C0'              	CALL	RECDEC		; OUTPOS - 1
+  06B5'   D8                    	RC
+  06B6'   E5                    	PUSH	H
+  06B7'   2A 0000*              	LHLD	OUTPOS
+  06BA'   EB                    	XCHG
+  06BB'   2A 0000*              	LHLD	SAMREC
+  06BE'   CD 0000*              	CALL	CMP16		; CY iff OUTPOS < SAMREC
+  06C1'   EB                    	XCHG
+  06C2'   D2 06DA'              	JNC	RWNOUT
+  06C5'   22 0022*              	SHLD	SRCFCB+22H
+  06C8'   E1                    	POP	H
+  06C9'   11 0000*              	LXI	D,SRCFCB
+  06CC'   CD 0832'              	CALL	RDSEC
+  06CF'   D8                    	RC
+	MACRO-80 3.44	09-Dec-81	PAGE	1-21
+
+
+  06D0'   E5                    	PUSH	H
+  06D1'   CD 03F8'              	CALL	CLNSEC		; bit 7 off
+  06D4'   E1                    	POP	H
+  06D5'   11 0000*              	LXI	D,OUTFCB
+  06D8'   B7                    	ORA	A
+  06D9'   C9                    	RET
+  06DA'   E1                    RWNOUT:	POP	H
+  06DB'   11 0000*              	LXI	D,OUTFCB
+  06DE'   C3 0832'              	JMP	RDSEC
                                 
                                 ;MARKGB -- WM 4886: UPDMARK only when HL points at GAPBEG (falls into UPDMARK).
-  059B'                         MARKGB:				; WM 4886
-  059B'   D5                    	PUSH	D
-  059C'   11 0000*              	LXI	D,GAPBEG
-  059F'   CD 0000*              	CALL	CMP16
-	MACRO-80 3.44	09-Dec-81	PAGE	1-18
-
-
-  05A2'   D1                    	POP	D
-  05A3'   C0                    	RNZ
+  06E1'                         MARKGB:				; WM 4886
+  06E1'   D5                    	PUSH	D
+  06E2'   11 0000*              	LXI	D,GAPBEG
+  06E5'   CD 0000*              	CALL	CMP16
+  06E8'   D1                    	POP	D
+  06E9'   C0                    	RNZ
                                 ;UPDMARK -- WM 4898: after an edit, move the record marks that say which
                                 ;records must be written again.  Each mark only ever moves one way here:
                                 ;  OUTREC (TXTBEG/output side) is LOWERED to OUTPOS + the whole records from
@@ -1074,434 +1266,465 @@
                                 ;  records from GAPEND to TXTEND, when that is not lower (stored on no carry).
                                 ;CMP16 sets carry when DE < HL.  (The comment here used to say the opposite
                                 ;for both sides -- issue #37.)
-  05A4'                         UPDMARK:			; WM 4898
-  05A4'   C5                    	PUSH	B
-  05A5'   D5                    	PUSH	D
-  05A6'   E5                    	PUSH	H
-  05A7'   F5                    	PUSH	PSW
-  05A8'   21 0000*              	LXI	H,TXTBEG
-  05AB'   CD 05FD'              	CALL	PTRREC
-  05AE'   2A 0000*              	LHLD	OUTPOS
-  05B1'   19                    	DAD	D
-  05B2'   EB                    	XCHG
-  05B3'   2A 0000*              	LHLD	OUTREC
-  05B6'   CD 0000*              	CALL	CMP16
-  05B9'   EB                    	XCHG
-  05BA'   D2 05C0'              	JNC	UMKGAP
-  05BD'   22 0000*              	SHLD	OUTREC
-  05C0'                         UMKGAP:				 ; WM 4914 -- update the GAPEND-side marks
-  05C0'   21 0000*              	LXI	H,GAPEND
-  05C3'   CD 05FD'              	CALL	PTRREC
-  05C6'   CD 05EC'              	CALL	RECBASE
-  05C9'   CD 0000*              	CALL	SUBHD
-  05CC'   EB                    	XCHG
-  05CD'   2A 0000*              	LHLD	SRCREC
-  05D0'   CD 0000*              	CALL	CMP16
-  05D3'   EB                    	XCHG
-  05D4'   DA 05DA'              	JC	UMKBAK
-  05D7'   22 0000*              	SHLD	SRCREC
-  05DA'                         UMKBAK:				 ; WM 4926 -- lower BAKREC if needed
-  05DA'   EB                    	XCHG
-  05DB'   2A 0000*              	LHLD	BAKREC
-  05DE'   CD 0000*              	CALL	CMP16
-  05E1'   EB                    	XCHG
-  05E2'   DA 05E8'              	JC	UMKDON
-  05E5'   22 0000*              	SHLD	BAKREC
-  05E8'                         UMKDON:				 ; WM 4934
-  05E8'   F1                    	POP	PSW
-  05E9'   C3 0000*              	JMP	POPRET
+  06EA'                         UPDMARK:			; WM 4898
+  06EA'   C5                    	PUSH	B
+  06EB'   D5                    	PUSH	D
+  06EC'   E5                    	PUSH	H
+  06ED'   F5                    	PUSH	PSW
+  06EE'   21 0000*              	LXI	H,TXTBEG
+  06F1'   CD 0751'              	CALL	PTRREC
+  06F4'   2A 0000*              	LHLD	OUTPOS
+  06F7'   19                    	DAD	D
+  06F8'   EB                    	XCHG
+  06F9'   2A 0000*              	LHLD	SAMREC		; DEVIATION 8: the source holds the text only
+  06FC'   CD 0000*              	CALL	CMP16		;   up to the edit's record
+  06FF'   D2 0707'              	JNC	UMKSAM
+  0702'   EB                    	XCHG
+  0703'   22 0000*              	SHLD	SAMREC
+  0706'   EB                    	XCHG
+  0707'                         UMKSAM:
+  0707'   2A 0000*              	LHLD	OUTREC
+  070A'   CD 0000*              	CALL	CMP16
+  070D'   EB                    	XCHG
+  070E'   D2 0714'              	JNC	UMKGAP
+  0711'   22 0000*              	SHLD	OUTREC
+  0714'                         UMKGAP:				 ; WM 4914 -- update the GAPEND-side marks
+  0714'   21 0000*              	LXI	H,GAPEND
+  0717'   CD 0751'              	CALL	PTRREC
+  071A'   CD 0740'              	CALL	RECBASE
+  071D'   CD 0000*              	CALL	SUBHD
+  0720'   EB                    	XCHG
+  0721'   2A 0000*              	LHLD	SRCREC
+  0724'   CD 0000*              	CALL	CMP16
+	MACRO-80 3.44	09-Dec-81	PAGE	1-22
+
+
+  0727'   EB                    	XCHG
+  0728'   DA 072E'              	JC	UMKBAK
+  072B'   22 0000*              	SHLD	SRCREC
+  072E'                         UMKBAK:				 ; WM 4926 -- lower BAKREC if needed
+  072E'   EB                    	XCHG
+  072F'   2A 0000*              	LHLD	BAKREC
+  0732'   CD 0000*              	CALL	CMP16
+  0735'   EB                    	XCHG
+  0736'   DA 073C'              	JC	UMKDON
+  0739'   22 0000*              	SHLD	BAKREC
+  073C'                         UMKDON:				 ; WM 4934
+  073C'   F1                    	POP	PSW
+  073D'   C3 0000*              	JMP	POPRET
                                 
                                 ;RECBASE -- WM 4939: disk record base for the buffer (BAKPOS - source_rec + 7FFF).
                                 ;7EH is the source FCB's random-record word (FCB 005C + 22H).
-  05EC'                         RECBASE:			; WM 4939
-  05EC'   D5                    	PUSH	D
-  05ED'   2A 0000*              	LHLD	BAKPOS
-  05F0'   EB                    	XCHG
-  05F1'   2A 007E               	LHLD	7EH
-  05F4'   CD 0000*              	CALL	SUBHD
-	MACRO-80 3.44	09-Dec-81	PAGE	1-19
-
-
-  05F7'   11 7FFF               	LXI	D,7FFFH
-  05FA'   19                    	DAD	D
-  05FB'   D1                    	POP	D
-  05FC'   C9                    	RET
+  0740'                         RECBASE:			; WM 4939
+  0740'   D5                    	PUSH	D
+  0741'   2A 0000*              	LHLD	BAKPOS
+  0744'   EB                    	XCHG
+  0745'   2A 007E               	LHLD	7EH
+  0748'   CD 0000*              	CALL	SUBHD
+  074B'   11 7FFF               	LXI	D,7FFFH
+  074E'   19                    	DAD	D
+  074F'   D1                    	POP	D
+  0750'   C9                    	RET
                                 
                                 ;PTRREC -- WM 4951: DE = record number (128-byte) for the pointer pair at HL.
-  05FD'                         PTRREC:				; WM 4951
-  05FD'   CD 0000*              	CALL	PRSPAN
-  0600'   60                    	MOV	H,B
-  0601'   69                    	MOV	L,C
-  0602'   29                    	DAD	H
-  0603'   5C                    	MOV	E,H
-  0604'   16 00                 	MVI	D,0H
-  0606'   D2 060A'              	JNC	PTRRET
-  0609'   14                    	INR	D
-  060A'                         PTRRET:				 ; WM 4961
-  060A'   C9                    	RET
+  0751'                         PTRREC:				; WM 4951
+  0751'   CD 0000*              	CALL	PRSPAN
+  0754'   60                    	MOV	H,B
+  0755'   69                    	MOV	L,C
+  0756'   29                    	DAD	H
+  0757'   5C                    	MOV	E,H
+  0758'   16 00                 	MVI	D,0H
+  075A'   D2 075E'              	JNC	PTRRET
+  075D'   14                    	INR	D
+  075E'                         PTRRET:				 ; WM 4961
+  075E'   C9                    	RET
                                 
                                 ;SUBHA -- WM 2066: HL := HL - A.
-  060B'                         SUBHA:				; WM 2066
-  060B'   E5                    	PUSH	H
-  060C'   67                    	MOV	H,A
-  060D'   7D                    	MOV	A,L
-  060E'   94                    	SUB	H
-  060F'   E1                    	POP	H
-  0610'   6F                    	MOV	L,A
-  0611'   7C                    	MOV	A,H
-  0612'   DE 00                 	SBI	0H
-  0614'   67                    	MOV	H,A
-  0615'   C9                    	RET
+  075F'                         SUBHA:				; WM 2066
+  075F'   E5                    	PUSH	H
+  0760'   67                    	MOV	H,A
+  0761'   7D                    	MOV	A,L
+  0762'   94                    	SUB	H
+  0763'   E1                    	POP	H
+  0764'   6F                    	MOV	L,A
+  0765'   7C                    	MOV	A,H
+  0766'   DE 00                 	SBI	0H
+  0768'   67                    	MOV	H,A
+  0769'   C9                    	RET
                                 
                                 ;============================================================
                                 ; BDOS GLUE -- WM 5396-5424.
                                 ;============================================================
+	MACRO-80 3.44	09-Dec-81	PAGE	1-23
+
+
                                 
                                 ;BDOSFN -- WM 5396: set DMA=80H, then fall into BDOSC for the inline fn.
-  0616'                         BDOSFN:				; WM 5396
-  0616'   D5                    	PUSH	D
-  0617'   11 0080               	LXI	D,80H
-  061A'   CD 061F'              	CALL	BDOSC
-  061D'   1A                    	DB	1AH
-  061E'   D1                    	POP	D
+  076A'                         BDOSFN:				; WM 5396
+  076A'   D5                    	PUSH	D
+  076B'   11 0080               	LXI	D,80H
+  076E'   CD 0773'              	CALL	BDOSC
+  0771'   1A                    	DB	1AH
+  0772'   D1                    	POP	D
                                 ;BDOSC -- WM 5412: BDOS call with the fn number stored inline after the CALL.
-  061F'                         BDOSC:				; WM 5412
-  061F'   E3                    	XTHL
-  0620'   C5                    	PUSH	B
-  0621'   4E                    	MOV	C,M
-  0622'   23                    	INX	H
-  0623'   D5                    	PUSH	D
-  0624'   E5                    	PUSH	H
-  0625'   CD 0005               	CALL	5H
-  0628'   E1                    	POP	H
-  0629'   D1                    	POP	D
-  062A'   C1                    	POP	B
-  062B'   E3                    	XTHL
-  062C'   C9                    	RET
-	MACRO-80 3.44	09-Dec-81	PAGE	1-20
-
-
+  0773'                         BDOSC:				; WM 5412
+  0773'   E3                    	XTHL
+  0774'   C5                    	PUSH	B
+  0775'   4E                    	MOV	C,M
+  0776'   23                    	INX	H
+  0777'   D5                    	PUSH	D
+  0778'   E5                    	PUSH	H
+  0779'   CD 0005               	CALL	5H
+  077C'   E1                    	POP	H
+  077D'   D1                    	POP	D
+  077E'   C1                    	POP	B
+  077F'   E3                    	XTHL
+  0780'   C9                    	RET
                                 
                                 ;FATAL -- WM 5429 (deviation 2): share ERRMSG's tail.
-  062D'                         FATAL:				; WM 5429
-  062D'   C3 0000*              	JMP	ERRMSG
+  0781'                         FATAL:				; WM 5429
+  0781'   C3 0000*              	JMP	ERRMSG
                                 
                                 ;============================================================
                                 ; FILE PRIMITIVES -- WM 5436-5566.
                                 ;============================================================
                                 
                                 ;OPENF -- WM 5438: BDOS-open the FCB at DE, then zero its random-record bytes.
-  0630'                         OPENF:				; WM 5438
-  0630'   CD 0616'              	CALL	BDOSFN
-  0633'   0F                    	DB	0FH
-  0634'   3C                    	INR	A
-  0635'                         ZERORR:				; WM 5444 -- zero FCB+22H/+23H
-  0635'   E5                    	PUSH	H
-  0636'   21 0023               	LXI	H,23H
-  0639'   19                    	DAD	D
-  063A'   36 00                 	MVI	M,0H
-  063C'   2B                    	DCX	H
-  063D'   36 00                 	MVI	M,0H
-  063F'   E1                    	POP	H
-  0640'   C9                    	RET
+  0784'                         OPENF:				; WM 5438
+  0784'   CD 076A'              	CALL	BDOSFN
+  0787'   0F                    	DB	0FH
+  0788'   3C                    	INR	A
+  0789'                         ZERORR:				; WM 5444 -- zero FCB+22H/+23H
+  0789'   E5                    	PUSH	H
+  078A'   21 0023               	LXI	H,23H
+  078D'   19                    	DAD	D
+  078E'   36 00                 	MVI	M,0H
+  0790'   2B                    	DCX	H
+  0791'   36 00                 	MVI	M,0H
+  0793'   E1                    	POP	H
+  0794'   C9                    	RET
                                 
                                 ;CLSBAK/CLOSEC -- WM 5455/5459: close the FCB at DE if its open flag is set.
-  0641'                         CLSBAK:				; WM 5455
-  0641'   11 0000*              	LXI	D,BAKFCB
-  0644'                         CLOSEC:				; WM 5459
-  0644'   1B                    	DCX	D
-  0645'   1B                    	DCX	D
-  0646'   1A                    	LDAX	D
-  0647'   13                    	INX	D
-  0648'   13                    	INX	D
-  0649'   B7                    	ORA	A
-  064A'   C8                    	RZ
+  0795'                         CLSBAK:				; WM 5455
+  0795'   11 0000*              	LXI	D,BAKFCB
+  0798'                         CLOSEC:				; WM 5459
+  0798'   1B                    	DCX	D
+  0799'   1B                    	DCX	D
+  079A'   1A                    	LDAX	D
+  079B'   13                    	INX	D
+  079C'   13                    	INX	D
+  079D'   B7                    	ORA	A
+	MACRO-80 3.44	09-Dec-81	PAGE	1-24
+
+
+  079E'   C8                    	RZ
                                 ;CLOSEF -- WM 5469: BDOS-close the file; FATAL 'CLOSE ERR' on failure.
-  064B'                         CLOSEF:				; WM 5469
-  064B'   CD 0616'              	CALL	BDOSFN
-  064E'   10                    	DB	10H
-  064F'   3C                    	INR	A
-  0650'   C0                    	RNZ
-  0651'   CD 062D'              	CALL	FATAL
-  0654'   43 4C 4F 53           	DB	'CLOSE ERR',0H
-  0658'   45 20 45 52           
-  065C'   52 00                 
+  079F'                         CLOSEF:				; WM 5469
+  079F'   CD 076A'              	CALL	BDOSFN
+  07A2'   10                    	DB	10H
+  07A3'   3C                    	INR	A
+  07A4'   C0                    	RNZ
+  07A5'   CD 0781'              	CALL	FATAL
+  07A8'   43 4C 4F 53           	DB	'CLOSE ERR',0H
+  07AC'   45 20 45 52           
+  07B0'   52 00                 
                                 
                                 ;KILLBAK -- WM 5478: close then delete VIBACKUP$$$ (BAKFCB).
-  065E'                         KILLBAK:			; WM 5478
-  065E'   11 0000*              	LXI	D,BAKFCB
-  0661'   CD 0644'              	CALL	CLOSEC
+  07B2'                         KILLBAK:			; WM 5478
+  07B2'   11 0000*              	LXI	D,BAKFCB
+  07B5'   CD 0798'              	CALL	CLOSEC
                                 ;DELF -- WM 5483: BDOS-delete the file named by the FCB at DE.
-  0664'                         DELF:				; WM 5483
-  0664'   CD 0616'              	CALL	BDOSFN
-  0667'   13                    	DB	13H
-  0668'   1B                    	DCX	D
-  0669'   CD 06EF'              	CALL	IOEOF
-	MACRO-80 3.44	09-Dec-81	PAGE	1-21
-
-
-  066C'   13                    	INX	D
-  066D'   C3 06EF'              	JMP	IOEOF
+  07B8'                         DELF:				; WM 5483
+  07B8'   CD 076A'              	CALL	BDOSFN
+  07BB'   13                    	DB	13H
+  07BC'   1B                    	DCX	D
+  07BD'   CD 0843'              	CALL	IOEOF
+  07C0'   13                    	INX	D
+  07C1'   C3 0843'              	JMP	IOEOF
                                 
                                 ;DELRST -- WM 5492: delete the FCB's file, then ZERORR (prep a fresh file).
-  0670'                         DELRST:				; WM 5492
-  0670'   CD 0664'              	CALL	DELF
-  0673'   CD 0635'              	CALL	ZERORR
+  07C4'                         DELRST:				; WM 5492
+  07C4'   CD 07B8'              	CALL	DELF
+  07C7'   CD 0789'              	CALL	ZERORR
                                 ;MAKEF -- WM 5497: BDOS-create the file; FATAL 'DIRECTORY FULL' on failure.
-  0676'                         MAKEF:				; WM 5497
-  0676'   CD 0616'              	CALL	BDOSFN
-  0679'   16                    	DB	16H
-  067A'   3C                    	INR	A
-  067B'   C0                    	RNZ
-  067C'                         DIRFUL:				 ; WM 5503
-  067C'   CD 062D'              	CALL	FATAL
-  067F'   44 49 52 45           	DB	'DIRECTORY FULL',0H
-  0683'   43 54 4F 52           
-  0687'   59 20 46 55           
-  068B'   4C 4C 00              
+  07CA'                         MAKEF:				; WM 5497
+  07CA'   CD 076A'              	CALL	BDOSFN
+  07CD'   16                    	DB	16H
+  07CE'   3C                    	INR	A
+  07CF'   C0                    	RNZ
+  07D0'                         DIRFUL:				 ; WM 5503
+  07D0'   CD 0781'              	CALL	FATAL
+  07D3'   44 49 52 45           	DB	'DIRECTORY FULL',0H
+  07D7'   43 54 4F 52           
+  07DB'   59 20 46 55           
+  07DF'   4C 4C 00              
                                 
                                 ;RENAME -- WM 5534: rename the file on the FCB at DE to the 3-byte type at HL.
-  068E'                         RENAME:				; WM 5534
-  068E'   C5                    	PUSH	B
-  068F'   D5                    	PUSH	D
-  0690'   E5                    	PUSH	H
-  0691'   D5                    	PUSH	D
-  0692'   21 0010               	LXI	H,10H
-  0695'   19                    	DAD	D
-  0696'   01 0010               	LXI	B,10H
-  0699'   EB                    	XCHG
-  069A'   CD 0000*              	CALL	MEMCPY
-  069D'   36 00                 	MVI	M,0H
-  069F'   D1                    	POP	D
-  06A0'   21 0019               	LXI	H,19H
-  06A3'   19                    	DAD	D
-  06A4'   EB                    	XCHG
-  06A5'   E1                    	POP	H
-  06A6'   E5                    	PUSH	H
-  06A7'   CD 06CD'              	CALL	CPYTYP
-  06AA'   E1                    	POP	H
-  06AB'   D1                    	POP	D
-  06AC'   C1                    	POP	B
+  07E2'                         RENAME:				; WM 5534
+  07E2'   C5                    	PUSH	B
+  07E3'   D5                    	PUSH	D
+  07E4'   E5                    	PUSH	H
+  07E5'   D5                    	PUSH	D
+  07E6'   21 0010               	LXI	H,10H
+  07E9'   19                    	DAD	D
+  07EA'   01 0010               	LXI	B,10H
+  07ED'   EB                    	XCHG
+  07EE'   CD 0000*              	CALL	MEMCPY
+  07F1'   36 00                 	MVI	M,0H
+  07F3'   D1                    	POP	D
+  07F4'   21 0019               	LXI	H,19H
+	MACRO-80 3.44	09-Dec-81	PAGE	1-25
+
+
+  07F7'   19                    	DAD	D
+  07F8'   EB                    	XCHG
+  07F9'   E1                    	POP	H
+  07FA'   E5                    	PUSH	H
+  07FB'   CD 0821'              	CALL	CPYTYP
+  07FE'   E1                    	POP	H
+  07FF'   D1                    	POP	D
+  0800'   C1                    	POP	B
                                 ;RENF -- WM 5557: BDOS-rename; FATAL 'RENAME FAILURE' (CP/M-1 only) on failure.
-  06AD'                         RENF:				; WM 5557
-  06AD'   CD 0616'              	CALL	BDOSFN
-  06B0'   17                    	DB	17H
-  06B1'   3C                    	INR	A
-  06B2'   C0                    	RNZ
-  06B3'   3A 07E2'              	LDA	CPMNEW
-  06B6'   B7                    	ORA	A
-  06B7'   C0                    	RNZ
-  06B8'   CD 062D'              	CALL	FATAL
-  06BB'   52 45 4E 41           	DB	'RENAME FAILURE',0H
-  06BF'   4D 45 20 46           
-  06C3'   41 49 4C 55           
-  06C7'   52 45 00              
-	MACRO-80 3.44	09-Dec-81	PAGE	1-22
-
-
+  0801'                         RENF:				; WM 5557
+  0801'   CD 076A'              	CALL	BDOSFN
+  0804'   17                    	DB	17H
+  0805'   3C                    	INR	A
+  0806'   C0                    	RNZ
+  0807'   3A 094C'              	LDA	CPMNEW
+  080A'   B7                    	ORA	A
+  080B'   C0                    	RNZ
+  080C'   CD 0781'              	CALL	FATAL
+  080F'   52 45 4E 41           	DB	'RENAME FAILURE',0H
+  0813'   4D 45 20 46           
+  0817'   41 49 4C 55           
+  081B'   52 45 00              
                                 
                                 ;CPYBAK/CPYTYP -- WM 5178/5182: copy a 3-byte file type from [HL] to [DE].
-  06CA'                         CPYBAK:				; WM 5178
-  06CA'   21 07DF'              	LXI	H,BAKEXT
-  06CD'                         CPYTYP:				; WM 5182
-  06CD'   01 0003               	LXI	B,3H
-  06D0'   C3 0000*              	JMP	MEMCPY
+  081E'                         CPYBAK:				; WM 5178
+  081E'   21 0949'              	LXI	H,BAKEXT
+  0821'                         CPYTYP:				; WM 5182
+  0821'   01 0003               	LXI	B,3H
+  0824'   C3 0000*              	JMP	MEMCPY
                                 
                                 ;============================================================
                                 ; RANDOM-RECORD ENGINE -- WM 5568-5789.
                                 ;============================================================
                                 
                                 ;RDNEXT -- WM 5569: RDSEC, then advance the record number.
-  06D3'                         RDNEXT:				; WM 5569
-  06D3'   CD 06DE'              	CALL	RDSEC
-  06D6'   D4 074F'              	CNC	RECINC
-  06D9'   C9                    	RET
+  0827'                         RDNEXT:				; WM 5569
+  0827'   CD 0832'              	CALL	RDSEC
+  082A'   D4 08B9'              	CNC	RECINC
+  082D'   C9                    	RET
                                 
                                 ;RDPREV -- WM 5575: step the record number back, then RDSEC.
-  06DA'                         RDPREV:				; WM 5575
-  06DA'   CD 0756'              	CALL	RECDEC
-  06DD'   D8                    	RC
+  082E'                         RDPREV:				; WM 5575
+  082E'   CD 08C0'              	CALL	RECDEC
+  0831'   D8                    	RC
                                 ;RDSEC -- WM 5588: read one record into [HL] (CY on EOF).
-  06DE'                         RDSEC:				; WM 5588
-  06DE'   CD 0000*              	CALL	KBPOLL		; WM: CALL GETKEY
-  06E1'   AF                    	XRA	A
-  06E2'   CD 0781'              	CALL	SETREC
-  06E5'   DA 06EF'              	JC	IOEOF
-  06E8'   CD 061F'              	CALL	BDOSC
-  06EB'   14                    	DB	14H
-  06EC'   B7                    	ORA	A
-  06ED'   3D                    	DCR	A
-  06EE'   C0                    	RNZ
+  0832'                         RDSEC:				; WM 5588
+  0832'   CD 0000*              	CALL	KBPOLL		; WM: CALL GETKEY
+  0835'   AF                    	XRA	A
+  0836'   CD 08EB'              	CALL	SETREC
+  0839'   DA 0843'              	JC	IOEOF
+  083C'   CD 0773'              	CALL	BDOSC
+  083F'   14                    	DB	14H
+  0840'   B7                    	ORA	A
+  0841'   3D                    	DCR	A
+  0842'   C0                    	RNZ
                                 ;IOEOF -- WM 5600: mark an I/O read as EOF (zero count, set carry).
-  06EF'                         IOEOF:				; WM 5600
-  06EF'   1B                    	DCX	D
-  06F0'   AF                    	XRA	A
-  06F1'   12                    	STAX	D
-  06F2'   13                    	INX	D
-  06F3'   37                    	STC
-  06F4'   C9                    	RET
+	MACRO-80 3.44	09-Dec-81	PAGE	1-26
+
+
+  0843'                         IOEOF:				; WM 5600
+  0843'   1B                    	DCX	D
+  0844'   AF                    	XRA	A
+  0845'   12                    	STAX	D
+  0846'   13                    	INX	D
+  0847'   37                    	STC
+  0848'   C9                    	RET
                                 
                                 ;WRREC -- WM 5609: write one record with extent / DISK FULL handling.
-  06F5'                         WRREC:				; WM 5609
-  06F5'   E5                    	PUSH	H
-  06F6'   62                    	MOV	H,D
-  06F7'   6B                    	MOV	L,E
-  06F8'   2B                    	DCX	H
-  06F9'   2B                    	DCX	H
-  06FA'   7E                    	MOV	A,M
-  06FB'   B7                    	ORA	A
-  06FC'   CC 0670'              	CZ	DELRST
-  06FF'   36 FF                 	MVI	M,0FFH
-  0701'   3E FF                 	MVI	A,0FFH
-  0703'   32 0000*              	STA	WRKMAD		; APPENDED: a work file exists -> DISCRD must run
-  0706'   E1                    	POP	H
-	MACRO-80 3.44	09-Dec-81	PAGE	1-23
+  0849'                         WRREC:				; WM 5609
+  0849'   E5                    	PUSH	H
+  084A'   62                    	MOV	H,D
+  084B'   6B                    	MOV	L,E
+  084C'   2B                    	DCX	H
+  084D'   2B                    	DCX	H
+  084E'   7E                    	MOV	A,M
+  084F'   B7                    	ORA	A
+  0850'   CC 088D'              	CZ	WRMAKE		; DEVIATION 9: WM is CZ DELRST
+  0853'   36 FF                 	MVI	M,0FFH
+  0855'   3E FF                 	MVI	A,0FFH
+  0857'   32 0000*              	STA	WRKMAD		; APPENDED: a work file exists -> DISCRD must run
+  085A'   E1                    	POP	H
+  085B'   CD 08A3'              	CALL	WRSEC
+  085E'   C0                    	RNZ
+  085F'   F5                    	PUSH	PSW
+  0860'   E5                    	PUSH	H
+  0861'   21 0000*              	LXI	H,BAKFCB
+  0864'   CD 0000*              	CALL	CMP16
+  0867'   E1                    	POP	H
+  0868'   CA 087A'              	JZ	DSKFUL
+  086B'   3A 0000*              	LDA	BAKRDY
+  086E'   B7                    	ORA	A
+  086F'   D5                    	PUSH	D
+  0870'   CC 07B2'              	CZ	KILLBAK
+  0873'   D1                    	POP	D
+  0874'   F1                    	POP	PSW
+  0875'   CD 08A3'              	CALL	WRSEC
+  0878'   C0                    	RNZ
+  0879'   F5                    	PUSH	PSW
+  087A'                         DSKFUL:				 ; WM 5638 -- DISK FULL on a write error
+  087A'   F1                    	POP	PSW
+  087B'   FE 02                 	CPI	2H
+  087D'   C2 07D0'              	JNZ	DIRFUL
+  0880'   CD 0000*              DSKERR: CALL	ERRMSG
+  0883'   44 49 53 4B           	DB	'DISK FULL',0H
+  0887'   20 46 55 4C           
+  088B'   4C 00                 
+                                
+                                ;WRMAKE -- DEVIATION 9: DELRST (make the file afresh), keeping the record
+                                ;number DELRST zeroes: with deviation 8 the first record written need not
+                                ;be record 0.  Keeps every register but A.
+  088D'                         WRMAKE:
+  088D'   E5                    	PUSH	H
+  088E'   21 0022               	LXI	H,22H
+  0891'   19                    	DAD	D
+  0892'   E5                    	PUSH	H
+	MACRO-80 3.44	09-Dec-81	PAGE	1-27
 
 
-  0707'   CD 0739'              	CALL	WRSEC
-  070A'   C0                    	RNZ
-  070B'   F5                    	PUSH	PSW
-  070C'   E5                    	PUSH	H
-  070D'   21 0000*              	LXI	H,BAKFCB
-  0710'   CD 0000*              	CALL	CMP16
-  0713'   E1                    	POP	H
-  0714'   CA 0726'              	JZ	DSKFUL
-  0717'   3A 0000*              	LDA	BAKRDY
-  071A'   B7                    	ORA	A
-  071B'   D5                    	PUSH	D
-  071C'   CC 065E'              	CZ	KILLBAK
-  071F'   D1                    	POP	D
-  0720'   F1                    	POP	PSW
-  0721'   CD 0739'              	CALL	WRSEC
-  0724'   C0                    	RNZ
-  0725'   F5                    	PUSH	PSW
-  0726'                         DSKFUL:				 ; WM 5638 -- DISK FULL on a write error
-  0726'   F1                    	POP	PSW
-  0727'   FE 02                 	CPI	2H
-  0729'   C2 067C'              	JNZ	DIRFUL
-  072C'   CD 0000*              DSKERR: CALL	ERRMSG
-  072F'   44 49 53 4B           	DB	'DISK FULL',0H
-  0733'   20 46 55 4C           
-  0737'   4C 00                 
+  0893'   CD 0000*              	CALL	LDHLI
+  0896'   E3                    	XTHL			; [SP] = the record, HL = where it goes
+  0897'   CD 07C4'              	CALL	DELRST
+  089A'   E3                    	XTHL
+  089B'   EB                    	XCHG			; DE = the record, HL = the FCB
+  089C'   E3                    	XTHL
+  089D'   73                    	MOV	M,E
+  089E'   23                    	INX	H
+  089F'   72                    	MOV	M,D
+  08A0'   D1                    	POP	D
+  08A1'   E1                    	POP	H
+  08A2'   C9                    	RET
                                 
                                 ;WRSEC -- WM 5646: BDOS write-seq one record from [HL]; return disk status.
-  0739'                         WRSEC:				; WM 5646
-  0739'   CD 077F'              	CALL	SETRCW
-  073C'   CD 061F'              	CALL	BDOSC
-  073F'   15                    	DB	15H
-  0740'   FE 01                 	CPI	1H
-  0742'   C8                    	RZ
-  0743'   FE FF                 	CPI	0FFH
-  0745'   C8                    	RZ
-  0746'   FE 02                 	CPI	2H
-  0748'   C9                    	RET
+  08A3'                         WRSEC:				; WM 5646
+  08A3'   CD 08E9'              	CALL	SETRCW
+  08A6'   CD 0773'              	CALL	BDOSC
+  08A9'   15                    	DB	15H
+  08AA'   FE 01                 	CPI	1H
+  08AC'   C8                    	RZ
+  08AD'   FE FF                 	CPI	0FFH
+  08AF'   C8                    	RZ
+  08B0'   FE 02                 	CPI	2H
+  08B2'   C9                    	RET
                                 
                                 ;WRRECP -- WM 5674: poll ^C-break, then WRREC; WRRECA writes then advances.
-  0749'                         WRRECP:				; WM 5674
-  0749'   CD 07CE'              	CALL	POLLBRK
-  074C'                         WRRECA:				; WM 5678
-  074C'   CD 06F5'              	CALL	WRREC
+  08B3'                         WRRECP:				; WM 5674
+  08B3'   CD 0938'              	CALL	POLLBRK
+  08B6'                         WRRECA:				; WM 5678
+  08B6'   CD 0849'              	CALL	WRREC
                                 ;RECINC -- WM 5682: FCB random-record number += 1.
-  074F'                         RECINC:				; WM 5682
-  074F'   C5                    	PUSH	B
-  0750'   01 0001               	LXI	B,1H
-  0753'   C3 075A'              	JMP	RECADJ
+  08B9'                         RECINC:				; WM 5682
+  08B9'   C5                    	PUSH	B
+  08BA'   01 0001               	LXI	B,1H
+  08BD'   C3 08C4'              	JMP	RECADJ
                                 ;RECDEC -- WM 5688: FCB random-record number += -1.
-  0756'                         RECDEC:				; WM 5688
-  0756'   C5                    	PUSH	B
-  0757'   01 FFFF               	LXI	B,0FFFFH
-  075A'                         RECADJ:				 ; WM 5692 -- adjust FCB+22/23 by BC
-  075A'   D5                    	PUSH	D
-  075B'   E5                    	PUSH	H
-  075C'   1B                    	DCX	D
-	MACRO-80 3.44	09-Dec-81	PAGE	1-24
+  08C0'                         RECDEC:				; WM 5688
+  08C0'   C5                    	PUSH	B
+  08C1'   01 FFFF               	LXI	B,0FFFFH
+  08C4'                         RECADJ:				 ; WM 5692 -- adjust FCB+22/23 by BC
+  08C4'   D5                    	PUSH	D
+  08C5'   E5                    	PUSH	H
+  08C6'   1B                    	DCX	D
+  08C7'   3E FF                 	MVI	A,0FFH
+  08C9'   12                    	STAX	D
+  08CA'   21 0023               	LXI	H,23H
+  08CD'   19                    	DAD	D
+  08CE'   E5                    	PUSH	H
+  08CF'   CD 0000*              	CALL	LDHLI
+  08D2'   09                    	DAD	B
+  08D3'   7C                    	MOV	A,H
+  08D4'   A5                    	ANA	L
+  08D5'   3C                    	INR	A
+  08D6'   CA 08E2'              	JZ	RECWRP
+  08D9'   EB                    	XCHG
+  08DA'   E1                    	POP	H
+	MACRO-80 3.44	09-Dec-81	PAGE	1-28
 
 
-  075D'   3E FF                 	MVI	A,0FFH
-  075F'   12                    	STAX	D
-  0760'   21 0023               	LXI	H,23H
-  0763'   19                    	DAD	D
-  0764'   E5                    	PUSH	H
-  0765'   CD 0000*              	CALL	LDHLI
-  0768'   09                    	DAD	B
-  0769'   7C                    	MOV	A,H
-  076A'   A5                    	ANA	L
-  076B'   3C                    	INR	A
-  076C'   CA 0778'              	JZ	RECWRP
-  076F'   EB                    	XCHG
-  0770'   E1                    	POP	H
-  0771'   73                    	MOV	M,E
-  0772'   23                    	INX	H
-  0773'   72                    	MOV	M,D
-  0774'   B7                    	ORA	A
-  0775'   C3 0000*              	JMP	POPRET
-  0778'                         RECWRP:				 ; WM 5715 -- wrapped / overflow: flag EOF
-  0778'   AF                    	XRA	A
-  0779'   12                    	STAX	D
-  077A'   37                    	STC
-  077B'   E1                    	POP	H
-  077C'   C3 0000*              	JMP	POPRET
+  08DB'   73                    	MOV	M,E
+  08DC'   23                    	INX	H
+  08DD'   72                    	MOV	M,D
+  08DE'   B7                    	ORA	A
+  08DF'   C3 0000*              	JMP	POPRET
+  08E2'                         RECWRP:				 ; WM 5715 -- wrapped / overflow: flag EOF
+  08E2'   AF                    	XRA	A
+  08E3'   12                    	STAX	D
+  08E4'   37                    	STC
+  08E5'   E1                    	POP	H
+  08E6'   C3 0000*              	JMP	POPRET
                                 
                                 ;SETRCW/SETREC -- WM 5723/5733: prepare an FCB (DE) for the next record I/O.
-  077F'                         SETRCW:			       ; WM 5723
-  077F'   3E FF                 	MVI	A,0FFH
-  0781'                         SETREC:				; WM 5733
-  0781'   C5                    	PUSH	B
-  0782'   47                    	MOV	B,A
-  0783'   E5                    	PUSH	H
-  0784'   21 0022               	LXI	H,22H
-  0787'   19                    	DAD	D
-  0788'   CD 0000*              	CALL	LDHLI
-  078B'   7D                    	MOV	A,L
-  078C'   E6 7F                 	ANI	7FH
-  078E'   4F                    	MOV	C,A
-  078F'   29                    	DAD	H
-  0790'   7C                    	MOV	A,H
-  0791'   21 000C               	LXI	H,0CH
-  0794'   19                    	DAD	D
-  0795'   BE                    	CMP	M
-  0796'   CA 07BA'              	JZ	SETRCR
-  0799'   E5                    	PUSH	H
-  079A'   F5                    	PUSH	PSW
-  079B'   21 0021               	LXI	H,21H
-  079E'   19                    	DAD	D
-  079F'   7E                    	MOV	A,M
-  07A0'   B7                    	ORA	A
-  07A1'   C4 064B'              	CNZ	CLOSEF
-  07A4'   36 00                 	MVI	M,0H
-  07A6'   F1                    	POP	PSW
-  07A7'   E1                    	POP	H
-  07A8'   77                    	MOV	M,A
-  07A9'   CD 0616'              	CALL	BDOSFN
-	MACRO-80 3.44	09-Dec-81	PAGE	1-25
+  08E9'                         SETRCW:			       ; WM 5723
+  08E9'   3E FF                 	MVI	A,0FFH
+  08EB'                         SETREC:				; WM 5733
+  08EB'   C5                    	PUSH	B
+  08EC'   47                    	MOV	B,A
+  08ED'   E5                    	PUSH	H
+  08EE'   21 0022               	LXI	H,22H
+  08F1'   19                    	DAD	D
+  08F2'   CD 0000*              	CALL	LDHLI
+  08F5'   7D                    	MOV	A,L
+  08F6'   E6 7F                 	ANI	7FH
+  08F8'   4F                    	MOV	C,A
+  08F9'   29                    	DAD	H
+  08FA'   7C                    	MOV	A,H
+  08FB'   21 000C               	LXI	H,0CH
+  08FE'   19                    	DAD	D
+  08FF'   BE                    	CMP	M
+  0900'   CA 0924'              	JZ	SETRCR
+  0903'   E5                    	PUSH	H
+  0904'   F5                    	PUSH	PSW
+  0905'   21 0021               	LXI	H,21H
+  0908'   19                    	DAD	D
+  0909'   7E                    	MOV	A,M
+  090A'   B7                    	ORA	A
+  090B'   C4 079F'              	CNZ	CLOSEF
+  090E'   36 00                 	MVI	M,0H
+  0910'   F1                    	POP	PSW
+  0911'   E1                    	POP	H
+  0912'   77                    	MOV	M,A
+  0913'   CD 076A'              	CALL	BDOSFN
+  0916'   0F                    	DB	0FH
+  0917'   3C                    	INR	A
+  0918'   C2 0924'              	JNZ	SETRCR
+  091B'   78                    	MOV	A,B
+  091C'   B7                    	ORA	A
+  091D'   37                    	STC
+  091E'   CA 092D'              	JZ	SETDMA
+  0921'   CD 07CA'              	CALL	MAKEF
+  0924'                         SETRCR:				; WM 5771 -- extent already open: set CR + DMA
+  0924'   21 0020               	LXI	H,20H
+  0927'   19                    	DAD	D
+  0928'   71                    	MOV	M,C
+  0929'   23                    	INX	H
+	MACRO-80 3.44	09-Dec-81	PAGE	1-29
 
 
-  07AC'   0F                    	DB	0FH
-  07AD'   3C                    	INR	A
-  07AE'   C2 07BA'              	JNZ	SETRCR
-  07B1'   78                    	MOV	A,B
-  07B2'   B7                    	ORA	A
-  07B3'   37                    	STC
-  07B4'   CA 07C3'              	JZ	SETDMA
-  07B7'   CD 0676'              	CALL	MAKEF
-  07BA'                         SETRCR:				; WM 5771 -- extent already open: set CR + DMA
-  07BA'   21 0020               	LXI	H,20H
-  07BD'   19                    	DAD	D
-  07BE'   71                    	MOV	M,C
-  07BF'   23                    	INX	H
-  07C0'   7E                    	MOV	A,M
-  07C1'   B0                    	ORA	B
-  07C2'   77                    	MOV	M,A
-  07C3'                         SETDMA:				 ; WM 5780 -- set the DMA address (BDOS 1A)
-  07C3'   E1                    	POP	H
-  07C4'   F5                    	PUSH	PSW
-  07C5'   EB                    	XCHG
-  07C6'   CD 061F'              	CALL	BDOSC
-  07C9'   1A                    	DB	1AH
-  07CA'   EB                    	XCHG
-  07CB'   F1                    	POP	PSW
-  07CC'   C1                    	POP	B
-  07CD'   C9                    	RET
+  092A'   7E                    	MOV	A,M
+  092B'   B0                    	ORA	B
+  092C'   77                    	MOV	M,A
+  092D'                         SETDMA:				 ; WM 5780 -- set the DMA address (BDOS 1A)
+  092D'   E1                    	POP	H
+  092E'   F5                    	PUSH	PSW
+  092F'   EB                    	XCHG
+  0930'   CD 0773'              	CALL	BDOSC
+  0933'   1A                    	DB	1AH
+  0934'   EB                    	XCHG
+  0935'   F1                    	POP	PSW
+  0936'   C1                    	POP	B
+  0937'   C9                    	RET
                                 
                                 ;============================================================
                                 ; TYPE-AHEAD POLL -- WM 6199 (POLLBRK).
@@ -1510,11 +1733,11 @@
                                 ;9600 baud are queued, not lost.  WM's CALL GETKEY is KEY.MAC's KBPOLL (the
                                 ;ring lives there).  Only WM's non-interruptible path (L26A5 = 0) is kept;
                                 ;the ^C 'INTERRUPTED' path (L23E3/CKBRK) belongs to WM's command language.
-  07CE'                         POLLBRK:			; WM 6199
-  07CE'   F5                    	PUSH	PSW
-  07CF'   CD 0000*              	CALL	KBPOLL
-  07D2'   F1                    	POP	PSW
-  07D3'   C9                    	RET
+  0938'                         POLLBRK:			; WM 6199
+  0938'   F5                    	PUSH	PSW
+  0939'   CD 0000*              	CALL	KBPOLL
+  093C'   F1                    	POP	PSW
+  093D'   C9                    	RET
                                 
                                 ;============================================================
                                 ; DATA -- what the image carries: the two names and one flag.
@@ -1530,17 +1753,15 @@
                                 	EXTRN	SKREC, SKBYT, TOPLF, CLCNT, TFCB, WRLIM
                                 	EXTRN	RDLIM, BUFLO, BUFHI, PGSCAL, PGSCL2, MARGLO
                                 	EXTRN	PGMARGN, IOBATCH, PGSCRA, SPLCNT
+                                	EXTRN	SAMREC, SAVMOD, SRCFCB, SVFCNT	; deviation 8
                                 
-  07D4'   56 49 42 41           BAKNAM:	 DB	 'VIBACKUP$$$'	  ; WM 520 -- BAKFCB name (WM: WMBACKUP$$$)
-	MACRO-80 3.44	09-Dec-81	PAGE	1-26
-
-
-  07D8'   43 4B 55 50           
-  07DC'   24 24 24              
-  07DC'                         BAKTYP	EQU	BAKNAM+8	 ; the '$$$' substring (WM BAKTYP EQU 443H)
-  07DF'   42 41 4B              BAKEXT: DB	'BAK'		; WM 5245 -- the .BAK rename type
+  093E'   56 49 42 41           BAKNAM:	 DB	 'VIBACKUP$$$'	  ; WM 520 -- BAKFCB name (WM: WMBACKUP$$$)
+  0942'   43 4B 55 50           
+  0946'   24 24 24              
+  0946'                         BAKTYP	EQU	BAKNAM+8	 ; the '$$$' substring (WM BAKTYP EQU 443H)
+  0949'   42 41 4B              BAKEXT: DB	'BAK'		; WM 5245 -- the .BAK rename type
                                 
-  07E2'   FF                    CPMNEW: DB	0FFH		; nonzero = CP/M 2.x+ (tolerant rename)
+  094C'   FF                    CPMNEW: DB	0FFH		; nonzero = CP/M 2.x+ (tolerant rename)
                                 
                                 	END
 	MACRO-80 3.44	09-Dec-81	PAGE	S
@@ -1549,75 +1770,82 @@
 Macros:
 
 Symbols:
-0000*	AUXCNT          07DFI'	BAKEXT          070E*	BAKFCB          
-07D4'	BAKNAM          05EE*	BAKPOS          0718*	BAKRDY          
-05E6*	BAKREC          07DC'	BAKTYP          0005 	BDOS            
-061F'	BDOSC           0616'	BDOSFN          0425'	BFRLP           
-009D*	BINIT           0008 	BS              035F*	BUFEND          
-0418'	BUFFREE         03D2*	BUFHI           03E0*	BUFLO           
-041D*	BUFSUM          0475'	CKRDLIM         0465'	CKWRLIM         
-0204'	CLBYTS          0215*	CLCNT           03AF'	CLNEOF          
-039D'	CLNLP           039B'	CLNSEC          0644'	CLOSEC          
-064B'	CLOSEF          0641'	CLSBAK          0711*	CMP16           
-01B5I'	CNTLF           07E2'	CPMNEW          06CA'	CPYBAK          
-06CD'	CPYTYP          0664'	DELF            0670'	DELRST          
-04B5*	DIRFLG          067C'	DIRFUL          01A3I'	DISCRD          
-0417'	DISPKEY         072C'	DSKERR          0726'	DSKFUL          
-0000*	DSTDRV          001A 	EOF             072D*	ERRMSG          
-062D'	FATAL           033B'	FILLBF2         0355I'	FILLBUF         
-0364'	FILLRD          037F'	FILRET          0367'	FILRLP          
-0377'	FILRST          0374'	FILRSV          02D5'	FLUSHTX         
-02EA'	FLXLP           03F2'	FRECOK          03E7'	FREEREC         
-059D*	GAPBEG          05C1*	GAPEND          04FA*	INLEN           
-03B6I'	INRDY           04DA*	IOBATCH         06EF'	IOEOF           
-07D0*	KBPOLL          065E'	KILLBAK         0789*	LDHLI           
-0676'	MAKEF           04C2*	MARGLO          059BI'	MARKGB          
-06D1*	MEMCPY          03F5*	MEMERR          03F4'	MEMSHT          
-0491I'	MKROOM          03C1I'	MOREIN          0331'	NDIRSV          
-0313I'	NEEDIN          00AD*	NEWFIL          0630'	OPENF           
-0000I'	OPENFIL         009FI'	OPENZ           006D'	OPNEW           
-0070'	OPRD            0561*	OUTACT          057C*	OUTFCB          
-0450*	OUTHI           05AF*	OUTPOS          05BE*	OUTREC          
-0057*	OUTTYP          04F0'	PAGEBOT         0484I'	PAGEDIR         
-0283'	PAGEOUT         04A1I'	PAGEWIN         052F'	PBBAK           
-0554'	PBFIN           050D'	PBRDLM          0517'	PBSRC           
-0508'	PBSTEP          0547'	PBWBAK          0234'	PGCON1          
-0244'	PGCON2          0250'	PGCON3          021B'	PGCONST         
-0200 	PGINIT          0235*	PGMARGN         04C1'	PGNCMP          
-04B1'	PGNEED          0226*	PGSCAL          0263*	PGSCL2          
-024A*	PGSCRA          0590*	PGTOPM          02C1'	POADV           
-02A2'	POFRSH          02BE'	POHI            07CEI'	POLLBRK         
-077D*	POPRET          05FE*	PRSPAN          05FD'	PTRREC          
-060A'	PTRRET          02E8*	PUTCUR          0419*	PUTHOLE         
-0382'	RDIN            0477*	RDLIM           06D3'	RDNEXT          
-06DA'	RDPREV          06DE'	RDSEC           075A'	RECADJ          
-05EC'	RECBASE         0756'	RECDEC          074F'	RECINC          
-0778'	RECWRP          068EI'	RENAME          06AD'	RENF            
-0099I'	REOPEN          03CD'	RESVBF0         03D0'	RESVBUF         
-055DI'	REWIND          0597'	RWNDON          0574'	RWNLP           
-0598'	RWNRET          042CI'	SAVCLO          042F'	SAVLP           
-02F6*	SECBUF          00B2I'	SEEKTO          07C3'	SETDMA          
-07BA'	SETRCR          077F'	SETRCW          0781'	SETREC          
-00D2*	SKBYT           00B9'	SKLP            00E7'	SKMORE          
-00BE*	SKREC           04EC'	SPBDON          04E1'	SPBLP           
-0254'	SPILL           04D0'	SPILLB          025E*	SPLCNT          
+0000*	AUXCNT          0949I'	BAKEXT          0862*	BAKFCB          
+093E'	BAKNAM          0742*	BAKPOS          086C*	BAKRDY          
+073A*	BAKREC          0946'	BAKTYP          0005 	BDOS            
+0773'	BDOSC           076A'	BDOSFN          0482'	BFRLP           
+00BC*	BINIT           0008 	BS              0504*	BUFEND          
+0475'	BUFFREE         042F*	BUFHI           043D*	BUFLO           
+047A*	BUFSUM          058C'	CKRDLIM         057C'	CKWRLIM         
+0223'	CLBYTS          0234*	CLCNT           040C'	CLNEOF          
+03FA'	CLNLP           03F8'	CLNSEC          0798'	CLOSEC          
+079F'	CLOSEF          0795'	CLSBAK          0865*	CMP16           
+01D4I'	CNTLF           094C'	CPMNEW          081E'	CPYBAK          
+0821'	CPYTYP          07B8'	DELF            07C4'	DELRST          
+05CC*	DIRFLG          07D0'	DIRFUL          01C2I'	DISCRD          
+0474'	DISPKEY         0880'	DSKERR          087A'	DSKFUL          
+0000*	DSTDRV          001A 	EOF             0881*	ERRMSG          
+0781'	FATAL           0398'	FILLBF2         03B2I'	FILLBUF         
+03C1'	FILLRD          03DC'	FILRET          03C4'	FILRLP          
+03D4'	FILRST          03D1'	FILRSV          0332'	FLUSHTX         
+0347'	FLXLP           044F'	FRECOK          0444'	FREEREC         
+06E3*	GAPBEG          0715*	GAPEND          0611*	INLEN           
+0413I'	INRDY           05F1*	IOBATCH         0843'	IOEOF           
+093A*	KBPOLL          07B2'	KILLBAK         08F3*	LDHLI           
+07CA'	MAKEF           05D9*	MARGLO          06E1I'	MARKGB          
+0825*	MEMCPY          0452*	MEMERR          0451'	MEMSHT          
+05A8I'	MKROOM          041EI'	MOREIN          038E'	NDIRSV          
+0370I'	NEEDIN          00CC*	NEWFIL          0784'	OPENF           
+0000I'	OPENFIL         00BEI'	OPENZ           0085'	OPNEW           
+0088'	OPRD            007B'	OPSZ            0678*	OUTACT          
+06DC*	OUTFCB          04B7*	OUTHI           06F5*	OUTPOS          
+0712*	OUTREC          0057*	OUTTYP          0607'	PAGEBOT         
+059BI'	PAGEDIR         02A2'	PAGEOUT         05B8I'	PAGEWIN         
+0646'	PBBAK           066B'	PBFIN           0624'	PBRDLM          
+062E'	PBSRC           061F'	PBSTEP          065E'	PBWBAK          
+0253'	PGCON1          0263'	PGCON2          026F'	PGCON3          
+023A'	PGCONST         0200 	PGINIT          0254*	PGMARGN         
+05D8'	PGNCMP          05C8'	PGNEED          0245*	PGSCAL          
+0282*	PGSCL2          0269*	PGSCRA          06A7*	PGTOPM          
+02E9'	POADV           02CA'	POFRSH          02E6'	POHI            
+0938I'	POLLBRK         08E7*	POPRET          031D'	POSAM1          
+02FD'	POSAME          0327'	POSAVE          02D5'	POWHI           
+0752*	PRSPAN          0751'	PTRREC          075E'	PTRRET          
+0345*	PUTCUR          04FD*	PUTHOLE         03DF'	RDIN            
+058E*	RDLIM           0827'	RDNEXT          082E'	RDPREV          
+0832'	RDSEC           08C4'	RECADJ          0740'	RECBASE         
+08C0'	RECDEC          08B9'	RECINC          08E2'	RECWRP          
+07E2I'	RENAME          0801'	RENF            00B8I'	REOPEN          
+042A'	RESVBF0         042D'	RESVBUF         0674I'	REWIND          
+06AE'	RWNDON          068B'	RWNLP           06DA'	RWNOUT          
+06B2'	RWNREC          06AF'	RWNRET          0704*	SAMREC          
+0489I'	SAVCLO          048F'	SAVLP           04CF*	SAVMOD          
+0353*	SECBUF          00D1I'	SEEKTO          092D'	SETDMA          
+0924'	SETRCR          08E9'	SETRCW          08EB'	SETREC          
 	MACRO-80 3.44	09-Dec-81	PAGE	S-1
 
 
-027F'	SPLDON          0274'	SPLLP           0266'	SPLSUM          
-05D8*	SRCREC          02F3'	STAGSEC         02FF'	STGCPY          
-0308'	STGPAD          0421*	SUBCP2          060B'	SUBHA           
-05F5*	SUBHD           00FAI'	TEXIST          0198*	TFCB            
-01CF'	TLFADD          01F7'	TLFLP           01FF'	TLFNX           
-01F2'	TLFSEC          01EA'	TLFSTO          01DD'	TLFSUB          
-01EB*	TOPLF           05A9*	TXTBEG          055A*	TXTEND          
-05DA'	UMKBAK          05E8'	UMKDON          05C0'	UMKGAP          
-05A4I'	UPDMARK         0000 	WBOOT           0197'	WRCEND          
-017E'	WRCLP           0168'	WRCPY           0139'	WRDEL           
-0704*	WRKMAD          0467*	WRLIM           013C'	WRMOV           
-06F5'	WRREC           074C'	WRRECA          0749'	WRRECP          
-0739'	WRSEC           0103I'	WRTO            0125*	WRTYP           
-0635'	ZERORR          
+00F1*	SKBYT           00D8'	SKLP            0106'	SKMORE          
+00DD*	SKREC           0603'	SPBDON          05F8'	SPBLP           
+0273'	SPILL           05E7'	SPILLB          027D*	SPLCNT          
+029E'	SPLDON          0293'	SPLLP           0285'	SPLSUM          
+06CA*	SRCFCB          072C*	SRCREC          0350'	STAGSEC         
+035C'	STGCPY          0365'	STGPAD          047E*	SUBCP2          
+075F'	SUBHA           0749*	SUBHD           04CC'	SVBEG           
+04DF'	SVBN            0535*	SVFCNT          0522'	SVFFIT          
+052F'	SVFN            0550'	SVFOK           053B'	SVFRD           
+04E9'	SVFRNT          0565'	SVFWR           0119I'	TEXIST          
+01B7*	TFCB            01EE'	TLFADD          0216'	TLFLP           
+021E'	TLFNX           0211'	TLFSEC          0209'	TLFSTO          
+01FC'	TLFSUB          020A*	TOPLF           06EF*	TXTBEG          
+0671*	TXTEND          072E'	UMKBAK          073C'	UMKDON          
+0714'	UMKGAP          0707'	UMKSAM          06EAI'	UPDMARK         
+0000 	WBOOT           01B6'	WRCEND          019D'	WRCLP           
+0187'	WRCPY           0158'	WRDEL           0858*	WRKMAD          
+057E*	WRLIM           088D'	WRMAKE          015B'	WRMOV           
+0849'	WRREC           08B6'	WRRECA          08B3'	WRRECP          
+08A3'	WRSEC           0122I'	WRTO            0144*	WRTYP           
+0789'	ZERORR          
 
 
 

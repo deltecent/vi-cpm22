@@ -420,6 +420,13 @@ BAKPOS	EQU	BAKFCB+22H	; BAKFCB random-record word (RECBASE input base)
 	CELL	TOPLF,2		; the line feeds behind the window: in output
 				;   records 0 to OUTPOS-1 (TLFADD / TLFSUB)
 	CELL	CLCNT,2		; CNTLF: line feeds counted
+	CELL	SAMREC,2	; (deviation 8) records at the front of the file
+				;   that are still the source's own
+	CELL	SAVMOD,1	; (deviation 8) nonzero while SAVCLO saves
+	CELL	SVFCNT,2	; (deviation 8) the front records still to copy
+RZ	SET	RZ+1		; SRCFCB-1 : RECADJ / IOEOF's has-data flag
+	CELL	SRCFCB,36	; (deviation 8) the source, for the records
+				;   above the window
 RZ	SET	RZ+1		; TFCB-2 : WRREC/CLOSEC open flag (DELF clears)
 RZ	SET	RZ+1		; TFCB-1
 	CELL	TFCB,36		; WRTO / TEXIST: the target file

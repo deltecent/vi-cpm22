@@ -172,6 +172,32 @@ WordMaster. The engine changes only for a stated reason.
   Open of the next extent searches the 8 MB drive's directory, about 0.65 s
   in the simulator), which no program can break into, and a few loops in the
   editor's own code (`GOLINE`, `CNTLF`, `LFCNT`).
+- **Text the source still holds is not written out** (issue #34, part A).
+  WordMaster writes every record that leaves the window's top to
+  `name.$$$`, changed or not, because above the window it reads only from
+  there. `SAMREC` now counts the records at the front of the file that are
+  still the source's own. It is "all" at every open, and `UPDMARK` lowers it to
+  the first edit's record, beside `OUTREC`. `PAGEOUT` does not write such a
+  record. `REWIND` reads it back from the source, through a second FCB
+  (`SRCFCB`, a copy of the source's FCB as the open left it, so no directory
+  search). `SAVCLO` first copies the ones above the window into `name.$$$`
+  (`SVFRNT`), then writes the ones it passes from RAM (`SAVMOD`). A browse
+  writes nothing, and `:q!` after it deletes nothing. After a `:w` the pass
+  back to the cursor (`SEEKTO`) writes nothing either, since the file is the
+  source again. The price is the save after a browse, which used to find most
+  of the file written already. `WRREC` keeps the record number when it makes
+  the work file: WordMaster's `DELRST` zeroes it, which was harmless only while
+  the first record written was always record 0.
+  **The rule this rests on:** the text changes only through the five
+  primitives `PUTGAP`, `SETGAPB`, `DELTO`, `QCOPY` and `INSBLK`, and each one
+  calls `UPDMARK` at the first byte it changes. A change the mark missed would
+  be saved from the source, the old text, once its record has left the
+  window. New code that changes text must go through those five or call
+  `UPDMARK` itself. `accept_vi.py`'s `edit_front` edits line 1 with every
+  command, pages it away and saves it; with `UPDMARK` not lowering `SAMREC`,
+  every one of its cases fails. On the 100 K test file (TIMECOST.md) `G` from
+  the top went from 44.7 to 21.9 s and `6000G` from 20.1 to 9.9 s; `:w` after
+  `x` at the end went from 53.0 to 69.2 s, the price of copying the front.
 - `OPENFIL` wraps WordMaster's inline open sequence as a callable routine
   (`SAVEFIL`, in `PSV.MAC`, does the same for `ENDEDIT`). They keep one drive
   and user 0.

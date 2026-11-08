@@ -356,6 +356,131 @@ def insert_record_end(label, n):
             e.close()
 
 
+def unchanged_front(label, n):
+    """#34 part A: text still the same as the source is not written to the
+    work file.  A browse (`G`, `gg`) writes no work record at all (WRKMAD
+    stays clear, so `:q!` has nothing to delete), and the text above the
+    window comes back from the source.  The saves are the guard: the front
+    the source still holds is copied into the new file at `:w`, the records
+    passing through the window during the save are written from RAM, and
+    those already valid in the work file are skipped.  Each sequence below
+    takes a different one of those paths and must save byte for byte.
+
+    A source byte with bit 7 set is cleared as a load clears it, whether the
+    text came in by FILLBUF, came back from the source by REWIND, or was
+    copied at the save."""
+    if n < 5120:
+        return
+
+    def x_at(content, ln):
+        """*content* after `x` on the first char of line *ln*."""
+        t = sum(len(l) for l in content.split(b'\n')[:ln - 1]) + (ln - 1)
+        return content[:t] + content[t + 1:]
+
+    plain = make(n)
+    last = n
+    mid = n // 2
+    wide = b''.join(b'%06d' % i + b'x' * 72 + b'\r\n' for i in range(1, 513))
+    high = b''.join(bytes([0xC1]) + b'%05d' % i + b'\r\n' for i in range(1, n + 1))
+    masked = bytes(b & 0x7F for b in high)
+    # (tag, content, keys, the file :w must leave, browse check after keys[:k])
+    cases = [
+        ('G gg :w', plain, ['G', 'gg', ':w\r'], plain, 2),
+        (f'{mid}G x G gg :w', plain, [f'{mid}G', 'x', 'G', 'gg', ':w\r'],
+         x_at(plain, mid), 0),
+        (f'{mid}G x G :w', plain, [f'{mid}G', 'x', 'G', ':w\r'],
+         x_at(plain, mid), 0),
+        ('G x gg G :w', plain, ['G', 'x', 'gg', 'G', ':w\r'],
+         x_at(plain, last), 0),
+        ('x G gg :w', plain, ['x', 'G', 'gg', ':w\r'], x_at(plain, 1), 0),
+        (f'G {mid}G x :w', plain, ['G', f'{mid}G', 'x', ':w\r'],
+         x_at(plain, mid), 0),
+        (f':w G gg {mid}G x :w', plain,
+         [':w\r', 'G', 'gg', f'{mid}G', 'x', ':w\r'], x_at(plain, mid), 0),
+        ('80-byte lines, G gg :w', wide, ['G', 'gg', ':w\r'], wide, 2),
+        ('80-byte lines, 300G x G gg :w', wide,
+         ['300G', 'x', 'G', 'gg', ':w\r'], x_at(wide, 300), 0),
+        ('bit 7 set, G gg :w', high, ['G', 'gg', ':w\r'], masked, 2),
+    ]
+    for tag, content, keys, want, k in cases:
+        e = Editor(content)
+        try:
+            for i, key in enumerate(keys):
+                e.key(key)
+                if k and i + 1 == k:
+                    check(f'{label}: #34 {tag}: the browse wrote no work record',
+                          e.s.mem(SYM['WRKMAD'])[0] == 0)
+            got = saved_bytes(e)
+            bad = next((i for i in range(min(len(got), len(want)))
+                        if got[i] != want[i]), None)
+            check(f'{label}: #34 {tag} saved byte-exact'
+                  + ('' if got == want else
+                     f' (first difference at {bad}; {len(got)} bytes for '
+                     f'{len(want)})'), got == want)
+        finally:
+            e.close()
+
+
+def edit_front(label, n):
+    """#34 part A's guard: every way of changing the text marks the record it
+    changed (UPDMARK lowers SAMREC).  A change the mark missed would be saved
+    from the SOURCE once its record has left the window's top -- the old text,
+    silently.  So each command here edits line 1, then `G` moves the edit far
+    above the window, then `:w` must save it byte for byte.  Between them the
+    commands reach all five primitives that change text: PUTGAP (i o r R ~),
+    DELTO (x r R ~ and R's BS), SETGAPB (insert BS), QCOPY (dd) and INSBLK
+    (p), plus :s, J, '.', and u's redo."""
+    if n != 5120:
+        return
+    esc = '\x1b'
+    rest = make(n)
+    wide = b''.join(b'%06d' % i + b'x' * 72 + b'\r\n' for i in range(1, 513))
+    first = {rest: b'000001', wide: b'000001' + b'x' * 72}
+    cases = [                       # (tag, keys, line 1 after them)
+        ('x', ['x'], [b'bc']),
+        ('~', ['~'], [b'Abc']),
+        ('rX', ['rX'], [b'Xbc']),
+        ('RXY<Esc>', ['RXY', esc], [b'XYc']),
+        ('RXY<BS><Esc>', ['RXY\x08', esc], [b'Xbc']),
+        ('ihello<Esc>', ['ihello', esc], [b'helloabc']),
+        ('A<BS><Esc>', ['A\x08', esc], [b'ab']),
+        ('j I<BS><Esc> (joins)', ['j', 'I\x08', esc], None),
+        ('onew<Esc>', ['onew', esc], [b'abc', b'new']),
+        ('J', ['J'], None),
+        ('dd', ['dd'], []),
+        ('yyp', ['yy', 'p'], [b'abc', b'abc']),
+        (':s/b/QQ/', [':s/b/QQ/\r'], [b'aQQc']),
+        ('x.', ['x', '.'], [b'c']),
+        ('x u u (redo)', ['x', 'u', 'u'], [b'bc']),
+    ]
+    for body, kind in ((rest, '8-byte'), (wide, '80-byte')):
+        content = b'abc\r\n' + body
+        for tag, keys, top in cases:
+            if kind == '80-byte' and tag not in ('x', 'J', 'yyp', 'dd'):
+                continue
+            if tag.startswith('j I'):
+                want = b'abc' + body
+            elif tag == 'J':
+                want = b'abc ' + body
+            else:
+                want = b''.join(l + b'\r\n' for l in top) + body
+            e = Editor(content)
+            try:
+                for k in keys:
+                    send_keys(e, k)
+                e.key('G')
+                e.key(':w\r'); ex_settled(e)
+                got = saved_bytes(e)
+                bad = next((i for i in range(min(len(got), len(want)))
+                            if got[i] != want[i]), None)
+                check(f'{label}: #34 {kind} lines, {tag} on line 1, G, :w '
+                      f'saved byte-exact' + ('' if got == want else
+                      f' (first difference at {bad}; {len(got)} bytes for '
+                      f'{len(want)})'), got == want)
+            finally:
+                e.close()
+
+
 def arena_free(e):
     """The arena's free bytes, as BUFSUM adds them: the six holes of the
     pointer row (BUFBEG,QBEG) (QEND,HOLEQP) (TXTBAS,UBEG) (UEND,TXTBEG)
@@ -10462,7 +10587,7 @@ def disk_full():
         check('full :1,100w: the part written is not left behind',
               not listed(cpm_dir(e), 'N.TXT'))
 
-        fatal('paging (G)', ['G'])
+        fatal('paging (G)', ['x', 'G'])     # 'x': unchanged text is not written (#34)
         fatal(':w', ['x', ':w\r'])
         check('full: TEST.TXT is byte for byte what it was',
               disk(e, 'TEST.TXT') == content)
@@ -10480,6 +10605,8 @@ def main():
         if n >= 1:
             edit_deep(label, n)
             insert_record_end(label, n)
+            unchanged_front(label, n)
+            edit_front(label, n)
             yank_span_paging(label, n)
             window_edge_span(label, n)
             hl_x_deep(label, n)

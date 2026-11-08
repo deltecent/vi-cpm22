@@ -82,6 +82,8 @@ def fcbname(de):
         return "TEST.$$$"
     if de == SYM["BAKFCB"]:
         return "VIBACKUP.$$$"
+    if de == SYM.get("SRCFCB"):
+        return "TEST.TXT (front)"
     return "FCB %04XH" % de
 
 
@@ -200,6 +202,7 @@ class Probe:
             "bak_at": w("BAKFCB", 0x22), "bakpos": w("BAKPOS"),
             "bakrdy": self.byte("BAKRDY") != 0,
             "srcrec": w("SRCREC"), "bakrec": w("BAKREC"),
+            "samrec": w("SAMREC") if "SAMREC" in SYM else None,
             "pgtopm": w("PGTOPM"), "toplf": w("TOPLF"),
             "msg": self.bottom(),
         }
@@ -253,7 +256,7 @@ SCENARIOS = [
 
 FIELDS = ("resident", "before", "after", "gap", "abovetop", "line",
           "out_at", "outhi", "outrec", "src_at", "srcrdy", "bak_at", "bakpos",
-          "bakrdy", "srcrec", "bakrec", "pgtopm", "msg")
+          "bakrdy", "srcrec", "bakrec", "samrec", "pgtopm", "msg")
 
 
 def show_io(io):

@@ -45,6 +45,17 @@
 ;   7. MEMSHT calls BUF.MAC's MEMERR, not ERRMSG: running out of room ends
 ;      the key and leaves the editor up, as WM's prompt is left up (issue
 ;      #39; BUF.MAC's deviation 3).
+;   8. The unchanged front (issue #34, part A).  SAMREC counts the records at
+;      the front of the file that are still the source's own: FFFFH at every
+;      open, lowered by UPDMARK beside OUTREC.  PAGEOUT does not write such a
+;      record (it raises OUTREC past it instead), REWIND reads it back from the
+;      source through a second FCB, SRCFCB, and SAVCLO copies them into
+;      name.$$$ first (SVFRNT), then writes the ones the save passes from RAM
+;      (SAVMOD).  So moving through a file writes nothing until it is edited,
+;      and only from the first edit on.  See PAGEOUT, REWIND, SAVCLO.
+;   9. WRREC keeps the record number when it makes the work file.  WM's
+;      DELRST zeroes it, which is harmless while the first write is always
+;      record 0; with deviation 8 the first can be any record.
 ;
 ; APPENDED (not WM), tagged where each starts: REOPEN/SEEKTO/OPENZ (':w' keeps
 ; editing), TFCB/WRTO/TEXIST/DISCRD/CNTLF (':w name', ':e', a buffer with no
@@ -130,6 +141,16 @@ OPENFIL:
 	MVI	A,0FFH
 	JZ	OPNEW
 	STA	5BH		; source has data (input side live)
+	LXI	H,5CH		; DEVIATION 8: SRCFCB is the source FCB as the
+	LXI	D,SRCFCB	;   open left it, so reading the records above
+	LXI	B,20H		;   the window back costs no directory search.
+	CALL	MEMCPY		;   CP/M 2.2 keeps nothing of an open file
+	LXI	H,SRCFCB+20H	;   outside its FCB.  Record, and the 'written'
+	MVI	B,4H		;   byte SETREC reads, start at zero.
+OPSZ:	MVI	M,0H
+	INX	H
+	DCR	B
+	JNZ	OPSZ
 	JMP	OPRD
 OPNEW:				; source not found -> new file
 	STA	NEWFIL
@@ -139,6 +160,7 @@ OPRD:				; cold-start the pager state.  WM does this by
 	STA	OUTACT		 ;   2730): every deque mark -- OUTACT/OUTPOS/BAKPOS/
 	STA	INLEN		;   INLEN/OUTREC/SRCREC/BAKREC -- lives in that
 	STA	DIRFLG		;   region, so its true cold value is ZERO.  With
+	STA	SAVMOD		; (deviation 8) not saving
 	LXI	H,0H		;   the real UPDMARK maintaining them (below), no
 	SHLD	OUTREC		;   bias is needed: at cold OUTPOS=0 and UPDMARK
 	SHLD	SRCREC		;   lowers it on an edit; PAGEOUT raises it.
@@ -147,6 +169,8 @@ OPRD:				; cold-start the pager state.  WM does this by
 	SHLD	OUTPOS
 	SHLD	OUTHI		; (appended) name.$$$ holds no record yet
 	SHLD	TOPLF		; (appended) no line is behind the window yet
+	DCX	H		; DEVIATION 8: the source holds all of it
+	SHLD	SAMREC
 	CALL	FILLBUF		; WM 518 -- read the file into the buffer
 	RET
 
@@ -480,6 +504,11 @@ SPLDON:				 ; WM 4416
 	JMP	POPRET
 
 ;PAGEOUT -- WM 4439: spill one sector at TXTBEG to OUTFCB, bump TXTBEG.
+;DEVIATION 8: a record below SAMREC is the source's own and is not written;
+;OUTREC rises past it, so OUTREC still equals OUTPOS at every fresh write
+;(POFRSH adds one to OUTREC, not to OUTPOS).  OUTREC then means "valid in
+;name.$$$ or in the source".  While SAVCLO saves (SAVMOD), such a record IS
+;written, from RAM, and OUTREC is left alone.
 PAGEOUT:			; WM 4439
 	LHLD	TXTBEG
 	CALL	CKWRLIM
@@ -487,6 +516,9 @@ PAGEOUT:			; WM 4439
 	PUSH	H
 	LHLD	OUTPOS
 	XCHG
+	LHLD	SAMREC		; DEVIATION 8
+	CALL	CMP16		; CY iff OUTPOS < SAMREC
+	JC	POSAME
 	LHLD	OUTREC
 	CALL	CMP16
 	POP	H
@@ -500,7 +532,7 @@ POFRSH:				 ; WM 4454 -- write a fresh output record
 	LHLD	OUTREC
 	INX	H
 	SHLD	OUTREC
-	PUSH	D		; (appended) OUTHI follows the most records
+POWHI:	PUSH	D		; (appended) OUTHI follows the most records
 	LHLD	OUTHI		;   name.$$$ has ever held; OUTREC cannot
 	XCHG			;   say, an edit behind it brings it down
 	LHLD	OUTPOS
@@ -522,6 +554,30 @@ POADV:				; WM 4463 -- advance TXTBEG past the sector
 	SHLD	PGTOPM
 	POP	H
 	RET
+POSAME:				; DEVIATION 8: the source holds this record
+	LDA	SAVMOD
+	ORA	A
+	JNZ	POSAVE
+	LHLD	OUTREC
+	CALL	CMP16		; CY iff OUTPOS < OUTREC: counted already, as
+	JC	POSAM1		;   WM skips a record already written
+	INX	D
+	XCHG
+	SHLD	OUTREC		; OUTREC = OUTPOS+1
+	POP	H
+	LXI	D,OUTFCB
+	CALL	RECINC		; past it, unwritten -- and where WM would have
+	INR	B		;   written it, SPILL's batch counts it as WM's
+	JMP	POADV		;   does, so a first pass empties the window
+POSAM1:	POP	H
+	LXI	D,OUTFCB
+	CALL	RECINC
+	JMP	POADV
+POSAVE:	POP	H		; saving: write it from RAM
+	LXI	D,OUTFCB
+	CALL	WRRECP
+	XCHG
+	JMP	POWHI
 
 ;FLUSHTX -- WM 4471: collapse the gap and PAGEOUT every remaining sector.
 FLUSHTX:			; WM 4471
@@ -755,11 +811,15 @@ BFRLP:				; WM 4836
 ; SAVCLO -- WM 4846: flush all buffered text to OUTFCB and close it.
 ;============================================================
 SAVCLO:				; WM 4846
+	CALL	SVBEG		; DEVIATION 8: the source's front, counted
 	CALL	FILLBF2
 SAVLP:				; WM 4849 -- flush all, refill, repeat
 	CALL	FLUSHTX
+	CALL	SVFRNT		; DEVIATION 8: ... and copied, the first time
 	CALL	FILLBF2
 	JNC	SAVLP
+	XRA	A		; DEVIATION 8: the pass is over
+	STA	SAVMOD
 	LXI	H,TXTBEG
 	CALL	PRSPAN
 	CALL	LDHLI
@@ -777,6 +837,96 @@ SAVLP:				; WM 4849 -- flush all, refill, repeat
 	CALL	STAGSEC		;   end.  So a record of ^Z goes over the
 	CALL	WRRECP		;   first of them.  It is there already:
 	JMP	CLOSEF		;   this write cannot fill the disk.
+
+;SVBEG / SVFRNT -- DEVIATION 8: the records above the window that the source
+;still holds (0 to the lower of SAMREC and OUTPOS) are not in name.$$$.  SVBEG
+;counts them as the save begins (SVFCNT) and sets SAVMOD, so the save writes
+;the other records below SAMREC from RAM as it passes them; the records from
+;SAMREC to OUTPOS are in name.$$$ already.  SVFRNT, after the save's first
+;FLUSHTX has emptied the window, copies them from the source, bit 7 cleared
+;as a load clears it, through the free RAM above TXTEND: as many as it holds
+;are read, then written.  One record at a time, read and write alternate,
+;and the BIOS's deblocking makes each call about ten times dearer (0.37 s a
+;read, measured on the simulator's 8 MB drive).  The free RAM is at least the
+;0D80H a full register leaves.  OUTPOS, the save's place, is put back.
+SVBEG:
+	MVI	A,0FFH
+	STA	SAVMOD
+	LHLD	OUTPOS
+	XCHG
+	LHLD	SAMREC
+	CALL	CMP16		; CY iff OUTPOS < SAMREC
+	JNC	SVBN
+	XCHG
+SVBN:	SHLD	SVFCNT
+	LXI	H,0H
+	SHLD	SRCFCB+22H
+	RET
+SVFRNT:
+	LHLD	SVFCNT
+	MOV	A,H
+	ORA	L
+	RZ
+	LHLD	OUTPOS
+	PUSH	H
+	LHLD	SRCFCB+22H	; the next record: OUTPOS keeps pace with it
+	SHLD	OUTPOS
+	LXI	H,BUFEND	; all the free RAM above the text (FILLBF2's
+	CALL	PUTHOLE		;   BUFFREE does the same next)
+	LHLD	TXTEND
+	XCHG
+	LHLD	BUFEND
+	CALL	SUBHD		; HL = the free bytes above the text
+	DAD	H
+	MOV	C,H
+	MVI	B,0H		; BC = the records they hold
+	MOV	A,C
+	ORA	A
+	JNZ	SVFFIT
+	CALL	FATAL		; cannot happen (see above): stop, never loop
+	DB	'MEM SHORTAGE',0H
+SVFFIT:	LHLD	SVFCNT
+	MOV	D,B
+	MOV	E,C
+	CALL	CMP16		; CY iff they hold fewer than are left
+	JC	SVFN
+	MOV	B,H
+	MOV	C,L		; BC = this batch
+SVFN:	MOV	D,B
+	MOV	E,C
+	CALL	SUBHD		; HL = what is left after it
+	SHLD	SVFCNT
+	PUSH	B
+	LHLD	TXTEND
+SVFRD:	LXI	D,SRCFCB
+	CALL	RDNEXT
+	JNC	SVFOK
+	CALL	FATAL		; the source ends early: never save half of it
+	DB	'READ ERR',0H
+SVFOK:	PUSH	B
+	PUSH	H
+	CALL	CLNSEC
+	POP	H
+	POP	B
+	LXI	D,80H
+	DAD	D
+	DCX	B
+	MOV	A,B
+	ORA	C
+	JNZ	SVFRD
+	POP	B
+	LHLD	TXTEND
+SVFWR:	LXI	D,OUTFCB
+	CALL	WRRECP
+	LXI	D,80H
+	DAD	D
+	DCX	B
+	MOV	A,B
+	ORA	C
+	JNZ	SVFWR
+	POP	H
+	SHLD	OUTPOS
+	JMP	SVFRNT		; the next batch, if any
 
 ;CKWRLIM -- WM 4863: CY if GAPBEG is below the PAGEOUT write limit.
 CKWRLIM:			; WM 4863
@@ -977,7 +1127,7 @@ RWNLP:				; WM 4768 -- re-read one output record backward
 	LXI	D,0FF80H
 	DAD	D
 	LXI	D,OUTFCB
-	CALL	RDPREV
+	CALL	RWNREC		; DEVIATION 8: RDPREV, or from the source
 	JC	RWNDON
 	SHLD	TXTBEG
 	CALL	TLFSUB		; (appended) its line feeds are back in the
@@ -993,6 +1143,34 @@ RWNDON:				 ; WM 4779
 	ORA	A
 RWNRET:				 ; WM 4782
 	JMP	POPRET
+
+;RWNREC -- DEVIATION 8: RDPREV on OUTFCB (DE), except that a record below
+;SAMREC is the source's own, never written to name.$$$: it is read from the
+;source through SRCFCB and cleaned as FILLBUF cleans it.  HL = where.
+RWNREC:
+	CALL	RECDEC		; OUTPOS - 1
+	RC
+	PUSH	H
+	LHLD	OUTPOS
+	XCHG
+	LHLD	SAMREC
+	CALL	CMP16		; CY iff OUTPOS < SAMREC
+	XCHG
+	JNC	RWNOUT
+	SHLD	SRCFCB+22H
+	POP	H
+	LXI	D,SRCFCB
+	CALL	RDSEC
+	RC
+	PUSH	H
+	CALL	CLNSEC		; bit 7 off
+	POP	H
+	LXI	D,OUTFCB
+	ORA	A
+	RET
+RWNOUT:	POP	H
+	LXI	D,OUTFCB
+	JMP	RDSEC
 
 ;MARKGB -- WM 4886: UPDMARK only when HL points at GAPBEG (falls into UPDMARK).
 MARKGB:				; WM 4886
@@ -1020,6 +1198,13 @@ UPDMARK:			; WM 4898
 	LHLD	OUTPOS
 	DAD	D
 	XCHG
+	LHLD	SAMREC		; DEVIATION 8: the source holds the text only
+	CALL	CMP16		;   up to the edit's record
+	JNC	UMKSAM
+	XCHG
+	SHLD	SAMREC
+	XCHG
+UMKSAM:
 	LHLD	OUTREC
 	CALL	CMP16
 	XCHG
@@ -1266,7 +1451,7 @@ WRREC:				; WM 5609
 	DCX	H
 	MOV	A,M
 	ORA	A
-	CZ	DELRST
+	CZ	WRMAKE		; DEVIATION 9: WM is CZ DELRST
 	MVI	M,0FFH
 	MVI	A,0FFH
 	STA	WRKMAD		; APPENDED: a work file exists -> DISCRD must run
@@ -1294,6 +1479,27 @@ DSKFUL:				 ; WM 5638 -- DISK FULL on a write error
 	JNZ	DIRFUL
 DSKERR: CALL	ERRMSG
 	DB	'DISK FULL',0H
+
+;WRMAKE -- DEVIATION 9: DELRST (make the file afresh), keeping the record
+;number DELRST zeroes: with deviation 8 the first record written need not
+;be record 0.  Keeps every register but A.
+WRMAKE:
+	PUSH	H
+	LXI	H,22H
+	DAD	D
+	PUSH	H
+	CALL	LDHLI
+	XTHL			; [SP] = the record, HL = where it goes
+	CALL	DELRST
+	XTHL
+	XCHG			; DE = the record, HL = the FCB
+	XTHL
+	MOV	M,E
+	INX	H
+	MOV	M,D
+	POP	D
+	POP	H
+	RET
 
 ;WRSEC -- WM 5646: BDOS write-seq one record from [HL]; return disk status.
 WRSEC:				; WM 5646
@@ -1435,6 +1641,7 @@ POLLBRK:			; WM 6199
 	EXTRN	SKREC, SKBYT, TOPLF, CLCNT, TFCB, WRLIM
 	EXTRN	RDLIM, BUFLO, BUFHI, PGSCAL, PGSCL2, MARGLO
 	EXTRN	PGMARGN, IOBATCH, PGSCRA, SPLCNT
+	EXTRN	SAMREC, SAVMOD, SRCFCB, SVFCNT	; deviation 8
 
 BAKNAM:	 DB	 'VIBACKUP$$$'	  ; WM 520 -- BAKFCB name (WM: WMBACKUP$$$)
 BAKTYP	EQU	BAKNAM+8	 ; the '$$$' substring (WM BAKTYP EQU 443H)

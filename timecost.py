@@ -220,7 +220,7 @@ def memory():
                     + (word(e, SYM["TXTEND"]) - word(e, SYM["GAPEND"])))
 
         def work():
-            return (word(e, SYM["OUTFCB"] + 0x22) * 128,
+            return (word(e, SYM["OUTHI"]) * 128,     # held, not OUTPOS (#34)
                     word(e, SYM["BAKFCB"] + 0x22) * 128)
 
         base = word(e, SYM["TXTBAS"]) - 1

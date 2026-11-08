@@ -142,14 +142,18 @@ side.
 
 ## 6. The window onto the file
 
-`TXTBEG..TXTEND` is only a window. Text above `TXTBEG` has been spilled to the
-work file `name.$$$` (`OUTFCB`); text below `TXTEND` is still on the input side
-— the unread rest of the original file, plus `VIBACKUP.$$$` for anything
-`PAGEBOT` has pushed back down.
+`TXTBEG..TXTEND` is only a window. Text above `TXTBEG` is in the source file
+as far as it is still the source's own (the first `SAMREC` records; nothing
+before the first edit is written out), and from there on it has been spilled
+to the work file `name.$$$` (`OUTFCB`). Text below `TXTEND` is still on the
+input side — the unread rest of the original file, plus `VIBACKUP.$$$` for
+anything `PAGEBOT` has pushed back down.
 
 ```
-   spilled (above)        │   RAM window: R1 [gap] R2   │   input side (below)
-   name.$$$  (OUTFCB)     │   TXTBEG ......... TXTEND    │   the file + VIBACKUP.$$$
+   above the window       │   RAM window: R1 [gap] R2   │   input side (below)
+   the file (SRCFCB) up   │   TXTBEG ......... TXTEND    │   the file + VIBACKUP.$$$
+   to SAMREC, then        │                              │
+   name.$$$  (OUTFCB)     │                              │
         REWIND reads back ▲                              ▼ FILLBUF / NEEDIN read in
 ```
 
@@ -160,11 +164,13 @@ work file `name.$$$` (`OUTFCB`); text below `TXTEND` is still on the input side
 * `NEEDIN` pages in when a read (`RGET`) runs past `TXTEND`; `LINPOSB`/`PAGEWIN`
   page back when the renderer needs text above `TXTBEG`. `PGNEED`/`PAGEWIN` keep
   `PGMARGN` × 256 bytes of text resident on the active edge.
-* `UPDMARK` keeps three record marks (`OUTREC`, `SRCREC`, `BAKREC`) so the
-  pager can tell a record already on disk from one it must transfer. A record
-  still valid in a work file is not written again, and an unchanged record
-  below every edit goes back to the source without a transfer. An edit makes
-  the records after it invalid, and those are written again (`PAGING.md` §2).
+* `UPDMARK` keeps four record marks (`OUTREC`, `SAMREC`, `SRCREC`, `BAKREC`)
+  so the pager can tell a record already on disk from one it must transfer. A
+  record still valid in a work file is not written again, an unchanged record
+  above every edit is not written at all (`SAMREC`, VI's own), and an
+  unchanged record below every edit goes back to the source without a
+  transfer. An edit makes the records after it invalid, and those are written
+  again (`PAGING.md` §2).
 
 Paging moves `TXTBEG`, and with it every resident offset. `PAGE.MAC` counts
 those moves in `PGTOPM` — the only true "the window has paged" signature
