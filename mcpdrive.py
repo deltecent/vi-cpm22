@@ -196,8 +196,11 @@ class AltairSim:
                 self.logfile.write(text)
             self.last_output += text
 
-    def _run(self, input=None, from_pc=None, until=None, timeout_ms=None):
+    def _run(self, input=None, from_pc=None, until=None, timeout_ms=None,
+             max_steps=None):
         args = {"timeout_ms": timeout_ms or self.slice_ms}
+        if max_steps is not None:
+            args["max_steps"] = max_steps
         if input is not None:
             args["input"] = input
         if from_pc is not None:

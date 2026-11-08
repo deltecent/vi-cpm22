@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Build VI.DOC -- the editor's own terse manual -- for CP/M's TYPE.
 
-    python3 build_doc.py              write VI.DOC here
-    python3 build_doc.py --check      is VI.DOC the file this would write?
+    python3 build_doc.py              write VI.DOC here (and README's paragraph)
+    python3 build_doc.py --check      are they what this would write?
     python3 build_doc.py --disk       write it, then put it on the disk image
 
 VI.DOC is GENERATED.  Edit DOC below, never VI.DOC: a hand edit is silently
@@ -40,10 +40,16 @@ and every system has different memory.
 A figure this file cannot find is a refusal to write, like a line too wide;
 and because a new build or a new measurement changes what this would write,
 `--check` then says VI.DOC is stale until it is rebuilt.
+
+README.md's "Large files" opens with a paragraph that quotes TIMECOST.md
+too, so it is written here as well (README_LARGE), between two marker
+comments, and `--check` refuses a README whose paragraph is not the one this
+would write (#8).  The rest of README.md is edited by hand.
 """
 import os
 import re
 import sys
+import textwrap
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, "VI.DOC")
@@ -340,9 +346,12 @@ def figures():
         # QFIT refuses unless MORE than RESVMEM is left: BUF.MAC
         "resv": equate("RESVMEM") + 1,
         "undo": equate("UNDCAP"),
-        "OUTK": k(int(cell("TEST.$$$ after G from the top, nothing changed")
-                      .split()[0])),
-        "BAKK": k(int(cell("VIBACKUP.$$$ after G x gg").split()[0])),
+        # NAME.$$$ and VIBACKUP.$$$ together, at their height in a :w
+        "PEAKK": k(int(cell("work files at their largest, over G x gg :w")
+                       .split()[0])),
+        # what a run of 50 ^F sends, at 960 characters a second
+        "FPAINT": "%d s" % round(int(cell("50 ^F from the top, to line 1051",
+                                          1)) / 960),
         # the whole 100 K file, end to end
         "RATEK": k(102400 / (float(cell("G from the top")) or 1)),
     }
@@ -388,9 +397,11 @@ that has to page costs disk time, some big ones are refused, and some
 cannot be undone.  This section says which, and what to use instead.
 
 The times are for a 100 K file of 12800 short lines, on a 2 MHz 8080 and a
-9600-baud terminal.  They leave out the drive's head seeks and the wait
-for a sector to come round, so on a real drive every time over a second
-or two is LONGER than shown.  Nothing is drawn while a long command runs.
+9600-baud terminal, on a simulated drive with no head seeks and no wait
+for a sector to come round.  A model of an 8-inch floppy puts them within
+a few seconds of these if the BIOS reads a whole track at once, and at two
+to three times as long if it reads one sector at a time.  Nothing is
+drawn while a long command runs.
 The editor has not hung; the cursor comes back when it is done, and ESC
 stops a move or a search before then (see below).
 
@@ -440,9 +451,14 @@ Slow, because the file has to go through the window:
 {two('6000G from line 1', '6000G from the top', '100G from line 12000', '100G from line 12000')}
 {two('/text, 94 K further on', '/012000 from the top', '?text, 46 K back', '?000100 from line 6000')}
 {two('/text, wrapping round', '/000100 from line 6000 (wraps)', "'a, 46 K back", "'a to line 100 from line 6000")}
+{two('50 ^F from line 1', '50 ^F from the top, to line 1051', '1051G, the same line', '1051G from the top')}
+{two('50 ^B from line 6000', '50 ^B from line 6000, to line 4961', '4961G, the same line', '4961G from line 6000')}
 {two(':w', ':w, nothing changed')}   all of it, however little changed
 {two(':e! at line 6000', ':e! after x at line 6000')}   {t(':e! after x at the top')} at line 1
 {two(':%s/0/1/', ':%s/0/1/ (12800 lines)')}   every line; over 100 lines, {t(':6000,6100s/0/1/')}
+
+A screen at a time draws every screen on the way: {z['FPAINT']} of the {t('50 ^F from the top, to line 1051')} that
+50 ^F take is the terminal.  To go far, go by line number.
 
 ESC stops a move or a search -- G, gg, {{n}}G, 'a, `a, / ? n and N.  Within
 a second or two the bottom row says "Interrupting...", and when the
@@ -511,8 +527,9 @@ What to do instead:
     :6001,12800w B.TXT make two that each page half as far.
 
 Disk space.  The work files need room on the file's own drive.  On the
-100 K file NAME.$$$ reached {z['OUTK']} and VIBACKUP.$$$ {z['BAKK']}, besides the file
-and its .BAK, so allow twice the file's size free before you start.  If the
+100 K file, G, x on the last line, gg and :w had NAME.$$$ and VIBACKUP.$$$
+take {z['PEAKK']} between them at the height of the :w, besides the file and its
+.BAK, so allow twice the file's size free before you start.  If the
 drive fills while the editor is paging or writing, it stops with DISK
 FULL and the changes since the last :w are lost; the file on the disk
 is as that :w left it.
@@ -522,6 +539,40 @@ is as that :w left it.
                          "-- run `python3 timecost.py --write`:\n  "
                          + "\n  ".join(missing))
     return text.strip("\n"), z
+
+
+README = os.path.join(HERE, "README.md")
+README_BEGIN = ("<!-- build_doc.py writes this paragraph from TIMECOST.md; "
+                "edit README_LARGE there -->")
+README_END = "<!-- end of build_doc.py's paragraph -->"
+README_LARGE = """A 100 K file is edited through a window of the memory the system
+leaves free, and what a command costs depends on whether it has to page. A
+move inside the window is as quick as in a small file; on a 2 MHz 8080, `G`
+from the top of 100 K takes {G} and `:w` takes {W}, not counting the drive's
+seeks. Some big commands are refused rather than attempted (a `dd` or
+`yy` of more than the yank register holds), and a change of more than {UNDO}
+bytes cannot be undone. ESC stops a move or a search that is taking too long
+and puts the cursor back where it was."""
+
+
+def readme():
+    """README.md as it is, and as it would be with its paragraph written."""
+    t, z, missing = figures()
+    if missing:
+        raise ValueError("TIMECOST.md does not hold what README.md quotes "
+                         "-- run `python3 timecost.py --write`:\n  "
+                         + "\n  ".join(missing))
+    para = README_LARGE.format(G=t("G from the top"),
+                               W=t(":w, nothing changed"), UNDO=z["undo"])
+    para = textwrap.fill(" ".join(para.split()), 78)
+    with open(README, newline="") as f:
+        have = f.read()
+    a, b = have.find(README_BEGIN), have.find(README_END)
+    if a < 0 or b < a:
+        raise ValueError("README.md has lost the markers round its Large "
+                         f"files paragraph:\n  {README_BEGIN}\n  {README_END}")
+    return have, (have[:a] + README_BEGIN + "\n" + para + "\n"
+                  + have[b:])
 
 
 def render():
@@ -581,10 +632,16 @@ def main(argv):
     disk = "--disk" in argv
     try:
         lines, data = render()
+        rd_have, rd_want = readme()
     except ValueError as e:
         print(e, file=sys.stderr)
         return 1
     if check:
+        if rd_have != rd_want:
+            print("README.md's Large files paragraph is NOT what "
+                  "build_doc.py would write -- run `python3 build_doc.py`",
+                  file=sys.stderr)
+            return 1
         try:
             with open(OUT, "rb") as f:
                 have = f.read()
@@ -596,10 +653,15 @@ def main(argv):
                   f"({len(have)} bytes on disk, {len(data)} generated) -- "
                   "run `python3 build_doc.py`", file=sys.stderr)
             return 1
-        print(f"VI.DOC is up to date ({len(lines)} lines, {len(data)} bytes)")
+        print(f"VI.DOC is up to date ({len(lines)} lines, {len(data)} bytes)"
+              ", and README.md's Large files paragraph")
         return 0
     with open(OUT, "wb") as f:
         f.write(data)
+    if rd_have != rd_want:
+        with open(README, "w", newline="") as f:
+            f.write(rd_want)
+        print("README.md's Large files paragraph written")
     print(f"VI.DOC written: {len(lines)} lines, {len(data)} bytes, "
           f"{len(data) // RECORD} records, widest {max(len(l) for l in lines)}")
     if disk:

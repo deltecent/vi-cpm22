@@ -29,7 +29,7 @@ import re
 import shutil
 import sys
 
-from smoke_vi import Editor, SYM, rows, HERE, SIMDIR, TEMPLATE, WORK
+from smoke_vi import Editor, SYM, rows, HERE, SIMDIR, TEMPLATE, WORK, run_clock
 
 PROMPT = re.compile(r'[A-P][0-9]*>')
 
@@ -9851,13 +9851,10 @@ def tstates(e):
     return int(re.search(r'\((\d+) T-states\)', out).group(1))
 
 
-def run_for(e, seconds, step_ms=100):
-    """Let the guest run for *seconds* of its own clock, mid-command.  A step
-    of *step_ms* wall-clock milliseconds can run several guest seconds where
-    the guest reads the console rarely; a smaller step lands closer."""
-    until = tstates(e) + int(seconds * 2e6)
-    while tstates(e) < until:
-        e.s._run(timeout_ms=step_ms)
+def run_for(e, seconds):
+    """Let the guest run for *seconds* of its own clock, mid-command, to the
+    T-state (smoke_vi.run_clock; #46)."""
+    run_clock(e, seconds)
 
 
 def resp_lines(n):
@@ -10276,14 +10273,14 @@ def brk_cmds():
         e.s.send(f'{ln}G')
         idle(e)
 
-    def cancel(e, keys, ln, tag, after=4.0, ahead='', limit=30, step_ms=100):
+    def cancel(e, keys, ln, tag, after=4.0, ahead='', limit=30):
         """*keys* from line *ln*, 'ESC' *after* seconds into them."""
         v0 = e.screen()
         scr0 = [''.join(r) for r in v0.screen]
         idle(e)
         t0 = tstates(e)
         e.s.send(keys)
-        run_for(e, after, step_ms)
+        run_for(e, after)
         sent = len(e.cap.getvalue())
         e.s.send(ahead + '\x1b')
         idle(e)
@@ -10321,18 +10318,16 @@ def brk_cmds():
         idle(e)
         cancel(e, 'G', 6000, 'brk G')
         cancel(e, '12000G', 6000, 'brk 12000G')
-        # ('/' has come back in 27 to 31 s over many runs: the moment the ESC
-        #  lands is not exact.  Left alone it takes 37.)
-        cancel(e, '/zzzz\r', 6000, 'brk /', limit=45)
+        # (Each ESC lands at its T-state (#46), so these come back in the
+        #  same time on every run: '/' in 9.3 s.  Left alone it takes 37.)
+        cancel(e, '/zzzz\r', 6000, 'brk /')
         cancel(e, '?zzzz\r', 6000, 'brk ?')
         cancel(e, 'n', 6000, 'brk n')
         cancel(e, 'N', 6000, 'brk N')
         # ... in the pass AFTER the wrap, which reads the rest of the file
         # where it lies (#35): from 11.9 to 19.8 s into this one, measured
-        # with a breakpoint on SCAN and SC_END.  That pass reads the console
-        # rarely, so a 100 ms step of the clock would overshoot it.
-        cancel(e, '/zzzz\r', 6000, 'brk / wrapped', after=16.0, limit=45,
-               step_ms=5)
+        # with a breakpoint on SCAN and SC_END.
+        cancel(e, '/zzzz\r', 6000, 'brk / wrapped', after=16.0, limit=45)
         # the editor is whole afterwards: the same commands, left to finish
         e.s.send('/012000\r')
         idle(e)

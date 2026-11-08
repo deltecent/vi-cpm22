@@ -63,21 +63,23 @@ user manual as it reads under CP/M `TYPE`.
 
 ## Large files
 
-A 100 K file is edited through a window of at most 24 K, and what a command
-costs depends on whether it has to page. A move inside the window is as quick
-as in a small file; `G` from the top of 100 K takes 46 seconds and `:w` takes
-51, and a real drive adds its seeks to both. Some big commands are refused
-rather than attempted (a `dd` or `yy` of more than the 23 K the yank register
-holds), and a change of more than 1024 bytes cannot be undone. ESC stops a
-move or a search that is taking too long and puts the cursor back where it
-was.
+<!-- build_doc.py writes this paragraph from TIMECOST.md; edit README_LARGE there -->
+A 100 K file is edited through a window of the memory the system leaves free,
+and what a command costs depends on whether it has to page. A move inside the
+window is as quick as in a small file; on a 2 MHz 8080, `G` from the top of
+100 K takes 22 s and `:w` takes 53 s, not counting the drive's seeks. Some big
+commands are refused rather than attempted (a `dd` or `yy` of more than the
+yank register holds), and a change of more than 1024 bytes cannot be undone.
+ESC stops a move or a search that is taking too long and puts the cursor back
+where it was.
+<!-- end of build_doc.py's paragraph -->
 
-One limit is accepted and not refused: a single line of about 13,000
-characters or more is over half the memory. A put into such a line can land in
-the middle of it, and going to the end of one of 26,000 or more runs out of
-memory: the key stops, the yank register is emptied, the bottom row says "Out
-of memory: register emptied" and the text is kept. Lines that long are not
-what this editor is for, and a fix would slow the load of every file.
+One limit is accepted and not refused: a single line longer than half the
+memory the text has. A put into such a line can land in the middle of it, and
+going to the end of one longer than all of that memory runs out of memory:
+the key stops, the yank register is emptied, the bottom row says "Out of
+memory: register emptied" and the text is kept. Lines that long are not what
+this editor is for, and a fix would slow the load of every file.
 
 The **LARGE FILES** section of [`VI.DOC`](VI.DOC) says which commands are
 quick, which are slow, which refuse, and what to use instead — `d{n}G` for a

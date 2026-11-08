@@ -12,6 +12,10 @@ The seconds are the simulator's emulated clock (2 MHz 8080, 9600-baud console, t
 | `^F` at line 6000 | 0.4 | 274 |  |
 | `^B` at line 6000 | 0.5 | 275 |  |
 | `200j` at line 6000 | 1.7 | 298 |  |
+| 50 `^F` from the top, to line 1051 | 22.3 | 13700 | "TEST.TXT" |
+| `1051G` from the top | 1.9 | 298 |  |
+| 50 `^B` from line 6000, to line 4961 | 25.3 | 13750 |  |
+| `4961G` from line 6000 | 1.2 | 298 |  |
 | `G` from the top | 22.1 | 298 |  |
 | `gg` from the end | 1.7 | 296 |  |
 | `6000G` from the top | 10.0 | 298 |  |
@@ -19,12 +23,12 @@ The seconds are the simulator's emulated clock (2 MHz 8080, 9600-baud console, t
 | `5900G` from line 6000 | 0.8 | 298 |  |
 | `100G` from line 12000 | 1.9 | 298 |  |
 | `G` again, after `G` `gg` | 22.2 | 298 |  |
-| `gg` from the end, after `x` there | 52.0 | 296 |  |
+| `gg` from the end, after `x` there | 52.1 | 296 |  |
 | `'a` to line 100 from line 6000 | 1.5 | 298 |  |
 | `^G` at the end | 0.4 | 44 | "TEST.TXT" line 12800 col 1 |
 | `G` from the top, ESC 10 s into it | 11.8 | 52 | Interrupted |
 | `/zzzz` from line 6000, never found | 36.5 | 56 | Pattern not found: zzzz |
-| `/zzzz` from line 6000, ESC 10 s into it | 28.0 | 69 | Interrupted |
+| `/zzzz` from line 6000, ESC 10 s into it | 23.7 | 69 | Interrupted |
 | `/012000` from the top | 22.3 | 316 |  |
 | `/000100` from line 6000 (wraps) | 15.1 | 316 |  |
 | `?000100` from line 6000 | 13.6 | 316 |  |
@@ -75,7 +79,7 @@ The seconds are the simulator's emulated clock (2 MHz 8080, 9600-baud console, t
 | `:w` after `x` at line 6000 | 64.4 | 345 | "TEST.TXT" written |
 | `:w` after `x` at the end | 69.6 | 345 | "TEST.TXT" written |
 | `:e!` after `x` at the top | 3.1 | 336 | "TEST.TXT" |
-| `:e!` after `x` at line 6000 | 12.5 | 339 | "TEST.TXT" |
+| `:e!` after `x` at line 6000 | 12.6 | 339 | "TEST.TXT" |
 | `:6000,6100w T.TXT` (800 bytes) | 4.7 | 67 | "T.TXT" written |
 | `:6000,9000w T.TXT` (24 K) | 26.3 | 67 | "T.TXT" written |
 | `:r T.TXT` of 800 bytes, at line 3000 | 4.9 | 317 |  |
@@ -86,9 +90,10 @@ The seconds are the simulator's emulated clock (2 MHz 8080, 9600-baud console, t
 | | |
 |---|---|
 | BDOS entry, the word at 0006H | B606H |
-| arena, from the top of the program to the BDOS | 21606 bytes (619FH-B605H) |
+| arena, from the top of the program to the BDOS | 21551 bytes (61D6H-B605H) |
 | text in memory when the file is opened | 2048 bytes |
 | undo region, taken out of the arena | 1024 bytes |
 | text in memory after `6000G` `G` `6000G` `gg` `G` | 11776, 13056, 19200, 2048, 4736 bytes |
 | `TEST.$$$` after `G` from the top, nothing changed | 0 bytes |
 | `VIBACKUP.$$$` after `G` `x` `gg` | 86016 bytes |
+| work files at their largest, over `G` `x` `gg` `:w` | 188416 bytes (`TEST.$$$` 102400, `VIBACKUP.$$$` 86016), besides the file |

@@ -46,7 +46,7 @@ os.environ["VI_SIMDIR"] = SANDBOX
 os.environ.pop("VI_WORK", None)
 sys.path.insert(0, HERE)
 
-from smoke_vi import Editor, SYM                           # noqa: E402
+from smoke_vi import Editor, SYM, run_clock                # noqa: E402
 
 CLOCK_HZ = 2e6
 NLINES = 12800
@@ -58,6 +58,13 @@ ROWS = [
     ("Moving", "`^F` at line 6000", ["6000G"], ["\x06"]),
     ("Moving", "`^B` at line 6000", ["6000G"], ["\x02"]),
     ("Moving", "`200j` at line 6000", ["6000G"], ["200j"]),
+    # A run of screens that crosses the window (#8), and the jump to where
+    # it lands, for what paging by screens costs against a `{n}G`.
+    ("Moving", "50 `^F` from the top, to line 1051", [], ["\x06"] * 50),
+    ("Moving", "`1051G` from the top", [], ["1051G"]),
+    ("Moving", "50 `^B` from line 6000, to line 4961", ["6000G"],
+     ["\x02"] * 50),
+    ("Moving", "`4961G` from line 6000", ["6000G"], ["4961G"]),
     ("Moving", "`G` from the top", [], ["G"]),
     ("Moving", "`gg` from the end", ["G"], ["gg"]),
     ("Moving", "`6000G` from the top", [], ["6000G"]),
@@ -157,17 +164,10 @@ def settle(e, confirms=4, slices=20000):
     raise RuntimeError("the guest never came back to the keyboard")
 
 
-def run_for(e, seconds):
-    """Let the guest run for *seconds* of its own clock, mid-command."""
-    until = tstates(e) + int(seconds * CLOCK_HZ)
-    while tstates(e) < until:
-        e.s._run(timeout_ms=5)
-
-
 def type_(e, keys):
     for i, k in enumerate(keys):
         if isinstance(k, tuple):            # (seconds, key): typed that far
-            run_for(e, k[0])                #   into the command before it
+            run_clock(e, k[0])              #   into the command before it
             k = k[1]
         was = bottom(e) if k == ESC else None
         e.s.send(k)
@@ -210,6 +210,75 @@ def measure(setup, keys):
         e.close()
 
 
+def fcbfile(f):
+    """The 8.3 name an FCB's 36 bytes name, as 'NAME.TYP' (pagerprobe.py)."""
+    n = bytes(b & 0x7F for b in f[1:9]).decode().strip()
+    t = bytes(b & 0x7F for b in f[9:12]).decode().strip()
+    return n + "." + t
+
+
+def fcbrec(fn, f):
+    """The record a write names: the random record for 22H, else the
+    sequential position S2/EX/CR (pagerprobe.py)."""
+    if fn >= 0x21:
+        return f[33] | f[34] << 8 | f[35] << 16
+    return (f[14] & 0x3F) * 4096 + (f[12] & 0x1F) * 128 + f[32]
+
+
+SESSION = ["G", "x", "gg", ":w" + CR]
+
+
+def disk_peak():
+    """The most disk the work files take at once over SESSION, from the
+    editor's own BDOS calls: a breakpoint on each write, delete and rename.
+
+    A CP/M file is as long as the highest record written to it, and these
+    files do not shrink until they are deleted, so the sum is followed call
+    by call.  The peak is in `:w`, after the new text is whole in `NAME.$$$`
+    and before the old `.BAK` goes: the file, its `.BAK`, `NAME.$$$` and
+    `VIBACKUP.$$$` are all on the disk then.  Records, not blocks: the
+    allocation rounds each file up to the drive's block size."""
+    e = Editor(BIG)
+    size = {"TEST.TXT": (len(BIG) + 127) // 128}
+    start = sum(size.values())
+    peak, at = 0, {}
+    try:
+        def mon(c):
+            e.s._rpc("tools/call", {"name": "monitor",
+                                    "arguments": {"command": c}})
+        mon("BREAK 0005 IF C == 013 || C == 015 || C == 017 || C == 022")
+        for k in SESSION:
+            e.s.send(k)
+            idle = 0
+            while idle < 4:
+                r = e.s._run()
+                if r.get("stopped") == "breakpoint":
+                    idle = 0
+                    g = e.s._tool("regs")["registers"]
+                    f = e.s.mem(g["DE"], 36)
+                    name = fcbfile(f)
+                    if g["C"] == 0x13:
+                        size.pop(name, None)
+                    elif g["C"] == 0x17:
+                        size[fcbfile(f[16:])] = size.pop(name, 0)
+                    else:
+                        size[name] = max(size.get(name, 0),
+                                         fcbrec(g["C"], f) + 1)
+                    if sum(size.values()) - start > peak:
+                        peak = sum(size.values()) - start
+                        at = dict(size)
+                elif r.get("stopped") == "idle" and not r.get("output"):
+                    idle += 1
+                else:
+                    idle = 0
+        mon("NOBREAK")
+    finally:
+        e.close()
+    work = ", ".join("`%s` %d" % (n, at[n] * 128) for n in sorted(at)
+                     if n != "TEST.TXT")
+    return peak * 128, work
+
+
 def memory():
     """The arena and the work files, read out of the running editor."""
     out = []
@@ -246,6 +315,10 @@ def memory():
         out.append(("`VIBACKUP.$$$` after `G` `x` `gg`", "%d bytes" % work()[1]))
     finally:
         e.close()
+    peak, work_ = disk_peak()
+    out.append(("work files at their largest, over %s"
+                % " ".join("`%s`" % k.strip() for k in SESSION),
+                "%d bytes (%s), besides the file" % (peak, work_)))
     return out
 
 

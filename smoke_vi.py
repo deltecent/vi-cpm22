@@ -182,6 +182,27 @@ class Editor:
             return f.read()
 
 
+def run_clock(ed, seconds):
+    """Run the guest *seconds* of its own clock (2 MHz) on from here, in the
+    middle of a command, and stop at that T-state to within one instruction.
+
+    A run bounded by wall-clock milliseconds covers however much guest time
+    the host managed in them, so a key timed that way lands at a different
+    point of a long command on each run (#46).  This bounds each run by
+    instructions instead: no 8080 instruction takes more than 18 T-states,
+    so the T-states left over 18 can never carry the guest past the mark,
+    and each run closes most of what is left."""
+    left = int(seconds * 2e6)
+    stuck = 0
+    while left > 0:
+        r = ed.s._run(timeout_ms=60000, max_steps=max(left // 18, 1))
+        t = r.get("t_states", 0) or 0
+        left -= t
+        stuck = 0 if t else stuck + 1
+        if stuck > 100:
+            raise RuntimeError("the guest's clock does not move: %r" % r)
+
+
 def rows(ed, r=24, c=80):
     return ed.screen(r, c).render().split('\n')
 
