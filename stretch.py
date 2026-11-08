@@ -23,10 +23,10 @@ take a waiting key; but a long command sends nothing while it pages, so the
 long stretches are the ones that matter.
 
 With --profile, the run is also stopped every 20,000 instructions, and the
-PC of each stop is booked to the stretch it falls in, mapped to the nearest
-public in VI.SYM (or to the BDOS or BIOS).  Each stretch over the limit is
-then booked whole to the code most of its samples are in, and the line
-under the row gives, per owner, how many stretches and the longest.  A
+PC of each stop is booked to the stretch it falls in, mapped to the
+nearest label in the .PRN listings (or to the BDOS or BIOS).  Each stretch
+over the limit is then booked whole to the code most of its samples are
+in, and the line under the row gives, per owner, how many stretches and the longest.  A
 stretch owned by the BDOS or BIOS is one disk call: the editor cannot read
 the console in the middle of it.
 
@@ -64,6 +64,7 @@ os.environ.pop("VI_WORK", None)
 sys.path.insert(0, HERE)
 
 from smoke_vi import Editor, SYM                           # noqa: E402
+import covmap                                              # noqa: E402
 
 CLOCK_HZ = 2e6
 SAMPLE = 20000          # instructions between --profile samples
@@ -87,6 +88,8 @@ ROWS = [
     ("G again, after G gg", ["G", "gg"], ["G"]),
     ("100G from the end", ["G"], ["100G"]),
     (":w after x at the end", ["G", "x"], [":w" + CR]),
+    ("/zzzz from 6000, missed", ["6000G"], ["/zzzz" + CR]),
+    ("?000100 from 6000", ["6000G"], ["?000100" + CR]),
 ]
 
 
@@ -114,7 +117,13 @@ class Where:
     """PC -> the name of the code it is in."""
 
     def __init__(self, e):
-        pub = sorted((a, n) for n, a in SYM.items())
+        # Every label in the .PRN listings, not only the publics: a loop
+        # in a routine's private part is booked to its own label.
+        names = dict(SYM)
+        pub, img = covmap.publics(), covmap.image()
+        for m in covmap.MODS + ["RSV"]:
+            names.update(covmap.read_module(m, pub, img)[1])
+        pub = sorted((a, n) for n, a in names.items())
         self.addr = [a for a, _ in pub]
         self.name = [n for _, n in pub]
         m = e.s.mem(0, 8)

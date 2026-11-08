@@ -170,8 +170,19 @@ WordMaster. The engine changes only for a stated reason.
   `stretch.py` measures the time between console reads; after this change no
   stretch over 50 ms is in a copy. The long ones left are disk calls (a BDOS
   Open of the next extent searches the 8 MB drive's directory, about 0.65 s
-  in the simulator), which no program can break into, and a few loops in the
-  editor's own code (`GOLINE`, `CNTLF`, `LFCNT`).
+  in the simulator), which no program can break into.
+- **The editor's own long loops read the keyboard too** (issue #40). Four
+  loops of VI's own went up to half a second without a key. They now call
+  `KBPOLL` as they go:
+  - `CNTLF`'s count of the line feeds before the cursor, a whole window in
+    the worst case, every 256 bytes.
+  - `LFCNT`'s count of a span, every 256 bytes.
+  - `TLFSEC`, once a record. A window of records the source still holds
+    leaves with no disk call (part A of #34, below).
+  - `LNW`, once a line, as a layout measures the lines round the cursor.
+
+  `stretch.py` books each long stretch to the nearest label in the `.PRN`
+  listings, not just the nearest public. Its rows include `/` and `?`.
 - **Text the source still holds is not written out** (issue #34, part A).
   WordMaster writes every record that leaves the window's top to
   `name.$$$`, changed or not, because above the window it reads only from
@@ -670,9 +681,10 @@ Detail is in `RENDER.md`. The design decisions:
   `BIOSC`.
 - **Type-ahead ring**: 32 bytes, 31 usable. `KBPUMP` drains whatever the BIOS
   has waiting.
-  - The engine's long loops (`GOLINE`, `RDSEC`, `POLLBRK`, and the copy loops
-    `MEMCPY`/`MCPYR` every 2 K) call `KBPOLL`, so keys typed during a long
-    operation are kept rather than lost.
+  - The engine's long loops (`GOLINE`, `RDSEC`, `POLLBRK`, the copy loops
+    `MEMCPY`/`MCPYR` every 2 K, and VI's own counting and measuring loops,
+    #40) call `KBPOLL`, so keys typed during a long operation are kept rather
+    than lost.
   - The full repaint checks the ring between rows (`KBRDY`) and abandons the frame
     when a key is waiting. `FORCEF` makes the next frame a full one.
   - ESC abandons a search or a long move. Every loop that pages asks `CNTTST`

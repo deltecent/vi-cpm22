@@ -71,6 +71,7 @@
 	EXTRN	DCHN			; CMD.MAC -- cells an R_DCH deletes
 	EXTRN	DCHBS			; CMD.MAC -- 1 = left of the cursor
 	EXTRN	KBRDY			; KEY.MAC -- RPOLL: key waiting in the ring?
+	EXTRN	KBPOLL			; KEY.MAC -- take a waiting key (LNW, #40)
 	EXTRN	HTN, HTCUR		; CMD.MAC -- the row table: entries / cursor's
 	EXTRN	HTEOF, HTBOF		; ... and whether it reaches the file's ends
 	EXTRN	HTAB			; RSV.MAC -- the row table itself
@@ -2056,8 +2057,10 @@ G2P:
 
 ;LNW -- measure one line.  HL = its text, BC = the bytes there are: DE = its
 ; width in columns (tabs expanded), HL/BC past it.  CY when it ended with its
-; LF, NC when the bytes ran out first.
+; LF, NC when the bytes ran out first.  A layout measures a screenful or two
+; of lines, 80 ms of 80-byte ones: KBPOLL takes a key typed meanwhile (#40).
 LNW:
+	CALL	KBPOLL
 	LXI	D,0
 LNW_LP:
 	MOV	A,B

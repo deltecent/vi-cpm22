@@ -1663,22 +1663,28 @@ GTO_ST:
 	RET
 
 ;LFCNT -- DE = start, HL = end (>= start): DE = number of LFs in [start, end).
+;Clobbers BC.  KBPOLL every 256 bytes: a span can be the whole window (#40).
 LFCNT:
 	CALL	SUBHD		; HL = end - start
 	MOV	B,H
 	MOV	C,L		; BC = length
 	XCHG			; HL = start
 	LXI	D,0
+	INR	B
+	INR	C
+	JMP	LFC_CT
 LFC_LP:
-	MOV	A,B
-	ORA	C
-	RZ
 	MOV	A,M
 	INX	H
-	DCX	B
 	CPI	LF
-	JNZ	LFC_LP
+	JNZ	LFC_CT
 	INX	D
+LFC_CT:
+	DCR	C
+	JNZ	LFC_LP
+	DCR	B
+	RZ
+	CALL	KBPOLL		; 256 bytes counted
 	JMP	LFC_LP
 
 ;RDGET -- RGET, and CY also when a refill read nothing.  INRDY stays set after

@@ -491,7 +491,9 @@ CNTLF:
 	CALL	SUBHD
 	XCHG			; DE = the text before the gap
 	POP	H
+	PUSH	B
 	CALL	CLBYTS
+	POP	B
 	LHLD	CLCNT
 	RET
 
@@ -524,8 +526,11 @@ TLFSTO:
 	POP	PSW
 	RET
 
-;TLFSEC -- DE = the line feeds in the 128 bytes at HL.
+;TLFSEC -- DE = the line feeds in the 128 bytes at HL.  A window of records
+;the source still holds leaves with no disk call (DEVIATION 8), so this is
+;where a long slide takes a key typed meanwhile (#40).
 TLFSEC:
+	CALL	KBPOLL
 	LXI	D,0
 	MVI	B,80H
 TLFLP:
@@ -539,22 +544,32 @@ TLFNX:
 	JNZ	TLFLP
 	RET
 
-;CLBYTS -- HL = text, DE = its length: CLCNT += its line feeds.
+;CLBYTS -- HL = text, DE = its length: CLCNT += its line feeds.  A whole
+;window is some 23 K, half a second: KBPOLL every 256 bytes takes a key
+;typed meanwhile (#40), as the copy loops do.  Clobbers BC.
 CLBYTS:
-	MOV	A,D
-	ORA	E
-	RZ
-	MOV	A,M
-	INX	H
-	DCX	D
-	CPI	0AH
-	JNZ	CLBYTS
-	PUSH	H
+	MOV	B,D
+	MOV	C,E		; BC = the length
+	XCHG
 	LHLD	CLCNT
+	XCHG			; DE = the count, HL = the text
+	INR	B
+	INR	C
+	JMP	CLBCT
+CLBLP:	MOV	A,M
 	INX	H
+	CPI	0AH
+	JNZ	CLBCT
+	INX	D
+CLBCT:	DCR	C
+	JNZ	CLBLP
+	DCR	B
+	JZ	CLBEND
+	CALL	KBPOLL		; 256 bytes counted
+	JMP	CLBLP
+CLBEND:	XCHG
 	SHLD	CLCNT
-	POP	H
-	JMP	CLBYTS
+	RET
 
 ;============================================================
 ; PAGING CONSTANTS -- WM 412-447.  From A/H = high byte of BUFEND, derive the
