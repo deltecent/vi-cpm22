@@ -518,6 +518,14 @@ command can forget to record itself.
   then copies them with at most two `MEMCPY`s, the run before the gap and the
   run after it. That is safe because nothing it calls can move a region.
   `100dd` went from 1.2 s to 0.7 s.
+- The replay puts a record's bytes back a run at a time, as many as the gap
+  holds (issue #42), not a `PUTGAP` per byte. Room is made only when the gap is
+  empty, as `PUTGAP`'s `GAPRSV` makes it, so it pages exactly where a byte at a
+  time would. Making room can slide the undo region (a `dd` leaves the free
+  space just below it), so each run's source is found from `UBEG` again.
+  `UPDMARK` runs before and after, `LNDLT` takes the run's line ends from one
+  `LFCNT`, and the marks follow once through `EDTGO`, as they do for a put.
+  `u` after `100dd` went from 3.1 s to 0.8 s.
 - Reach is the resident window. `PGTOPM` counts how many times the pager moved
   `TXTBEG`, the only thing that shifts logical offsets. `OUTREC` and `SRCREC`
   are not a paging signature, because `UPDMARK` raises them on every edit.

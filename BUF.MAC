@@ -2352,35 +2352,83 @@ URS_DL:
 	POP	PSW
 	RET
 URS_IN:
-	;--- put the record's saved bytes back in at its offset ---
+	;--- put the record's saved bytes back in at its offset: a run at a
+	;    time, as many as the gap holds, not a PUTGAP a byte (#42: 800
+	;    bytes took 2.5 s, most of it UPDMARK and the marks' shift run
+	;    once per byte) ---
 	CALL	URGOTO
 	MVI	A,1
 	CALL	URLNQ
+	LHLD	UNDBO		; the line ends among them: the cursor crosses
+	XCHG			;   each one as it goes in, and GOTO keeps LNDLT
+	LHLD	UBEG		;   for every move the replay makes -- so the
+	DAD	D		;   renderer needs no whole-window rescan to
+	XCHG			;   find that out
 	LHLD	UNDLN
-	MOV	B,H
-	MOV	C,L
-	LHLD	UNDBO
+	DAD	D
+	CALL	LFCNT
+	LHLD	LNDLT
+	DAD	D
+	SHLD	LNDLT
+	CALL	UPDMARK		; the record the first byte lands in changes
+				;   (before the store, as PUTGAP and INSBLK do)
+	LXI	H,0
+	PUSH	H		; how many are in so far
 URSILP:
-	PUSH	B
+	POP	D
+	PUSH	D
+	LHLD	UNDLN
+	CALL	SUBHD		; HL = how many are still to go
+	MOV	A,H
+	ORA	L
+	JZ	URSIDN
 	PUSH	H
-	XCHG			; DE = the byte's offset within the region
-	LHLD	UBEG		; ... re-read every byte: inserting text can
-	DAD	D		;     slide the region out from under it
-	MOV	A,M
-	CALL	PUTGAP
-	CPI	LF
-	JNZ	URSILN
-	LHLD	LNDLT		; a line end put back is the cursor crossing
-	INX	H		;   one, and GOTO keeps LNDLT for every move the
-	SHLD	LNDLT		;   replay makes -- so the renderer needs no
-URSILN:				;   whole-window rescan to find that out
-	POP	H
-	POP	B
-	INX	H
-	DCX	B
+	LXI	H,GAPBEG
+	CALL	PRSPAN		; BC = the gap
 	MOV	A,B
 	ORA	C
-	JNZ	URSILP
+	CZ	MKGAPB		; room is made only when the gap is empty, as
+	LXI	H,GAPBEG	;   PUTGAP's GAPRSV makes it, so this pages
+	CALL	PRSPAN		;   exactly where a byte at a time would
+	POP	H		; HL = still to go, BC = the gap
+	MOV	D,B
+	MOV	E,C
+	CALL	CMP16		; CY iff the gap holds fewer
+	JC	URSIRN		; ... then a run of all the gap
+	MOV	B,H
+	MOV	C,L		; ... else a run of the rest
+URSIRN:
+	POP	H		; HL = how many are in
+	PUSH	H
+	DAD	B
+	XTHL			; (in after this run) stacked, HL = in before
+	XCHG
+	LHLD	UNDBO
+	DAD	D
+	XCHG
+	LHLD	UBEG		; re-read every run: making room can slide the
+	DAD	D		;   region out from under it
+	PUSH	H		; the source
+	LHLD	GAPBEG
+	PUSH	H
+	DAD	B
+	SHLD	GAPBEG		; the gap begins past the run
+	POP	D		; DE = where it goes
+	POP	H		; HL = the source
+	CALL	MEMCPY
+	JMP	URSILP
+URSIDN:
+	POP	H
+	CALL	UPDMARK		; (SETGAPB's, at the new GAPBEG)
+	LHLD	UNDLN		; the marks follow the run once, as they do a
+	MOV	B,H		;   put (UNDGET): the edit found from the
+	MOV	C,L		;   cursor, now past the bytes
+	CALL	CUROFF
+	MOV	D,B
+	MOV	E,C
+	CALL	SUBHD		; HL = where the bytes began
+	MVI	A,UR_INS
+	CALL	EDTGO
 	POP	PSW
 	RET
 

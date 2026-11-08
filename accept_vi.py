@@ -5507,6 +5507,73 @@ def undo_cmds():
               saved_bytes(e) == wide[:last] + wide[last + 1:])
     finally:
         e.close()
+    # --- #42: 'u' puts a record's bytes back a run at a time, as many as the
+    #     gap holds, not a PUTGAP per byte (800 bytes took 3.1 s, against the
+    #     0.7 s 'dd' that took them out).  After '100dd' the gap holds fewer
+    #     than the 800 bytes going back, so room is made between two runs and
+    #     that slides the undo region itself: the second run's bytes have to
+    #     be found where the region is NOW.  Both are asserted, not assumed.
+    #     Then the redo takes them out and a third 'u' puts them back again;
+    #     on the wide file a put of 12 lines (4 of them 200 columns) is
+    #     undone and redone, the redo putting its bytes back the same way ---
+    def took(e, k):
+        t0 = tstates(e)
+        e.s.send(k)
+        idle(e)
+        return (tstates(e) - t0) / 2e6
+    e = Editor(big)
+    try:
+        for k in ('6000G', '100dd'):
+            e.s.send(k); idle(e)
+        gap = word(e, 'GAPEND') - word(e, 'GAPBEG')
+        ub = word(e, 'UBEG')
+        s = took(e, 'u')
+        check(f"undo #42: the gap held fewer than 800 bytes ({gap}) and making "
+              f"room slid the region ({ub:04X} -> {word(e, 'UBEG'):04X})",
+              gap < 800 and word(e, 'UBEG') != ub)
+        check(f"undo #42: 'u' after 6000G 100dd puts 800 bytes back in "
+              f"{s:.2f} s (1.5 allowed)", s < 1.5)
+        v = e.screen(); r = rows(e)
+        check(f"undo #42: ... the cursor back on line 6000, column 0 "
+              f"({r[v.row][:6]!r}, {v.col})",
+              r[v.row].startswith('006000') and v.col == 0)
+        # the text as it is now, before a redo can take wrong bytes back out
+        # (a ':w' would clear the undo): '^L' paints it from the buffer
+        e.key('\x0c')
+        r = [x.rstrip() for x in rows(e)[:23]]
+        n0 = int(r[0]) if r[0].isdigit() else -99
+        check(f"undo #42: ... and the lines put back are the lines "
+              f"({r[0]!r}..{r[22]!r})",
+              r == ['%06d' % (n0 + i) for i in range(23)] and n0 <= 6000 < n0 + 23)
+        s = took(e, 'u')
+        check(f"undo #42: the redo takes them out again ({s:.2f} s, 1.5 allowed)",
+              s < 1.5)
+        s = took(e, 'u')
+        check(f"undo #42: ... and a third 'u' puts them back ({s:.2f} s, "
+              f"1.5 allowed)", s < 1.5)
+        e.key(':w\r'); ex_settled(e)
+        check('undo #42: ... and the file is the file, byte for byte',
+              saved_bytes(e) == big)
+    finally:
+        e.close()
+    wl = wide.split(b'\n')
+    a8, a5 = (sum(len(x) + 1 for x in wl[:n]) for n in (799, 499))
+    n12 = sum(len(x) + 1 for x in wl[499:511])
+    e = Editor(wide)
+    try:
+        for k in ('500G', '12yy', '800G', 'P'):
+            e.s.send(k); idle(e)
+        s = took(e, 'u')
+        check(f"undo #42 wide: 'u' takes a put of {n12} bytes back out "
+              f"({s:.2f} s, 2.5 allowed)", s < 2.5)
+        s = took(e, 'u')
+        check(f"undo #42 wide: the redo puts the {n12} bytes back "
+              f"({s:.2f} s, 2.5 allowed)", s < 2.5)
+        e.key(':w\r'); ex_settled(e)
+        check('undo #42 wide: ... and the file has the put, byte for byte',
+              saved_bytes(e) == wide[:a8] + wide[a5:a5 + n12] + wide[a8:])
+    finally:
+        e.close()
 
 
 # Rows the editor is deliberately NOT held to, both recorded as deviations in
