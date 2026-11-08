@@ -429,6 +429,78 @@ def yank_span_paging(label, n):
             e.close()
 
 
+def window_text(e):
+    """The text the window holds, in file order (either side of the gap)."""
+    tb, gb, ge, te = (word(e, r) for r in ('TXTBEG', 'GAPBEG', 'GAPEND',
+                                           'TXTEND'))
+    return bytes(e.s.mem(tb, gb - tb)) + bytes(e.s.mem(ge, te - ge))
+
+
+def line_at(lines, off):
+    """(1-based line, column) of file offset *off* in *lines* (CR LF ends)."""
+    at = 0
+    for i, x in enumerate(lines):
+        if off < at + len(x) + 2:
+            return i + 1, off - at
+        at += len(x) + 2
+    return len(lines) + 1, 0
+
+
+def window_edge_span(label, n):
+    """#38: a linewise operator whose far line runs past the window's end.
+    The window ends on a record, not a line, so the last line it holds is
+    cut short; the span used to be measured to the window's end (NLSTART
+    at LOGLEN), so 'd' left the rest of that line behind as a line of its
+    own and 'y' took a line with no end, which 'p' then ran into the next.
+    8-byte lines never show it -- 8 divides a record -- so these are 26-byte
+    lines and 130-byte ones (wider than the screen).  The cut is read from
+    the window, not written down, and asserted before the key.  The line the
+    cursor STARTS on is not covered: the pager keeps kilobytes resident past
+    the cursor, so only a line longer than that could be cut there, and
+    lines that long are not supported (#39)."""
+    if n < 12800:
+        return
+
+    def cut(e, lines):
+        """The line the window's end falls inside, and how far in."""
+        end = word(e, 'OUTPOS') * 128 + len(window_text(e))
+        return line_at(lines, end)
+
+    def saved(e, tag, lines):
+        e.s.run_until_quiet(quiet=1.5, timeout=240)
+        e.key(':w\r'); ex_settled(e)
+        got = saved_bytes(e)
+        want = b''.join(x + b'\r\n' for x in lines)
+        bad = next((i for i in range(min(len(got), len(want)))
+                    if got[i] != want[i]), None)
+        check(f'{label}: #38 {tag}: saved byte-exact' + (
+            '' if got == want else f' (first difference at {bad}; '
+            f'{len(got)} bytes for {len(want)})'), got == want)
+
+    for w, at in ((26, 500), (130, 100)):
+        content = b''.join(b'%06d ' % i + bytes(48 + j % 10
+                                                for j in range(w - 9))
+                           + b'\r\n' for i in range(1, n * 8 // w + 1))
+        for op in ('d', 'y'):
+            lines = content.split(b'\r\n')[:-1]
+            e = Editor(content)
+            try:
+                e.key(f'{at}G')
+                k, col = cut(e, lines)
+                tag = f'{at}G {op}{k}G, {w}-byte lines'
+                check(f'{label}: #38 {tag}: the window ends {col} bytes '
+                      f'into line {k}, below line {at}', 0 < col and k > at)
+                e.key(f'{op}{k}G')
+                if op == 'd':
+                    del lines[at - 1:k]
+                else:
+                    e.key('10G'); e.key('p')
+                    lines[10:10] = lines[at - 1:k]
+                saved(e, tag, lines)
+            finally:
+                e.close()
+
+
 def send_keys(e, k):
     """Type *k*.  After an ESC keep running until the editor is back in
     command mode.  Long text goes in 400-byte bursts."""
@@ -10291,6 +10363,7 @@ def main():
             edit_deep(label, n)
             insert_record_end(label, n)
             yank_span_paging(label, n)
+            window_edge_span(label, n)
             hl_x_deep(label, n)
             wide_tabs(label, n)
         insert_bs(label, n)

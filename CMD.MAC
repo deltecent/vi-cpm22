@@ -1845,6 +1845,21 @@ LNSTRT:
 	POP	H
 	JMP	PUTCUR
 
+;LNEND -- the cursor's line whole in the window: read on from the cursor to
+; its LF with WM's RGET, which pages in what the window does not hold yet.
+; The window ends on a record, not a line, so its last line is cut short, and
+; a measure that stops at the window's end (NLSTART at LOGLEN) takes a piece
+; of a line for the whole of it (issue #38).  The cursor stays where it is;
+; text behind it may page out, so an offset taken before this is stale.
+LNEND:
+	CALL	RGET0
+LNE_LP:
+	CALL	RDGET
+	RC			; the end of the file
+	CPI	LF
+	JNZ	LNE_LP
+	RET
+
 ;VC_CRT -- '^': first non-blank of the line (the count is ignored, as vim's).
 VC_CRT:
 	CALL	MOVCNT		; a cursor motion, and its count
@@ -3893,6 +3908,11 @@ OPP_GO:
 	ORA	A		;   mark that would not answer clears PSAVE.  The
 	JZ	SETMOV		;   span is empty then, and an empty LINEWISE span
 				;   still takes a whole line, so stop here instead
+	LDA	OPCLSV
+	CPI	2
+	CZ	LNEND		; a line motion: the line it landed on whole, or
+				;   the span ends inside it (#38).  It may page
+				;   the start out; OPSFIX asks next
 	CALL	OPSFIX		; where the start is in the window NOW
 	JNC	OPPGD		; ... and it is not: the motion paged it out
 	SHLD	OPSTA
