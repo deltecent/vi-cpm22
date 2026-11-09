@@ -5652,22 +5652,29 @@ def undo_cmds():
         e.s.send(k)
         idle(e)
         return (tstates(e) - t0) / 2e6
-    e = Editor(big)
-    try:
-        for k in ('6000G', '100dd'):
+    # How full the gap is after the 'dd' depends on the arena, which shrinks
+    # with the image, so the line is searched for from 6000 (at 23,168 bytes
+    # with RSVTOP 6255, 6000 leaves all 800 and 6060-6120 fewer)
+    for ln in range(6000, 6400, 15):
+        e = Editor(big)
+        for k in ('%dG' % ln, '100dd'):
             e.s.send(k); idle(e)
         gap = word(e, 'GAPEND') - word(e, 'GAPBEG')
+        if 0 < gap < 800:
+            break
+        e.close()
+    try:
         ub = word(e, 'UBEG')
         s = took(e, 'u')
         check(f"undo #42: the gap held fewer than 800 bytes ({gap}) and making "
               f"room slid the region ({ub:04X} -> {word(e, 'UBEG'):04X})",
               gap < 800 and word(e, 'UBEG') != ub)
-        check(f"undo #42: 'u' after 6000G 100dd puts 800 bytes back in "
+        check(f"undo #42: 'u' after {ln}G 100dd puts 800 bytes back in "
               f"{s:.2f} s (1.5 allowed)", s < 1.5)
         v = e.screen(); r = rows(e)
-        check(f"undo #42: ... the cursor back on line 6000, column 0 "
+        check(f"undo #42: ... the cursor back on line {ln}, column 0 "
               f"({r[v.row][:6]!r}, {v.col})",
-              r[v.row].startswith('006000') and v.col == 0)
+              r[v.row].startswith('%06d' % ln) and v.col == 0)
         # the text as it is now, before a redo can take wrong bytes back out
         # (a ':w' would clear the undo): '^L' paints it from the buffer
         e.key('\x0c')
@@ -5675,7 +5682,7 @@ def undo_cmds():
         n0 = int(r[0]) if r[0].isdigit() else -99
         check(f"undo #42: ... and the lines put back are the lines "
               f"({r[0]!r}..{r[22]!r})",
-              r == ['%06d' % (n0 + i) for i in range(23)] and n0 <= 6000 < n0 + 23)
+              r == ['%06d' % (n0 + i) for i in range(23)] and n0 <= ln < n0 + 23)
         s = took(e, 'u')
         check(f"undo #42: the redo takes them out again ({s:.2f} s, 1.5 allowed)",
               s < 1.5)
@@ -5720,7 +5727,7 @@ def undo_replay_pages():
     file the line is searched for: '{n}G' from line 1 for n = 3000, 3025 ...
     up to 7975, a fresh editor each, as many lines as the free room holds,
     until a 'dd' there does not page and leaves less room than it took (at
-    23,168 bytes with RSVTOP 61F2 nothing below 4000 does).  Where that is
+    23,168 bytes with RSVTOP 6255 the first is 4475).  Where that is
     depends on the arena, which shrinks with the image, so the pages (none in
     the 'dd', one in the 'u') are asserted, not assumed."""
     def free(e):
@@ -5756,9 +5763,6 @@ def undo_replay_pages():
         if not got:
             continue
         e, n, need = got
-        # the 8-byte line this arena finds (4425) lands 24 lines off: #48
-        held = check if name == 'wide' else \
-            (lambda label, cond: still_open(48, label, cond))
         try:
             top = word(e, 'PGTOPM')
             e.key('u')
@@ -5766,28 +5770,54 @@ def undo_replay_pages():
                   f"bytes back (PGTOPM {top} -> {word(e, 'PGTOPM')})",
                   word(e, 'PGTOPM') != top)
             v = e.screen(); r = rows(e)
-            held(f"undo #45 {name}: ... the cursor back on line {ln}, "
-                 f"column 0 ({r[v.row][:6]!r}, {v.col})",
-                 r[v.row].startswith('%06d' % ln) and v.col == 0)
+            check(f"undo #45 {name}: ... the cursor back on line {ln}, "
+                  f"column 0 ({r[v.row][:6]!r}, {v.col})",
+                  r[v.row].startswith('%06d' % ln) and v.col == 0)
             g = ctrlg(e)
-            held(f"undo #45 {name}: ... and '^G' says line {ln} ({g!r})",
-                 f' line {ln} ' in g + ' ')
+            check(f"undo #45 {name}: ... and '^G' says line {ln} ({g!r})",
+                  f' line {ln} ' in g + ' ')
             e.key(':w\r'); ex_settled(e)
             check(f'undo #45 {name}: ... and the file is the file, byte for byte',
                   saved_bytes(e) == text)
         finally:
             e.close()
-    # #48: at this arena '4500G 127dd u' puts the lines back 29 lines late,
-    # and 29 of the file's own lines come out in front of line 4500
+    # #48: putting the lines back in more than one step, where the first
+    # step's spill reaches down to the cursor and takes the next step's place
+    # off the window's top.  At 23,168 bytes (RSVTOP 61F2) '4500G 127dd u'
+    # put the lines back 29 lines late, with 29 of the file's own lines in
+    # front of line 4500, and 4425 and 4550 left the cursor 24-27 lines down.
+    # Which lines do it moves with the arena, so a stretch of them is swept.
+    # Where the 'dd' itself pages (its screen fill spills the top), 'u' is
+    # refused and says so, and the file is the 'dd''s; the sweep must still
+    # hold 'u's that page while they put the lines back.
     text = make(12800)
-    e = Editor(text)
-    try:
-        e.key('4500G'); e.key('127dd'); e.key('u')
-        e.key(':w\r'); ex_settled(e)
-        still_open(48, "undo 4500G 127dd u on 100 K: the file comes back "
-                   "byte for byte", saved_bytes(e) == text)
-    finally:
-        e.close()
+    L = text.split(b'\n')
+    paged = refused = 0
+    for ln in range(4400, 4601, 25):
+        e = Editor(text)
+        try:
+            e.key('%dG' % ln); e.key('127dd')
+            top = word(e, 'PGTOPM')
+            e.key('u')
+            msg = ''.join(e.screen().screen[23]).strip()
+            if msg == 'Cannot undo: change has paged out':
+                refused += 1
+                want = b'\n'.join(L[:ln - 1] + L[ln - 1 + 127:])
+                e.key(':w\r'); ex_settled(e)
+                check(f"undo #48 {ln}G 127dd u on 100 K: refused, and the "
+                      "file is the 'dd''s, byte for byte", saved_bytes(e) == want)
+                continue
+            paged += word(e, 'PGTOPM') != top
+            g = ctrlg(e)
+            check(f"undo #48 {ln}G 127dd u on 100 K: the cursor back on line "
+                  f"{ln} ({g!r})", f' line {ln} ' in g + ' ')
+            e.key(':w\r'); ex_settled(e)
+            check(f"undo #48 {ln}G 127dd u: ... and the file is the file, "
+                  "byte for byte", saved_bytes(e) == text)
+        finally:
+            e.close()
+    check(f"undo #48: some 'u's in the sweep paged to put the lines back "
+          f"({paged} paged, {refused} refused of 9)", paged > 0)
 
 # Rows the editor is deliberately NOT held to, both recorded as deviations in
 # COMMANDS.md rather than worked around here:

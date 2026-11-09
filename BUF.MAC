@@ -121,6 +121,7 @@ RESVMEM EQU	0D80H		; WM 25: the arena QROOM keeps free past
 ;--- The disk seam, in PAGE.MAC.  MKGAP calls MKROOM; CKLOW
 ;    calls REWIND; INSBLK calls MARKGB and SETGAPB/DELTO call UPDMARK. ----------
 	EXTRN	MKROOM, REWIND, UPDMARK, MARKGB
+	EXTRN	SPILL			; PAGE.MAC -- WM 4386 (URROOM: the top only)
 	EXTRN	PAGEDIR			; PAGE.MAC -- page one step (PAGESTP falls in)
 	EXTRN	CNTTST			; CMD.MAC  -- count-exhausted test (PAGESTP)
 
@@ -1943,9 +1944,9 @@ UNDRST:
 ;UNDPCO: the same place, measured from the top as it is now (OUTPOS).  A page
 ;off the top moves every offset down 128 bytes a record.  A place that has
 ;itself gone above the top cannot be reached: 0, the top.  Clobbers DE.
-;The replay pages only when a step putting bytes back finds no room, and the
-;steps before it leave the room their change freed: in every change tried
-;that step was the replay's last, and only the cursor came after it (#45).
+;The replay pages in URROOM, before its first step, from the lowest place any
+;step uses (#48); a step pages only when the window's top had too little to
+;give.  Either way the cursor's offset comes through here (#45).
 UNDSHF:
 	PUSH	H
 	LHLD	OUTPOS
@@ -2254,6 +2255,11 @@ UND_OK:
 	SHLD	UNDPCO		;   bytes going back can need room the window
 				;   has not got (#45), and every offset read
 				;   from here on goes through UNDSHF
+	LDA	UNDST		; the type of record that puts bytes back: an
+	CMA			;   undo (UNDST 1) inverts a delete (UR_DEL
+	ADI	4		;   2), a redo (2) applies an insert (UR_INS
+	STA	UNDTY		;   1) -- 3 - UNDST
+	CALL	URROOM
 	MVI	A,0FFH
 	STA	UNDML		; (no step taken yet)
 	XRA	A
@@ -2450,6 +2456,72 @@ URSIDN:
 	MVI	A,UR_INS
 	CALL	EDTGO
 	POP	PSW
+	RET
+
+;URROOM -- UNDTY = the record type that puts bytes back.  The room the
+;replay needs, made before its first step, with the cursor at the lowest place
+;any step uses or the cursor goes back to (#48).  Making room spills records
+;off the window's top, as far down as the cursor less a margin (CKWRLIM).
+;Made in the middle of a step, the cursor has gone on into the bytes going
+;back, and the spill can take the place where the NEXT step puts its bytes:
+;'127dd u' puts the lines back as two runs at one place, and the second went
+;in at the window's top, 29 lines late, with 29 of the file's lines in front
+;of it.  From the lowest place, nothing any step reaches can go.  With 256
+;bytes over what goes back, no step's MKGAP pages (it pages only with less
+;than that free).  When the top has too little to give, the steps make the
+;rest as they did.  UNDTY, UNDOF and UNDCL are free until the first step.
+URROOM:
+	LHLD	UNDCUR
+	SHLD	UNDOF		; the lowest place so far
+	LXI	B,0		; the bytes going back, so far
+	LDA	UNDN
+URRLP:
+	DCR	A
+	JM	URRGO
+	PUSH	PSW
+	CALL	URADDR
+	LDA	UNDTY
+	CMP	M		; Z iff this record's bytes go back
+	INX	H
+	MOV	E,M
+	INX	H
+	MOV	D,M		; DE = its offset
+	INX	H
+	JNZ	URR_LO
+	MOV	A,M
+	INX	H
+	MOV	H,M
+	MOV	L,A
+	DAD	B
+	MOV	B,H
+	MOV	C,L		; ... and its length is counted
+URR_LO:
+	LHLD	UNDOF
+	CALL	CMP16		; CY iff this offset is lower
+	JNC	URR_NX
+	XCHG
+	SHLD	UNDOF
+URR_NX:
+	POP	PSW
+	JMP	URRLP
+URRGO:
+	MOV	A,B
+	ORA	C
+	RZ			; nothing goes back: no room wanted
+	INR	B		; ... and 256 more
+URRSP:
+	MOV	H,B
+	MOV	L,C
+	CALL	BUFSUM		; DE = the arena's free bytes
+	CALL	CMP16		; CY iff less than that
+	RNC			; (the common case: no page, no cursor move)
+	LHLD	UNDOF
+	CALL	UNDSHF		; (moved by the spill before, from the second
+	PUSH	B		;   time round; GOTO keeps LNDLT, as every move
+	CALL	GOTO		;   the replay makes does, and spends BC)
+	POP	B
+	CALL	SPILL
+	JNC	URRSP
 	RET
 
 ;URGOTO -- the cursor to the record's offset.  The line the first step is on

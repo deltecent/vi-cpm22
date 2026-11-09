@@ -77,6 +77,7 @@ PGINIT	EQU	200H		; WM 20 -- cold WRLIM/RDLIM (no-spill window)
 	PUBLIC	FILLBUF, SAVCLO
 ;--- the disk seam BUF.MAC reaches -----------------------------------------
 	PUBLIC	MKROOM, REWIND, UPDMARK, MARKGB
+	PUBLIC	SPILL		; WM 4386 -- 'u' makes its room (BUF.MAC URROOM)
 ;--- scroll/search paging drivers (BUF.MAC's PAGESTP / SCRLST reach them)
 	PUBLIC	PAGEDIR, PAGEWIN
 	PUBLIC	POLLBRK		; break poll (CNTTST tail-calls it)

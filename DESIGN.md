@@ -541,9 +541,17 @@ command can forget to record itself.
   them all down 128 bytes a record. `UNDSHF` re-bases one by how far `OUTPOS`
   has moved: from the snapshot to the first capture (issue #43, a `dd` that
   spills before it takes the line), and from the start of `u` to each step and
-  to the cursor (issue #45, a `u` that has no room for the bytes it puts back
-  and spills in the middle of the replay). A `u` that pages leaves the change
-  out of reach of the next `u`, as any other page does.
+  to the cursor (issue #45, a `u` that has no room for the bytes it puts back).
+  But a place that has gone above the top cannot be re-based, and a spill
+  runs down to the cursor, less a margin. Made in the middle of a step, with
+  the cursor already in the bytes going back, it took the place the next step
+  needed: `127dd u` puts the lines back as two runs at one place, and the
+  second went in at the window's top, 29 lines late (issue #48). So `URROOM`
+  makes the room before the first step, from the lowest place any step uses
+  or the cursor goes back to, with 256 bytes over what goes back, so no step
+  pages. Only when the top has too little to give does a step page as before.
+  A `u` that pages leaves the change out of reach of the next `u`, as any
+  other page does.
 - The marks go back with the text. `MKSHFT` hears every edit before `UNDCHG`
   claims the change, so the first edit of a new change (`UNDNEW` still set)
   copies the marks to `MKUND` in the reserve block, and `u` copies back the
