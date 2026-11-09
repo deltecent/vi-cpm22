@@ -5717,9 +5717,10 @@ def undo_replay_pages():
     cursor's offset was measured from the top as it was.  'u' must still land
     on the line the 'dd' began on, column 0, as vim does (it landed 31 lines
     down).  On the wide file '500G 12dd' is the issue's case.  On the 8-byte
-    file the line is searched for: '{n}G' from line 1 for n = 3000, 3025 ...,
-    a fresh editor each, as many lines as the free room holds, until a 'dd'
-    there does not page and leaves less room than it took.  Where that is
+    file the line is searched for: '{n}G' from line 1 for n = 3000, 3025 ...
+    up to 7975, a fresh editor each, as many lines as the free room holds,
+    until a 'dd' there does not page and leaves less room than it took (at
+    23,168 bytes with RSVTOP 61F2 nothing below 4000 does).  Where that is
     depends on the arena, which shrinks with the image, so the pages (none in
     the 'dd', one in the 'u') are asserted, not assumed."""
     def free(e):
@@ -5745,7 +5746,7 @@ def undo_replay_pages():
         return None
     for name, text, lines, n in (('wide', make_wide(), [500], 12),
                                  ('8-byte', make(12800),
-                                  range(3000, 4000, 25), 0)):
+                                  range(3000, 8000, 25), 0)):
         for ln in lines:
             got = setup(text, ln, n)
             if got:
@@ -5755,6 +5756,9 @@ def undo_replay_pages():
         if not got:
             continue
         e, n, need = got
+        # the 8-byte line this arena finds (4425) lands 24 lines off: #48
+        held = check if name == 'wide' else \
+            (lambda label, cond: still_open(48, label, cond))
         try:
             top = word(e, 'PGTOPM')
             e.key('u')
@@ -5762,17 +5766,28 @@ def undo_replay_pages():
                   f"bytes back (PGTOPM {top} -> {word(e, 'PGTOPM')})",
                   word(e, 'PGTOPM') != top)
             v = e.screen(); r = rows(e)
-            check(f"undo #45 {name}: ... the cursor back on line {ln}, "
-                  f"column 0 ({r[v.row][:6]!r}, {v.col})",
-                  r[v.row].startswith('%06d' % ln) and v.col == 0)
+            held(f"undo #45 {name}: ... the cursor back on line {ln}, "
+                 f"column 0 ({r[v.row][:6]!r}, {v.col})",
+                 r[v.row].startswith('%06d' % ln) and v.col == 0)
             g = ctrlg(e)
-            check(f"undo #45 {name}: ... and '^G' says line {ln} ({g!r})",
-                  f' line {ln} ' in g + ' ')
+            held(f"undo #45 {name}: ... and '^G' says line {ln} ({g!r})",
+                 f' line {ln} ' in g + ' ')
             e.key(':w\r'); ex_settled(e)
             check(f'undo #45 {name}: ... and the file is the file, byte for byte',
                   saved_bytes(e) == text)
         finally:
             e.close()
+    # #48: at this arena '4500G 127dd u' puts the lines back 29 lines late,
+    # and 29 of the file's own lines come out in front of line 4500
+    text = make(12800)
+    e = Editor(text)
+    try:
+        e.key('4500G'); e.key('127dd'); e.key('u')
+        e.key(':w\r'); ex_settled(e)
+        still_open(48, "undo 4500G 127dd u on 100 K: the file comes back "
+                   "byte for byte", saved_bytes(e) == text)
+    finally:
+        e.close()
 
 # Rows the editor is deliberately NOT held to, both recorded as deviations in
 # COMMANDS.md rather than worked around here:
@@ -5985,11 +6000,18 @@ VIM_OPSRCH = [
 def opsrch_like_vim():
     """d and c over a search land the cursor and leave the file where vim
     does, on a line wider than the screen too."""
+    text_like_vim('vim opsrch', opsrch_files(), VIM_OPSRCH)
+
+
+def text_like_vim(tag, files, table):
+    """Run a table shaped (file, keys, sha, [(row, col, cursor line, top
+    line)]): the cursor and the two lines after each key, and the file the
+    keys leave, as vim wrote it."""
     import hashlib
-    files = opsrch_files()
-    for f, keys, sha, want in VIM_OPSRCH:
+    for f, keys, sha, want in table:
         e = Editor(files[f])
         try:
+            check(f'{tag} {keys!r}: one row per key', len(keys) == len(want))
             for k, (wrow, wcol, wcur, wtop) in zip(keys, want):
                 if k.endswith('\x1b'):
                     send_keys(e, k[:-1])
@@ -6000,15 +6022,249 @@ def opsrch_like_vim():
                 dc, lr = curs(e, v)
                 shown = lambda t: expand(t)[:80].rstrip()
                 got = (v.row, dc, r[lr], r[0])
-                check(f'vim opsrch {keys!r} {k!r}: {got[:2]} {got[2][:14]!r} '
+                check(f'{tag} {keys!r} {k!r}: {got[:2]} {got[2][:14]!r} '
                       f'== {(wrow, wcol)} {wcur[:14]!r}',
                       got == (wrow, wcol, shown(wcur), shown(wtop)))
             e.key(':w\r')
             ex_settled(e)
             got = hashlib.sha1(saved_bytes(e)).hexdigest()[:16]
-            check(f'vim opsrch {keys!r}: file as vim wrote it ({got})', got == sha)
+            check(f'{tag} {keys!r}: file as vim wrote it ({got})', got == sha)
         finally:
             e.close()
+
+
+# ---------------------------------------------------------------------------
+# VIM_OPGOAL -- where 'j' and 'k' go after an operator (issue #47), against
+# vim 9.1, recorded by vimref.py ('opgoal').  Shape is VIM_OPSRCH's.  vim's
+# operator leaves the goal column where it left the CURSOR, not where the
+# motion landed before the text went: 'dw' from column 0 keeps column 0, and
+# so does the 'j' after it.  A sample of the motions OPCTAB takes, charwise
+# both ways and linewise, under 'd', 'c' (whose <Esc> sets the column again)
+# and 'y'; with a count, after 'u' and '.', on a 150-column line both ways,
+# and on a line that starts with a TAB.  The last rows are the edits that are
+# not operators ('~' 'J' 'r' 'x' 'p' 'P' 'i' 'o' 'u'), which set it already.
+# Not here: '3~' and '>>', both gaps COMMANDS.md names.
+def opgoal_files():
+    wide = 'w' + 'x' * 110 + ' beta ' + 'y' * 20 + ' gamma end'
+    return {'og': ('alpha beta gamma delta\r\n'
+                   '    indented beta line here\r\n'
+                   'x\r\n'
+                   'one two three four five six\r\n'
+                   '\ttab line with words here\r\n'
+                   + wide + '\r\n'
+                   'seven eight nine ten eleven twelve thirteen\r\n'
+                   '\r\n'
+                   'last line of the file\r\n').encode()}
+
+
+VIM_OPGOAL = [
+    ('og', ['gg', 'dw', 'j', 'j', 'k'], '1dfc4ec8c9ef6d2d',
+     [(0, 0, 'alpha beta gamma delta', 'alpha beta gamma delta'),
+      (0, 0, 'beta gamma delta', 'beta gamma delta'),
+      (1, 0, '    indented beta line here', 'beta gamma delta'),
+      (2, 0, 'x', 'beta gamma delta'),
+      (1, 0, '    indented beta line here', 'beta gamma delta')]),
+    ('og', ['gg', 'd2w', 'j'], '444314e263eb7059',
+     [(0, 0, 'alpha beta gamma delta', 'alpha beta gamma delta'),
+      (0, 0, 'gamma delta', 'gamma delta'),
+      (1, 0, '    indented beta line here', 'gamma delta')]),
+    ('og', ['gg', '2dw', 'j'], '444314e263eb7059',
+     [(0, 0, 'alpha beta gamma delta', 'alpha beta gamma delta'),
+      (0, 0, 'gamma delta', 'gamma delta'),
+      (1, 0, '    indented beta line here', 'gamma delta')]),
+    ('og', ['gg', 'dW', 'j'], '1dfc4ec8c9ef6d2d',
+     [(0, 0, 'alpha beta gamma delta', 'alpha beta gamma delta'),
+      (0, 0, 'beta gamma delta', 'beta gamma delta'),
+      (1, 0, '    indented beta line here', 'beta gamma delta')]),
+    ('og', ['gg', 'de', 'j'], 'be6f2577813aee7f',
+     [(0, 0, 'alpha beta gamma delta', 'alpha beta gamma delta'),
+      (0, 0, ' beta gamma delta', ' beta gamma delta'),
+      (1, 0, '    indented beta line here', ' beta gamma delta')]),
+    ('og', ['gg', 'dE', 'j'], 'be6f2577813aee7f',
+     [(0, 0, 'alpha beta gamma delta', 'alpha beta gamma delta'),
+      (0, 0, ' beta gamma delta', ' beta gamma delta'),
+      (1, 0, '    indented beta line here', ' beta gamma delta')]),
+    ('og', ['gg6l', 'dl', 'j'], '47b10a7ca57778aa',
+     [(0, 6, 'alpha beta gamma delta', 'alpha beta gamma delta'),
+      (0, 6, 'alpha eta gamma delta', 'alpha eta gamma delta'),
+      (1, 6, '    indented beta line here', 'alpha eta gamma delta')]),
+    ('og', ['gg6l', 'dh', 'j'], '9b40ce9ce0834e9d',
+     [(0, 6, 'alpha beta gamma delta', 'alpha beta gamma delta'),
+      (0, 5, 'alphabeta gamma delta', 'alphabeta gamma delta'),
+      (1, 5, '    indented beta line here', 'alphabeta gamma delta')]),
+    ('og', ['gg6l', 'db', 'j'], '1dfc4ec8c9ef6d2d',
+     [(0, 6, 'alpha beta gamma delta', 'alpha beta gamma delta'),
+      (0, 0, 'beta gamma delta', 'beta gamma delta'),
+      (1, 0, '    indented beta line here', 'beta gamma delta')]),
+    ('og', ['gg6l', 'd$', 'j'], 'd6f4afa164939bb4',
+     [(0, 6, 'alpha beta gamma delta', 'alpha beta gamma delta'),
+      (0, 5, 'alpha ', 'alpha '),
+      (1, 5, '    indented beta line here', 'alpha ')]),
+    ('og', ['gg6l', 'D', 'j'], 'd6f4afa164939bb4',
+     [(0, 6, 'alpha beta gamma delta', 'alpha beta gamma delta'),
+      (0, 5, 'alpha ', 'alpha '),
+      (1, 5, '    indented beta line here', 'alpha ')]),
+    ('og', ['gg6l', 'd0', 'j'], '1dfc4ec8c9ef6d2d',
+     [(0, 6, 'alpha beta gamma delta', 'alpha beta gamma delta'),
+      (0, 0, 'beta gamma delta', 'beta gamma delta'),
+      (1, 0, '    indented beta line here', 'beta gamma delta')]),
+    ('og', ['2G9l', 'd^', 'j'], '327d8532d465466f',
+     [(1, 13, '    indented beta line here', 'alpha beta gamma delta'),
+      (1, 4, '    beta line here', 'alpha beta gamma delta'),
+      (2, 0, 'x', 'alpha beta gamma delta')]),
+    ('og', ['gg', 'dfa', 'j'], 'be6f2577813aee7f',
+     [(0, 0, 'alpha beta gamma delta', 'alpha beta gamma delta'),
+      (0, 0, ' beta gamma delta', ' beta gamma delta'),
+      (1, 0, '    indented beta line here', ' beta gamma delta')]),
+    ('og', ['gg', 'dta', 'j'], '193065b86930a9de',
+     [(0, 0, 'alpha beta gamma delta', 'alpha beta gamma delta'),
+      (0, 0, 'a beta gamma delta', 'a beta gamma delta'),
+      (1, 0, '    indented beta line here', 'a beta gamma delta')]),
+    ('og', ['gg', 'fa', '0', 'd;', 'j'], 'be6f2577813aee7f',
+     [(0, 0, 'alpha beta gamma delta', 'alpha beta gamma delta'),
+      (0, 4, 'alpha beta gamma delta', 'alpha beta gamma delta'),
+      (0, 0, 'alpha beta gamma delta', 'alpha beta gamma delta'),
+      (0, 0, ' beta gamma delta', ' beta gamma delta'),
+      (1, 0, '    indented beta line here', ' beta gamma delta')]),
+    ('og', ['gg$', 'dFa', 'j'], '0e1dd6486d2ed238',
+     [(0, 21, 'alpha beta gamma delta', 'alpha beta gamma delta'),
+      (0, 15, 'alpha beta gamma', 'alpha beta gamma'),
+      (1, 15, '    indented beta line here', 'alpha beta gamma')]),
+    ('og', ['gg', 'd/beta\r', 'j'], '1dfc4ec8c9ef6d2d',
+     [(0, 0, 'alpha beta gamma delta', 'alpha beta gamma delta'),
+      (0, 0, 'beta gamma delta', 'beta gamma delta'),
+      (1, 0, '    indented beta line here', 'beta gamma delta')]),
+    ('og', ['1G6lma', 'gg', 'd`a', 'j'], '1dfc4ec8c9ef6d2d',
+     [(0, 6, 'alpha beta gamma delta', 'alpha beta gamma delta'),
+      (0, 0, 'alpha beta gamma delta', 'alpha beta gamma delta'),
+      (0, 0, 'beta gamma delta', 'beta gamma delta'),
+      (1, 0, '    indented beta line here', 'beta gamma delta')]),
+    ('og', ['4G', 'cw77\x1b', 'j'], '8ba68c621645e936',
+     [(3, 0, 'one two three four five six', 'alpha beta gamma delta'),
+      (3, 1, '77 two three four five six', 'alpha beta gamma delta'),
+      (4, 7, '\ttab line with words here', 'alpha beta gamma delta')]),
+    ('og', ['4G8l', 'c/five\r77\x1b', 'j'], 'b5da3e6435044ba2',
+     [(3, 8, 'one two three four five six', 'alpha beta gamma delta'),
+      (3, 9, 'one two 77five six', 'alpha beta gamma delta'),
+      (4, 9, '\ttab line with words here', 'alpha beta gamma delta')]),
+    ('og', ['gg6l', 'C77\x1b', 'j'], '786cdab1f58c481c',
+     [(0, 6, 'alpha beta gamma delta', 'alpha beta gamma delta'),
+      (0, 7, 'alpha 77', 'alpha 77'),
+      (1, 7, '    indented beta line here', 'alpha 77')]),
+    ('og', ['2G', 'dj', 'j'], '46a00357735f703a',
+     [(1, 4, '    indented beta line here', 'alpha beta gamma delta'),
+      (1, 0, 'one two three four five six', 'alpha beta gamma delta'),
+      (2, 7, '\ttab line with words here', 'alpha beta gamma delta')]),
+    ('og', ['4G8l', 'dk', 'j'], '21b30a7dc9bd3a15',
+     [(3, 8, 'one two three four five six', 'alpha beta gamma delta'),
+      (2, 8, '\ttab line with words here', 'alpha beta gamma delta'),
+      (3, 8, 'wxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx beta yyyyyyyyyyyyyyyyyyyy gamma end', 'alpha beta gamma delta')]),
+    ('og', ['2G9l', 'dgg', 'j'], '0d121360e74fe94d',
+     [(1, 13, '    indented beta line here', 'alpha beta gamma delta'),
+      (0, 0, 'x', 'x'),
+      (1, 0, 'one two three four five six', 'x')]),
+    ('og', ['1G8l', 'dj', 'j'], '0d121360e74fe94d',
+     [(0, 8, 'alpha beta gamma delta', 'alpha beta gamma delta'),
+      (0, 0, 'x', 'x'),
+      (1, 0, 'one two three four five six', 'x')]),
+    ('og', ['4G8l', 'dG', 'k'], 'd219cba74383a767',
+     [(3, 8, 'one two three four five six', 'alpha beta gamma delta'),
+      (2, 0, 'x', 'alpha beta gamma delta'),
+      (1, 0, '    indented beta line here', 'alpha beta gamma delta')]),
+    ('og', ['4G8l', 'dd', 'j'], 'abdb420aa4be1800',
+     [(3, 8, 'one two three four five six', 'alpha beta gamma delta'),
+      (3, 8, '\ttab line with words here', 'alpha beta gamma delta'),
+      (4, 8, 'wxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx beta yyyyyyyyyyyyyyyyyyyy gamma end', 'alpha beta gamma delta')]),
+    ('og', ['4G8l', 'yk', 'j'], '731d2fe9f83e9435',
+     [(3, 8, 'one two three four five six', 'alpha beta gamma delta'),
+      (2, 0, 'x', 'alpha beta gamma delta'),
+      (3, 0, 'one two three four five six', 'alpha beta gamma delta')]),
+    ('og', ['4G8l', 'yj', 'j'], '731d2fe9f83e9435',
+     [(3, 8, 'one two three four five six', 'alpha beta gamma delta'),
+      (3, 8, 'one two three four five six', 'alpha beta gamma delta'),
+      (4, 8, '\ttab line with words here', 'alpha beta gamma delta')]),
+    ('og', ['4G8l', 'x', 'j'], 'bb098674b941fd0b',
+     [(3, 8, 'one two three four five six', 'alpha beta gamma delta'),
+      (3, 8, 'one two hree four five six', 'alpha beta gamma delta'),
+      (4, 8, '\ttab line with words here', 'alpha beta gamma delta')]),
+    ('og', ['gg', 'dw', 'u', 'j'], '731d2fe9f83e9435',
+     [(0, 0, 'alpha beta gamma delta', 'alpha beta gamma delta'),
+      (0, 0, 'beta gamma delta', 'beta gamma delta'),
+      (0, 0, 'alpha beta gamma delta', 'alpha beta gamma delta'),
+      (1, 0, '    indented beta line here', 'alpha beta gamma delta')]),
+    ('og', ['gg', 'dw', 'j', '.', 'j'], '0a7b8eaa7cf4587b',
+     [(0, 0, 'alpha beta gamma delta', 'alpha beta gamma delta'),
+      (0, 0, 'beta gamma delta', 'beta gamma delta'),
+      (1, 0, '    indented beta line here', 'beta gamma delta'),
+      (1, 0, 'indented beta line here', 'beta gamma delta'),
+      (2, 0, 'x', 'beta gamma delta')]),
+    ('og', ['6G120l', 'dw', 'j', 'k'], '3d17249e09cf2430',
+     [(6, 120, 'wxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx beta yyyyyyyyyyyyyyyyyyyy gamma end', 'alpha beta gamma delta'),
+      (6, 120, 'wxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx beta yyygamma end', 'alpha beta gamma delta'),
+      (7, 42, 'seven eight nine ten eleven twelve thirteen', 'alpha beta gamma delta'),
+      (6, 120, 'wxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx beta yyygamma end', 'alpha beta gamma delta')]),
+    ('og', ['6G', 'd/gamma\r', 'j', 'k'], 'c00bf1a6d351ff8e',
+     [(5, 0, 'wxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx beta yyyyyyyyyyyyyyyyyyyy gamma end', 'alpha beta gamma delta'),
+      (5, 0, 'gamma end', 'alpha beta gamma delta'),
+      (6, 0, 'seven eight nine ten eleven twelve thirteen', 'alpha beta gamma delta'),
+      (5, 0, 'gamma end', 'alpha beta gamma delta')]),
+    ('og', ['5G', 'dw', 'j'], 'cb278e4811fe2245',
+     [(4, 8, '\ttab line with words here', 'alpha beta gamma delta'),
+      (4, 8, '\tline with words here', 'alpha beta gamma delta'),
+      (5, 8, 'wxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx beta yyyyyyyyyyyyyyyyyyyy gamma end', 'alpha beta gamma delta')]),
+    ('og', ['5G4l', 'dw', 'k'], '5c2330b5ce59b014',
+     [(4, 12, '\ttab line with words here', 'alpha beta gamma delta'),
+      (4, 12, '\ttab with words here', 'alpha beta gamma delta'),
+      (3, 12, 'one two three four five six', 'alpha beta gamma delta')]),
+    ('og', ['gg6l', '~', 'j'], 'f040a293d5caa3d3',
+     [(0, 6, 'alpha beta gamma delta', 'alpha beta gamma delta'),
+      (0, 7, 'alpha Beta gamma delta', 'alpha Beta gamma delta'),
+      (1, 7, '    indented beta line here', 'alpha Beta gamma delta')]),
+    ('og', ['gg', 'J', 'j'], 'cf7b1a86b368e750',
+     [(0, 0, 'alpha beta gamma delta', 'alpha beta gamma delta'),
+      (0, 22, 'alpha beta gamma delta indented beta line here', 'alpha beta gamma delta indented beta line here'),
+      (1, 0, 'x', 'alpha beta gamma delta indented beta line here')]),
+    ('og', ['gg6l', 'rX', 'j'], '6a0af8401c03f8ef',
+     [(0, 6, 'alpha beta gamma delta', 'alpha beta gamma delta'),
+      (0, 6, 'alpha Xeta gamma delta', 'alpha Xeta gamma delta'),
+      (1, 6, '    indented beta line here', 'alpha Xeta gamma delta')]),
+    ('og', ['2G', 'yy', 'gg6l', 'p', 'j'], '9b6c90e2cee7cce0',
+     [(1, 4, '    indented beta line here', 'alpha beta gamma delta'),
+      (1, 4, '    indented beta line here', 'alpha beta gamma delta'),
+      (0, 6, 'alpha beta gamma delta', 'alpha beta gamma delta'),
+      (1, 4, '    indented beta line here', 'alpha beta gamma delta'),
+      (2, 4, '    indented beta line here', 'alpha beta gamma delta')]),
+    ('og', ['2G', 'yy', 'gg6l', 'P', 'j'], 'd5fc558f2a46ac21',
+     [(1, 4, '    indented beta line here', 'alpha beta gamma delta'),
+      (1, 4, '    indented beta line here', 'alpha beta gamma delta'),
+      (0, 6, 'alpha beta gamma delta', 'alpha beta gamma delta'),
+      (0, 4, '    indented beta line here', '    indented beta line here'),
+      (1, 4, 'alpha beta gamma delta', '    indented beta line here')]),
+    ('og', ['gg6l', 'x', 'u', 'j'], '731d2fe9f83e9435',
+     [(0, 6, 'alpha beta gamma delta', 'alpha beta gamma delta'),
+      (0, 6, 'alpha eta gamma delta', 'alpha eta gamma delta'),
+      (0, 6, 'alpha beta gamma delta', 'alpha beta gamma delta'),
+      (1, 6, '    indented beta line here', 'alpha beta gamma delta')]),
+    ('og', ['gg6l', 'i77\x1b', 'j'], '02bed9e3de1ffc45',
+     [(0, 6, 'alpha beta gamma delta', 'alpha beta gamma delta'),
+      (0, 7, 'alpha 77beta gamma delta', 'alpha 77beta gamma delta'),
+      (1, 7, '    indented beta line here', 'alpha 77beta gamma delta')]),
+    ('og', ['gg6l', 'dw', 'u', 'j'], '731d2fe9f83e9435',
+     [(0, 6, 'alpha beta gamma delta', 'alpha beta gamma delta'),
+      (0, 6, 'alpha gamma delta', 'alpha gamma delta'),
+      (0, 6, 'alpha beta gamma delta', 'alpha beta gamma delta'),
+      (1, 6, '    indented beta line here', 'alpha beta gamma delta')]),
+    ('og', ['3G', 'o\x1b', 'k'], 'f1b59507288241ff',
+     [(2, 0, 'x', 'alpha beta gamma delta'),
+      (3, 0, '', 'alpha beta gamma delta'),
+      (2, 0, 'x', 'alpha beta gamma delta')]),
+]
+
+
+def opgoal_like_vim():
+    """After an operator 'j' and 'k' keep the column the operator left the
+    cursor in, as vim's do (issue #47)."""
+    text_like_vim('vim opgoal', opgoal_files(), VIM_OPGOAL)
 
 
 def srch_cmds():
@@ -11615,6 +11871,7 @@ def main():
     if not args or 'vim' in args or 'after' in args:
         print('\n=== what a command leaves behind ===', flush=True)
         after_cmds()
+        opgoal_like_vim()
     if not args or 'vim' in args or 'limits' in args:
         print('\n=== every limit: under, at and over ===', flush=True)
         limits_cmds()

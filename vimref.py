@@ -94,12 +94,13 @@ GROUPS = {
     'marks': ('VIM_MARKS', None),
     'find': ('VIM_FIND', None),
     'opsrch': ('VIM_OPSRCH', None),
+    'opgoal': ('VIM_OPGOAL', None),
     'rdwr': ('VIM_RDWR', None),
     'wrap': ('VIM_WRAP', None),
     'bs': ('VIM_BS', None),
     'ndd': ('VIM_NDD', None),
 }
-TEXT = {'ins', 'ops', 'opmx', 'put', 'srch', 'dot', 'undo', 'undoat', 'subst', 'marks', 'find', 'opsrch',
+TEXT = {'ins', 'ops', 'opmx', 'put', 'srch', 'dot', 'undo', 'undoat', 'subst', 'marks', 'find', 'opsrch', 'opgoal',
         'rdwr', 'bs', 'ndd'}  # rows carrying text + a file hash
 
 # Rows the final-line-end fold must NOT be applied to.  The fold exists because
@@ -157,6 +158,7 @@ def content(name):
         _HML.update(A['opmx_files']())              # + ox
         _HML.update(A['wrap_files']())              # + w1 w2
         _HML.update(A['opsrch_files']())            # + os
+        _HML.update(A['opgoal_files']())            # + og
     if name in _HML:
         return lf(_HML[name])
     if name == 'indent':

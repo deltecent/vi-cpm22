@@ -216,7 +216,7 @@ stops a move or a search before then (see below).
 
 The limits:
 
-    Memory      VI takes 24,812 bytes (23,168 of them are VI.COM).
+    Memory      VI takes 24,818 bytes (23,168 of them are VI.COM).
                 The text in memory, the yank register and the undo share
                 the rest, up to CP/M: the more memory the system has, the
                 more of the file is in memory at once.

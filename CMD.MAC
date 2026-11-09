@@ -3993,6 +3993,11 @@ OPP_GO:
 	LDA	PSAVE
 	CPI	'y'
 	JZ	OPYANK		; a yank takes the span without losing it
+	CALL	GLSTAL		; 'j' then goes from where the delete leaves the
+				;   cursor, not from where the motion landed
+				;   before the text went: 'dw' 'j' from column 0
+				;   keeps column 0 (vim; #47).  A linewise one
+				;   lands on the first non-blank, as vim's does
 	CALL	OPAPPL		; delete the span
 	;--- 'c' -> insert at the deletion point (OPAPPL left the cursor there,
 	;    unclamped: on 'cw' at a line's end the text goes past its last
@@ -4587,6 +4592,7 @@ VCB_C:
 	JMP	SETINS		; the cursor is at the deletion point already
 ;VCB_D -- 'D' = delete to end of line (content only, not the newline).
 VCB_D:
+	CALL	GLSTAL		; the goal column as OPP_GO leaves it (#47)
 	CALL	VCB_CD
 	JMP	CLAMPE		; pull the cursor onto the new last content char
 ;VCB_CD -- the span 'C' and 'D' share: [cursor, the line's content end).  Leaves
