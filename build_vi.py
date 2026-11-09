@@ -222,8 +222,7 @@ def run_build(target):
         cmd(l80)
         if target == "VI":
             # VI.HEX is VI.COM as Intel hex (load address 0100H), for loaders
-            # that take hex: GENHEX on the disk makes it.  Only this script
-            # makes it; VI.SUB does not.
+            # that take hex: GENHEX on the disk makes it, here and in VI.SUB.
             print("  GENHEX VI.COM 100")
             cmd("GENHEX VI.COM 100")
 
