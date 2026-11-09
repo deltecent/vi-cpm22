@@ -869,10 +869,9 @@ MKW_BK:
 
 ;MKNSET -- a jump to a mark that will not answer: vim's E20 on the bottom row
 ;(without the number, and without a bell, as every message here), the cursor
-;and the screen left alone.  The operator is cancelled as MKBAD cancels it.
+;and the screen left alone.  The operator is cancelled as MKBAD cancels it:
+;EXERR drops it.
 MKNSET:
-	XRA	A
-	STA	PSAVE
 	LXI	H,SMKNS
 	JMP	EXERR
 MKNOLT:
@@ -3863,6 +3862,7 @@ GP_ONS:
 ; Motion class governs the span:  charwise-exclusive (w b h l 0 ^) deletes up to
 ; but not the endpoint; charwise-inclusive (e $ f t ; , %) includes it on a
 ; forward motion; linewise (j k G H M L) deletes whole lines start-line..end-line.
+; A jump (` and the searches / ? n N) is charwise exclusive across lines.
 ;============================================================
 
 ;OPPEND -- PSAVE = pending operator, C = the following key (never an ESC:
@@ -3932,15 +3932,18 @@ OPP_NO:
 	CPI	60H		;   ('a' opens an insert and types into the buffer),
 	JZ	OPP_SW		;   so swallow it before dropping the command
 	CALL	ISFIND		; f F t T read one too ('yfx': 'y' takes linewise
-	JNZ	OPABRT		;   motions only, so the find is dropped here)
+	JNZ	OPP_NM		;   motions only, so the find is dropped here);
+				;   a search reads a whole line: OPP_NM
 OPP_SW:
 	CALL	MKGETK
 	JMP	OPABRT
-;OPP_NM -- not a motion.  A search ('/' '?' 'n' 'N') is one in vim, but not
-; here yet (issue #44), and it is the one drop that cannot be silent: a '/' or
-; '?' left to the next dispatch reads no line, so 'd/QJQK<CR>' would run the
-; pattern as commands ('J' joins two lines).  So the line is read the way a
-; search reads it, and thrown away, and the bell says nothing was done.
+;OPP_NM -- not a motion, or not one this operator takes.  A search ('/' '?'
+; 'n' 'N') is a motion for 'd' and 'c' (OPCTAB class 3), but a charwise one,
+; and 'y' takes linewise motions only, so 'y/' and 'yn' arrive here from
+; OPP_NO.  That is the one drop that cannot be silent: a '/' or '?' left to the
+; next dispatch reads no line, so 'y/QJQK<CR>' would run the pattern as
+; commands ('J' joins two lines).  So the line is read the way a search reads
+; it, and thrown away, and the bell says nothing was done.
 OPP_NM:
 	MOV	A,C
 	CPI	'/'
@@ -4542,6 +4545,9 @@ OPDL_NB:
 ;OPCTAB -- operator motion classes: DB key, class.  0 = charwise exclusive,
 ; 1 = charwise inclusive, 2 = linewise, 3 = charwise exclusive but a JUMP.
 ; 'c' takes everything but class 2, 'y' takes class 2 alone.  Ends with a 0 key.
+; A search is class 3, as in vim (charwise exclusive, and a jump): '/' and '?'
+; read their line inside the VSCAN, so 'd/pat<CR>' is measured whole, and a
+; span that ends in a line's first column follows OPA_C1's rule (issue #44).
 ; Every key here MUST also be a row in CMDTAB.  A key classified here but not
 ; dispatchable there is worse than useless: OPPEND takes the class, VSCAN finds
 ; nothing and the cursor does not move, and OPAPPL is then handed a span of
@@ -4559,6 +4565,7 @@ OPCTAB:
 				;   these two only have to be IN the table
 	DB	'e',1, 'E',1, '$',1
 	DB	'j',2, 'k',2, 'G',2, 'H',2, 'M',2, 'L',2
+	DB	'/',3, '?',3, 'n',3, 'N',3	; the searches: jumps, as '`' is
 	DB	'g',2		; 'gg' -- OPPEND reads the second 'g' itself
 	DB	27H,2		; '{a-c} -- linewise, as j and G are
 	DB	0
@@ -5923,6 +5930,8 @@ VI_ESC:
 ; on an empty line cancels, as ESC does, and a cancel blanks the row, prompt
 ; char and all; a control char is ignored (WM stores it and shows ^X).  WM's
 ; ^X ^U ^\ ^R ^E ^C line edits are not kept.
+; The keys come through MKGETK, as a mark's letter does: they join the '.'
+; recording, and a '.' replay reads them back from it ('d/pat<CR>' then '.').
 RDLINE:
 	XCHG			; HL = buffer
 	SHLD	RLPTR
@@ -5933,9 +5942,9 @@ RDLINE:
 	MOV	A,C
 	CALL	EXPRM		; bottom row cleared, prompt shown
 RL_LP:
-	CALL	GETKEY
-	CPI	ESC
-	JZ	RL_CAN
+	CALL	MKGETK		; a '.' replay reads the line it recorded, and a
+	JC	RL_CAN		;   typed one is recorded ('d/pat<CR>'); ESC
+	MOV	A,C
 	CPI	CR
 	JZ	RL_DONE
 	CPI	BS
@@ -5974,6 +5983,8 @@ RL_CAN:
 	MVI	A,' '		; vim: the cancelled line goes, its prompt char too
 	CALL	EXPRM		;   (the row cleared, a blank where the prompt was)
 	CALL	SETLIN		; redraw one row
+	XRA	A
+	STA	PSAVE		; ... and a 'd/' or 'c?' with it
 	MVI	A,0FFH		; cancelled
 	RET
 RL_DONE:
@@ -7016,11 +7027,14 @@ EXOUT:
 	STC
 	RET
 ;EXERR -- HL = a message for the bottom row; it stays there (only the cursor
-; goes back), CY.
+; goes back), CY.  A pending operator goes with the motion that failed, as in
+; vim: 'c/zz<CR>' with no 'zz' opens no insert, and 'd'z' with no mark z
+; deletes no line.
 EXERR:
 	PUSH	H
 	XRA	A		; an error outranks whatever this key meant to
 	STA	MSGWHT		;   say: ':wq NAME' writes, then refuses to quit
+	STA	PSAVE
 	POP	H
 	CALL	EXMSG
 	MVI	A,R_MOVE
@@ -7486,6 +7500,9 @@ VS_DIR:
 	CALL	RDLINE
 	ORA	A
 	RNZ			; cancelled: nothing happens at all
+	LDA	PSAVE		; under an operator ('d/pat') the terminal's
+	ORA	A		;   cursor goes back on the text: R_DCH deletes
+	CNZ	SCURS		;   wherever that cursor is
 	LDA	RLLEN
 	ORA	A
 	JZ	VS_OLD		; an empty line repeats the last pattern --
@@ -7535,7 +7552,9 @@ SRCHN:
 	CALL	GZONE		; the screen's top line, before the cursor moves
 	CALL	BRKON		; where it started (the sweep moves the cursor
 				;   with PUTCUR, which does not maintain LNDLT;
-				;   GOTO does), and an ESC may stop it
+				;   GOTO does), and an ESC may stop it -- under an
+	MVI	A,1		;   operator too: unlike 'dG', 'd/' changes nothing
+	STA	BRKARM		;   until the search is over, and a stop drops it
 SN_LP:
 	CALL	SRCHGO
 	JC	SN_BAD

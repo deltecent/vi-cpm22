@@ -714,8 +714,10 @@ Detail is in `RENDER.md`. The design decisions:
     whether its count is spent, so that is the one place the ring is searched
     for an ESC (`KBBRK`): finding one zeroes the count, and the loop ends as it
     does when the count runs out. The test is armed (`BRKON`) only by `G`, `gg`,
-    the mark jumps and the searches, and only with no operator pending, so
-    nothing that changes text is ever stopped half-way. `BRKTST` writes "Interrupting..."
+    the mark jumps and the searches, and only with no operator pending -- a
+    search excepted, since `d/` and `c?` change nothing until it is over and
+    a stop drops the operator (`EXERR` drops it for any motion that fails) --
+    so nothing that changes text is ever stopped half-way. `BRKTST` writes "Interrupting..."
     on the message row there and then, because the way back is as silent as
     the command was. The command then pages
     back to the file position it started from (`BRKBAK`, the path a failed

@@ -161,17 +161,20 @@ d deletes, c changes and y yanks over the motion that follows:
 
     dw  dd  d$  dj  dG  d'a  d`a        delete to there
     df,  dt)  d;                        ... and to a character on the line
-    cw  C  ct)                          change
+    d/end<CR>  d?if<CR>  dn  dN         ... and to a search's match
+    cw  C  ct)  c/end<CR>               change
     yy  Y  5yy  y'a                     yank whole lines
 
 cw changes to the END of the word, which is what vi's ce does -- vi's one
 special case, and it is kept here.  dd, yy, D and C are the short spellings
 of the common ones.  cc and S are not here, and cc does nothing at all.
-The register holds whole lines, so y`a and yf, -- part of a line -- are
-refused.  f and t take the character they land on; F and T stop short of
-it, so df, deletes the comma and dF, leaves it.  A search is not a motion
-for an operator yet: d/, c?, yn and the like ring the bell and change
-nothing (the / or ? line is read and thrown away).
+The register holds whole lines, so y`a, yf, and y/ -- part of a line --
+are refused.  f and t take the character they land on; F and T stop short
+of it, so df, deletes the comma and dF, leaves it.  A search stops short
+of its match: d/end deletes up to "end" and leaves it.  A search that
+finds nothing, or is cancelled, takes the d or c with it.  In a large
+file, d/ and c/ to a match far off -- or one found by wrapping round the
+end -- are refused with the bell, as d`a to a mark far off is.
 
 
 YANK AND PUT ---------------------------------------------------------------

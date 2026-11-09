@@ -2807,8 +2807,9 @@ def ops_like_vim():
 # refuses to run if its keys are not exactly opmx_keys().
 OPMX_PLACES = [['4G', '7l'], ['gg', '0'], ['G', '$'], ['3G'], ['5G', '$']]
 OPMX_MARKS = ['2G', '6l', 'ma', '7G', '9l', 'mb']
-# (the motion's keys, the same with a count or None, linewise, needs marks,
-#  the places it is run from beyond the first three)
+# (the motion's keys, the same with a count or None, linewise, needs marks --
+#  or the keys that go first instead, as 'n' and 'N' need a search -- and the
+#  places it is run from beyond the first three)
 OPMX_MOTIONS = [
     ('w', '2w', 0, 0, (3, 4)), ('W', '2W', 0, 0, (3, 4)),
     ('b', '2b', 0, 0, (3, 4)), ('B', '2B', 0, 0, (3, 4)),
@@ -2824,6 +2825,11 @@ OPMX_MOTIONS = [
     ('G', '6G', 1, 0, ()), ('H', '2H', 1, 0, ()), ('M', None, 1, 0, ()),
     ('L', '2L', 1, 0, ()), ('gg', '2gg', 1, 0, ()),
     ("'a", None, 1, 1, ()), ("'b", None, 1, 1, ()),
+    # the searches (#44): '/' from the empty line lands in the next line's
+    # first column, so its span is whole lines; '?' from the blank-only line;
+    # 'n' and 'N' after a '?', so 'n' goes backward and 'N' forward
+    ('/a\r', '2/a\r', 0, 0, (3,)), ('?a\r', '2?a\r', 0, 0, (4,)),
+    ('n', '2n', 0, '?e\r', ()), ('N', None, 0, '?e\r', ()),
 ]
 
 
@@ -2840,7 +2846,7 @@ def opmx_keys():
     whatever the undo did with the cursor."""
     out = []
     for m, counted, line, marks, more in OPMX_MOTIONS:
-        pre = ''.join(OPMX_MARKS) if marks else ''
+        pre = ''.join(OPMX_MARKS) if marks == 1 else marks or ''
         find = 'fa' if m in (';', ',') else ''        # the find they repeat
         for p in (0, 1, 2) + tuple(more):
             at = ''.join(OPMX_PLACES[p]) + find
@@ -3848,6 +3854,131 @@ VIM_OPMX = [
       (7, 3, 'last', 'one two.three four five'),
       (5, 8, '\ttab sep\tword', 'one two.three four five'),
       (6, 0, 'seven: z z z z stop', 'one two.three four five')]),
+    ('ox', ['4G7l', 'd/a\r', 'u4G7l', 'c/a\r77\x1b', 'u4G7l', '.'], '1c788ad03ae557f0',
+     [(3, 7, 'a1 a2 a3 a4 a5 a6 a7', 'one two.three four five'),
+      (3, 7, 'a1 a2 aa4 a5 a6 a7', 'one two.three four five'),
+      (3, 7, 'a1 a2 a3 a4 a5 a6 a7', 'one two.three four five'),
+      (3, 8, 'a1 a2 a77a4 a5 a6 a7', 'one two.three four five'),
+      (3, 7, 'a1 a2 a3 a4 a5 a6 a7', 'one two.three four five'),
+      (3, 8, 'a1 a2 a77a4 a5 a6 a7', 'one two.three four five')]),
+    ('ox', ['gg0', 'd/a\r', 'ugg0', 'c/a\r77\x1b', 'ugg0', '.'], 'cae4071e738d3ba6',
+     [(0, 0, 'one two.three four five', 'one two.three four five'),
+      (0, 0, 'ar) x,y; end', 'ar) x,y; end'),
+      (0, 0, 'one two.three four five', 'one two.three four five'),
+      (0, 1, '77ar) x,y; end', '77ar) x,y; end'),
+      (0, 0, 'one two.three four five', 'one two.three four five'),
+      (0, 1, '77ar) x,y; end', '77ar) x,y; end')]),
+    ('ox', ['G$', 'd/a\r', 'uG$', 'c/a\r77\x1b', 'uG$', '.'], '7603343c74e0c8d7',
+     [(7, 3, 'last', 'one two.three four five'),
+      (1, 8, '  ind (pt', 'one two.three four five'),
+      (7, 3, 'last', 'one two.three four five'),
+      (1, 9, '  ind (p77t', 'one two.three four five'),
+      (7, 3, 'last', 'one two.three four five'),
+      (1, 9, '  ind (p77t', 'one two.three four five')]),
+    ('ox', ['3G', 'd/a\r', 'u3G', 'c/a\r77\x1b', 'u3G', '.'], 'f461a91dc96dfc60',
+     [(2, 0, '', 'one two.three four five'),
+      (2, 0, 'a1 a2 a3 a4 a5 a6 a7', 'one two.three four five'),
+      (2, 0, '', 'one two.three four five'),
+      (2, 1, '77', 'one two.three four five'),
+      (2, 0, '', 'one two.three four five'),
+      (2, 1, '77', 'one two.three four five')]),
+    ('ox', ['4G7l', 'd2/a\r', 'u4G7l', '2d/a\r', 'u4G7l', '.', 'u4G7l', 'c2/a\r77\x1b'], 'e6dda90a72006108',
+     [(3, 7, 'a1 a2 a3 a4 a5 a6 a7', 'one two.three four five'),
+      (3, 7, 'a1 a2 aa5 a6 a7', 'one two.three four five'),
+      (3, 7, 'a1 a2 a3 a4 a5 a6 a7', 'one two.three four five'),
+      (3, 7, 'a1 a2 aa5 a6 a7', 'one two.three four five'),
+      (3, 7, 'a1 a2 a3 a4 a5 a6 a7', 'one two.three four five'),
+      (3, 7, 'a1 a2 aa5 a6 a7', 'one two.three four five'),
+      (3, 7, 'a1 a2 a3 a4 a5 a6 a7', 'one two.three four five'),
+      (3, 8, 'a1 a2 a77a5 a6 a7', 'one two.three four five')]),
+    ('ox', ['4G7l', 'd?a\r', 'u4G7l', 'c?a\r77\x1b', 'u4G7l', '.'], '68fdb3430edad2ae',
+     [(3, 7, 'a1 a2 a3 a4 a5 a6 a7', 'one two.three four five'),
+      (3, 6, 'a1 a2 3 a4 a5 a6 a7', 'one two.three four five'),
+      (3, 7, 'a1 a2 a3 a4 a5 a6 a7', 'one two.three four five'),
+      (3, 7, 'a1 a2 773 a4 a5 a6 a7', 'one two.three four five'),
+      (3, 7, 'a1 a2 a3 a4 a5 a6 a7', 'one two.three four five'),
+      (3, 7, 'a1 a2 773 a4 a5 a6 a7', 'one two.three four five')]),
+    ('ox', ['gg0', 'd?a\r', 'ugg0', 'c?a\r77\x1b', 'ugg0', '.'], 'b31242ad7d000dd6',
+     [(0, 0, 'one two.three four five', 'one two.three four five'),
+      (0, 0, 'ast', 'ast'),
+      (0, 0, 'one two.three four five', 'one two.three four five'),
+      (0, 1, '77ast', '77ast'),
+      (0, 0, 'one two.three four five', 'one two.three four five'),
+      (0, 1, '77ast', '77ast')]),
+    ('ox', ['G$', 'd?a\r', 'uG$', 'c?a\r77\x1b', 'uG$', '.'], '178bec976682b7b1',
+     [(7, 3, 'last', 'one two.three four five'),
+      (7, 1, 'lt', 'one two.three four five'),
+      (7, 3, 'last', 'one two.three four five'),
+      (7, 2, 'l77t', 'one two.three four five'),
+      (7, 3, 'last', 'one two.three four five'),
+      (7, 2, 'l77t', 'one two.three four five')]),
+    ('ox', ['5G$', 'd?a\r', 'u5G$', 'c?a\r77\x1b', 'u5G$', '.'], '60d60b2edf14ec01',
+     [(4, 3, '    ', 'one two.three four five'),
+      (3, 18, 'a1 a2 a3 a4 a5 a6  ', 'one two.three four five'),
+      (4, 3, '    ', 'one two.three four five'),
+      (3, 19, 'a1 a2 a3 a4 a5 a6 77 ', 'one two.three four five'),
+      (4, 3, '    ', 'one two.three four five'),
+      (3, 19, 'a1 a2 a3 a4 a5 a6 77 ', 'one two.three four five')]),
+    ('ox', ['4G7l', 'd2?a\r', 'u4G7l', '2d?a\r', 'u4G7l', '.', 'u4G7l', 'c2?a\r77\x1b'], '3f94a89a98fb94aa',
+     [(3, 7, 'a1 a2 a3 a4 a5 a6 a7', 'one two.three four five'),
+      (3, 3, 'a1 3 a4 a5 a6 a7', 'one two.three four five'),
+      (3, 7, 'a1 a2 a3 a4 a5 a6 a7', 'one two.three four five'),
+      (3, 3, 'a1 3 a4 a5 a6 a7', 'one two.three four five'),
+      (3, 7, 'a1 a2 a3 a4 a5 a6 a7', 'one two.three four five'),
+      (3, 3, 'a1 3 a4 a5 a6 a7', 'one two.three four five'),
+      (3, 7, 'a1 a2 a3 a4 a5 a6 a7', 'one two.three four five'),
+      (3, 4, 'a1 773 a4 a5 a6 a7', 'one two.three four five')]),
+    ('ox', ['?e\r4G7l', 'dn', 'u4G7l', 'cn77\x1b', 'u4G7l', '.'], '0c9e46b848a6cf49',
+     [(3, 7, 'a1 a2 a3 a4 a5 a6 a7', 'one two.three four five'),
+      (1, 17, '  ind (par) x,y; 3 a4 a5 a6 a7', 'one two.three four five'),
+      (3, 7, 'a1 a2 a3 a4 a5 a6 a7', 'one two.three four five'),
+      (1, 18, '  ind (par) x,y; 773 a4 a5 a6 a7', 'one two.three four five'),
+      (3, 7, 'a1 a2 a3 a4 a5 a6 a7', 'one two.three four five'),
+      (1, 18, '  ind (par) x,y; 773 a4 a5 a6 a7', 'one two.three four five')]),
+    ('ox', ['?e\rgg0', 'dn', 'ugg0', 'cn77\x1b', 'ugg0', '.'], '8467c0f6f1729623',
+     [(0, 0, 'one two.three four five', 'one two.three four five'),
+      (0, 0, 'en: z z z z stop', 'en: z z z z stop'),
+      (0, 0, 'one two.three four five', 'one two.three four five'),
+      (0, 1, '77en: z z z z stop', '77en: z z z z stop'),
+      (0, 0, 'one two.three four five', 'one two.three four five'),
+      (0, 1, '77en: z z z z stop', '77en: z z z z stop')]),
+    ('ox', ['?e\rG$', 'dn', 'uG$', 'cn77\x1b', 'uG$', '.'], '95629d454ed916eb',
+     [(7, 3, 'last', 'one two.three four five'),
+      (6, 3, 'sevt', 'one two.three four five'),
+      (7, 3, 'last', 'one two.three four five'),
+      (6, 4, 'sev77t', 'one two.three four five'),
+      (7, 3, 'last', 'one two.three four five'),
+      (6, 4, 'sev77t', 'one two.three four five')]),
+    ('ox', ['4G7l', 'd2n', 'u4G7l', '2dn', 'u4G7l', '.', 'u4G7l', 'c2n77\x1b'], '4cfaf3b00a212827',
+     [(3, 7, 'a1 a2 a3 a4 a5 a6 a7', 'one two.three four five'),
+      (3, 7, 'a1 a2 a3 a4 a5 a6 a7', 'one two.three four five'),
+      (3, 7, 'a1 a2 a3 a4 a5 a6 a7', 'one two.three four five'),
+      (3, 7, 'a1 a2 a3 a4 a5 a6 a7', 'one two.three four five'),
+      (3, 7, 'a1 a2 a3 a4 a5 a6 a7', 'one two.three four five'),
+      (3, 7, 'a1 a2 a3 a4 a5 a6 a7', 'one two.three four five'),
+      (3, 7, 'a1 a2 a3 a4 a5 a6 a7', 'one two.three four five'),
+      (3, 7, 'a1 a2 a3 a4 a5 a6 a7', 'one two.three four five')]),
+    ('ox', ['?e\r4G7l', 'dN', 'u4G7l', 'cN77\x1b', 'u4G7l', '.'], 'a50dedc4d29d0c3d',
+     [(3, 7, 'a1 a2 a3 a4 a5 a6 a7', 'one two.three four five'),
+      (3, 7, 'a1 a2 aep\tword', 'one two.three four five'),
+      (3, 7, 'a1 a2 a3 a4 a5 a6 a7', 'one two.three four five'),
+      (3, 8, 'a1 a2 a77ep\tword', 'one two.three four five'),
+      (3, 7, 'a1 a2 a3 a4 a5 a6 a7', 'one two.three four five'),
+      (3, 8, 'a1 a2 a77ep\tword', 'one two.three four five')]),
+    ('ox', ['?e\rgg0', 'dN', 'ugg0', 'cN77\x1b', 'ugg0', '.'], '3cee6b5872e99cdf',
+     [(0, 0, 'one two.three four five', 'one two.three four five'),
+      (0, 0, 'e two.three four five', 'e two.three four five'),
+      (0, 0, 'one two.three four five', 'one two.three four five'),
+      (0, 1, '77e two.three four five', '77e two.three four five'),
+      (0, 0, 'one two.three four five', 'one two.three four five'),
+      (0, 1, '77e two.three four five', '77e two.three four five')]),
+    ('ox', ['?e\rG$', 'dN', 'uG$', 'cN77\x1b', 'uG$', '.'], '45a61f8f62ec261f',
+     [(7, 3, 'last', 'one two.three four five'),
+      (0, 2, 'ont', 'ont'),
+      (7, 3, 'last', 'one two.three four five'),
+      (0, 3, 'on77t', 'on77t'),
+      (7, 3, 'last', 'one two.three four five'),
+      (0, 3, 'on77t', 'on77t')]),
 ]
 
 
@@ -5722,6 +5853,164 @@ def stays_put(e, keys, msg, ln, tag):
           scr[:23] == scr0[:23] and (v.row, v.col) == (v0.row, v0.col))
 
 
+# ---------------------------------------------------------------------------
+# VIM_OPSRCH -- d and c over / ? n N (issue #44) against vim 9.1, recorded by
+# vimref.py ('opsrch') before they were built.  Shape is VIM_FIND's: (file,
+# keys, the sha1 of the file vim wrote, [(cursor row, column, cursor line, top
+# line) after each key]).  OPMX runs the four over its own matrix; these are
+# the cases it has no line for:
+#   - a match past the right screen edge of a 150-column line, both ways;
+#   - a span that ends in a line's first column (':help exclusive'), from the
+#     first non-blank of an indented line, from inside a line, from an empty
+#     one, backward, and under 'c', which keeps the line to type on;
+#   - a search that wraps, so the span runs back from the cursor;
+#   - a count on the operator and on the search, '.' and 'u' after one, and an
+#     empty pattern, which is the last one again;
+#   - a pattern that is not there, no pattern at all ('cn' before any search),
+#     and a '/' line cancelled by ESC or by a BS on an empty line: the
+#     operator goes with the search -- 'c' opens no insert, so the '77' typed
+#     after it is a count the ESC drops -- and the 'x' after takes one
+#     character.
+def opsrch_files():
+    wide = 'w' + 'x' * 95 + ' beta ' + 'y' * 40 + ' gamma end'
+    return {'os': ('alpha beta gamma\r\n    indented beta line\r\n'
+                   'beta at start\r\n' + wide + '\r\n\r\n'
+                   'gamma delta beta\r\nlast line\r\n').encode()}
+
+
+VIM_OPSRCH = [
+    ('os', ['gg', 'd/beta\r', 'u'], '5ec5de44b931801f',
+     [(0, 0, 'alpha beta gamma', 'alpha beta gamma'),
+      (0, 0, 'beta gamma', 'beta gamma'),
+      (0, 0, 'alpha beta gamma', 'alpha beta gamma')]),
+    ('os', ['gg', 'd/indented\r'], 'a2aec5f5f30d63bd',
+     [(0, 0, 'alpha beta gamma', 'alpha beta gamma'),
+      (0, 0, 'indented beta line', 'indented beta line')]),
+    ('os', ['2G', 'd/beta at\r'], 'ca9d5c7f294751ed',
+     [(1, 4, '    indented beta line', 'alpha beta gamma'),
+      (1, 0, 'beta at start', 'alpha beta gamma')]),
+    ('os', ['1G6l', 'd/beta at\r'], 'a8b5e4830f1e575b',
+     [(0, 6, 'alpha beta gamma', 'alpha beta gamma'),
+      (0, 5, 'alpha ', 'alpha ')]),
+    ('os', ['2G', 'd?alpha\r'], 'a2aec5f5f30d63bd',
+     [(1, 4, '    indented beta line', 'alpha beta gamma'),
+      (0, 0, 'indented beta line', 'indented beta line')]),
+    ('os', ['3G', 'd?beta\r'], '17c6acf3ff723596',
+     [(2, 0, 'beta at start', 'alpha beta gamma'),
+      (1, 12, '    indented ', 'alpha beta gamma')]),
+    ('os', ['4G', 'd/gamma\r', 'u'], '5ec5de44b931801f',
+     [(3, 0, 'wxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx beta yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy gamma end', 'alpha beta gamma'),
+      (3, 0, 'gamma end', 'alpha beta gamma'),
+      (3, 0, 'wxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx beta yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy gamma end', 'alpha beta gamma')]),
+    ('os', ['4G50l', 'c/beta\r77\x1b'], 'f0436394c2f730e7',
+     [(3, 50, 'wxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx beta yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy gamma end', 'alpha beta gamma'),
+      (3, 51, 'wxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx77beta yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy gamma end', 'alpha beta gamma')]),
+    ('os', ['4G$', 'd?beta\r'], '9a69cc3a7db12cfc',
+     [(4, 151, 'wxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx beta yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy gamma end', 'alpha beta gamma'),
+      (4, 97, 'wxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx d', 'alpha beta gamma')]),
+    ('os', ['4G', '3d/y\r'], 'b36bdf225c58dad4',
+     [(3, 0, 'wxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx beta yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy gamma end', 'alpha beta gamma'),
+      (3, 0, 'yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy gamma end', 'alpha beta gamma')]),
+    ('os', ['G', 'd?beta\r'], 'f1c24d7d32bc0fee',
+     [(7, 0, 'last line', 'alpha beta gamma'),
+      (6, 11, 'gamma delta ', 'alpha beta gamma')]),
+    ('os', ['5G', 'd/gamma\r'], 'f9ceddefaa4d58ba',
+     [(5, 0, '', 'alpha beta gamma'),
+      (5, 0, 'gamma delta beta', 'alpha beta gamma')]),
+    ('os', ['5G', 'c/gamma\r77\x1b'], '2a4a4113dbc3f4d2',
+     [(5, 0, '', 'alpha beta gamma'),
+      (5, 1, '77', 'alpha beta gamma')]),
+    ('os', ['gg', '/beta\r', 'G', 'dn'], '9fff1d81e2f9f69d',
+     [(0, 0, 'alpha beta gamma', 'alpha beta gamma'),
+      (0, 6, 'alpha beta gamma', 'alpha beta gamma'),
+      (7, 0, 'last line', 'alpha beta gamma'),
+      (0, 5, 'alpha ', 'alpha ')]),
+    ('os', ['gg', '/beta\r', 'dN'], '40e25e9fd93ea498',
+     [(0, 0, 'alpha beta gamma', 'alpha beta gamma'),
+      (0, 6, 'alpha beta gamma', 'alpha beta gamma'),
+      (0, 6, 'alpha beta', 'alpha beta')]),
+    ('os', ['gg', '2d/beta\r'], 'f1eec89234f98cca',
+     [(0, 0, 'alpha beta gamma', 'alpha beta gamma'),
+      (0, 0, 'beta line', 'beta line')]),
+    ('os', ['gg', 'd2/beta\r', 'u'], '5ec5de44b931801f',
+     [(0, 0, 'alpha beta gamma', 'alpha beta gamma'),
+      (0, 0, 'beta line', 'beta line'),
+      (0, 0, 'alpha beta gamma', 'alpha beta gamma')]),
+    ('os', ['gg', 'd/beta\r', '2G0', '.'], 'e8f61b1e78e8dc76',
+     [(0, 0, 'alpha beta gamma', 'alpha beta gamma'),
+      (0, 0, 'beta gamma', 'beta gamma'),
+      (1, 0, '    indented beta line', 'beta gamma'),
+      (1, 0, 'beta line', 'beta gamma')]),
+    ('os', ['gg', 'c/gamma\r77\x1b', 'j0', '.'], '6257ae89282cd8b5',
+     [(0, 0, 'alpha beta gamma', 'alpha beta gamma'),
+      (0, 1, '77gamma', '77gamma'),
+      (1, 0, '    indented beta line', '77gamma'),
+      (1, 1, '77gamma end', '77gamma')]),
+    ('os', ['gg', '/beta\r', 'gg', 'd/\r'], '68464a2af44a5137',
+     [(0, 0, 'alpha beta gamma', 'alpha beta gamma'),
+      (0, 6, 'alpha beta gamma', 'alpha beta gamma'),
+      (0, 0, 'alpha beta gamma', 'alpha beta gamma'),
+      (0, 0, 'beta gamma', 'beta gamma')]),
+    ('os', ['gg', 'd/zzz\r', 'x'], 'cfcc5d02e068b7c0',
+     [(0, 0, 'alpha beta gamma', 'alpha beta gamma'),
+      (0, 0, 'alpha beta gamma', 'alpha beta gamma'),
+      (0, 0, 'lpha beta gamma', 'lpha beta gamma')]),
+    ('os', ['gg', 'd/be\x1b', 'x'], 'cfcc5d02e068b7c0',
+     [(0, 0, 'alpha beta gamma', 'alpha beta gamma'),
+      (0, 0, 'alpha beta gamma', 'alpha beta gamma'),
+      (0, 0, 'lpha beta gamma', 'lpha beta gamma')]),
+    ('os', ['gg', 'd/\x08', 'x'], 'cfcc5d02e068b7c0',
+     [(0, 0, 'alpha beta gamma', 'alpha beta gamma'),
+      (0, 0, 'alpha beta gamma', 'alpha beta gamma'),
+      (0, 0, 'lpha beta gamma', 'lpha beta gamma')]),
+    ('os', ['gg', 'c/zzz\r77\x1b', 'x'], 'cfcc5d02e068b7c0',
+     [(0, 0, 'alpha beta gamma', 'alpha beta gamma'),
+      (0, 0, 'alpha beta gamma', 'alpha beta gamma'),
+      (0, 0, 'lpha beta gamma', 'lpha beta gamma')]),
+    ('os', ['gg', 'c/be\x1b', 'x'], 'cfcc5d02e068b7c0',
+     [(0, 0, 'alpha beta gamma', 'alpha beta gamma'),
+      (0, 0, 'alpha beta gamma', 'alpha beta gamma'),
+      (0, 0, 'lpha beta gamma', 'lpha beta gamma')]),
+    ('os', ['gg', 'cn77\x1b', 'x'], 'cfcc5d02e068b7c0',
+     [(0, 0, 'alpha beta gamma', 'alpha beta gamma'),
+      (0, 0, 'alpha beta gamma', 'alpha beta gamma'),
+      (0, 0, 'lpha beta gamma', 'lpha beta gamma')]),
+    ('os', ['gg', 'c?gamma\x08\x08\x08\x08\x08\x08', 'x'], 'cfcc5d02e068b7c0',
+     [(0, 0, 'alpha beta gamma', 'alpha beta gamma'),
+      (0, 0, 'alpha beta gamma', 'alpha beta gamma'),
+      (0, 0, 'lpha beta gamma', 'lpha beta gamma')]),
+]
+
+
+def opsrch_like_vim():
+    """d and c over a search land the cursor and leave the file where vim
+    does, on a line wider than the screen too."""
+    import hashlib
+    files = opsrch_files()
+    for f, keys, sha, want in VIM_OPSRCH:
+        e = Editor(files[f])
+        try:
+            for k, (wrow, wcol, wcur, wtop) in zip(keys, want):
+                if k.endswith('\x1b'):
+                    send_keys(e, k[:-1])
+                    send_keys(e, '\x1b')
+                else:
+                    e.key(k)
+                r = rows(e); v = e.screen()
+                dc, lr = curs(e, v)
+                shown = lambda t: expand(t)[:80].rstrip()
+                got = (v.row, dc, r[lr], r[0])
+                check(f'vim opsrch {keys!r} {k!r}: {got[:2]} {got[2][:14]!r} '
+                      f'== {(wrow, wcol)} {wcur[:14]!r}',
+                      got == (wrow, wcol, shown(wcur), shown(wtop)))
+            e.key(':w\r')
+            ex_settled(e)
+            got = hashlib.sha1(saved_bytes(e)).hexdigest()[:16]
+            check(f'vim opsrch {keys!r}: file as vim wrote it ({got})', got == sha)
+        finally:
+            e.close()
+
+
 def srch_cmds():
     """A search that finds nothing puts the cursor back where it started, in
     the FILE: the sweep has paged the window to the far end and round again by
@@ -5740,25 +6029,30 @@ def srch_cmds():
 
 
 def opsrch_cmds():
-    """d c y over / ? n N are not built (issue #44).  Until they are, the
-    operator refuses: it rings, reads a '/' or '?' line to its end and throws it
-    away, and changes nothing.  Before this the operator and the motion key
-    were dropped without a word, so 'd/QJQK<CR>' ran the pattern as commands:
-    its 'J' joined two lines.  The count goes with the refusal, as with any
-    dropped operator: the next 'x' deletes one character, not three."""
+    """d and c take / ? n N as their motion (issue #44; VIM_OPSRCH and OPMX
+    compare them with vim).  These are the cases vim cannot be the reference
+    for.  'y' takes linewise motions only (COMMANDS.md), and a search is
+    charwise, so 'y' refuses one: it rings, reads a '/' or '?' line to its end
+    and throws it away, so that the pattern cannot run as commands ('y/QJQK'
+    would run its 'J'), and changes nothing -- and the count goes with it, so
+    the next 'x' deletes one character, not three.  On 100 K a span the window
+    still holds is taken, as vim takes it, and one it has paged out of the
+    window is refused as 'd`a' over it is: the bell, the cursor where it was,
+    the file untouched.  An ESC during a long one stops the search and drops
+    the operator."""
     pat = 'QJQK'
     wide = [('w%03d' % i) + 'y' * 115 for i in range(1, 7)]   # no blank:
-    wide[1] = wide[1][:100] + pat     #   '4G' lands on column 0 every time + wide[1][104:]
+    wide[1] = wide[1][:100] + pat + wide[1][104:]  # '4G' lands on column 0
     files = {
         'small': [b'a', b'x' + pat.encode(), b'b', b'cdefghijklmnopqrstu', b'd'],
         'wide': [s.encode() for s in wide],
     }
-    cases = [(op + m) for op in 'dcy' for m in ('/' + pat + '\r',
-                                                 '?' + pat + '\r', 'n', 'N')]
+    cases = ['y' + m for m in ('/' + pat + '\r', '?' + pat + '\r', 'n', 'N')]
     for name, lines in files.items():
         model = list(lines)
         e = Editor(b''.join(s + b'\r\n' for s in model))
         try:
+            e.key('1G'); e.key('yy')            # the register holds line 1
             e.key('/' + pat + '\r')             # 'n' and 'N' have a pattern
             for keys in cases:
                 tag = f'#44 {name}: 4G 3{keys!r}'
@@ -5781,15 +6075,13 @@ def opsrch_cmds():
                     check(f'{tag} changes nothing ({g!r})', 'Modified' not in g)
                 e.key('x')                       # one character, not three
                 model[3] = model[3][1:]
-            # 'y/' leaves the register as it was
-            e.key('1G'); e.key('yy'); e.key('4G'); e.key('y/' + pat + '\r')
-            idle(e); e.key('p')
-            model.insert(4, model[0])
+            e.key('p')                           # ... and the register is
+            model.insert(4, model[0])            #   still line 1
             e.key(':w\r'); ex_settled(e)
             got = saved_bytes(e)                 # leaves the editor: last
             want = b''.join(s + b'\r\n' for s in model)
             check(f'#44 {name}: each refusal changed nothing, each x took one '
-                  f'character and y/ kept the register', got == want)
+                  f'character and the register was kept', got == want)
             if got != want:
                 for i, (g, w) in enumerate(zip(got.split(b'\n'),
                                                want.split(b'\n'))):
@@ -5799,31 +6091,68 @@ def opsrch_cmds():
         finally:
             e.close()
 
-    # 100 K: the refusal reads no file -- it is back at once, line 6000 untouched
+    # 100 K.  Taken: a span the window holds, each way -- whole lines when it
+    # starts and ends in a first column (6000..6249 forward, 5800..5999
+    # backward), charwise when it does not (from column 3 of line 5800 to
+    # column 2 of 5802) -- and a 'dN' back to that match from ten lines down:
+    # a span from inside line 5800 to the first column of 5810, so it stops at
+    # the end of 5809 (vim's rule).  Refused: a '/' that wraps to
+    # line 100 and one 6000 lines on, which page the start out of the window
+    # (a search that wraps sweeps to the end of the file first); and a '/'
+    # stopped by ESC on its way.
     big = make(12800)
+    model = [l for l in big.split(b'\r\n')[:-1]]
+
+    def lines(lo, hi):                           # whole lines lo..hi-1, 0-based
+        del model[lo:hi]
+
+    def chars(lo, c0, hi, c1):                   # (lo, c0) up to (hi, c1)
+        model[lo:hi + 1] = [model[lo][:c0] + model[hi][c1:]]
+
     e = Editor(big)
     try:
-        e.key('/000100\r'); idle(e)
-        for keys in ('d/000100\r', 'c?006100\r', 'y/zzzz\r', 'dn', 'cN'):
+        for at, keys, ln, edit in (
+                ('6000G', 'd/006250\r', 6000, lambda: lines(5999, 6249)),
+                ('6000G', 'd?005800\r', 5800, lambda: lines(5799, 5999)),
+                ('5800G3l', 'd/6252\r', 5800, lambda: chars(5799, 3, 5801, 2)),
+                ('5810G', 'dN', 5800, lambda: chars(5799, 3, 5808, 99))):
+            e.key(at); idle(e)
+            e.key(keys); idle(e)
+            g = ctrlg(e)
+            check(f'#44 100k: {at} {keys!r} lands on line {ln} ({g!r})',
+                  f'line {ln} ' in g)
+            edit()
+        n0 = len(model)
+        for keys in ('d/000100\r', 'c/012000\r'):
             e.key('6000G'); idle(e)
             v = e.screen(); before = (v.row, v.col)
             n = len(e.cap.getvalue())
-            e.key(keys)
-            idle(e)
+            e.key(keys); idle(e)
             out = e.cap.getvalue()[n:]
             v = e.screen()
             tag = f'#44 100k: 6000G {keys!r}'
-            check(f'{tag} rings', '\x07' in out)
+            check(f'{tag} is refused: it rings', '\x07' in out)
             check(f'{tag} keeps the cursor ({v.row},{v.col})',
                   (v.row, v.col) == before)
             g = ctrlg(e)
-            check(f'{tag} changes nothing ({g!r})',
-                  'Modified' not in g and 'line 6000 ' in g)
+            check(f'{tag} stays on line 6000 ({g!r})', 'line 6000 ' in g)
+            check(f'{tag} is not in insert mode', 'INSERT' not in g)
+        e.key('6000G'); idle(e)
+        e.key('d/zzzz\r')
+        run_clock(e, 3.0)                        # well into the sweep
+        e.key('\x1b'); idle(e)
+        g = ctrlg(e)
+        check(f'#44 100k: d/zzzz stopped by ESC stays on line 6000 ({g!r})',
+              'line 6000 ' in g)
+        e.key('x')                               # the operator went with it
+        model[5999] = model[5999][1:]
         e.key(':w\r'); ex_settled(e); idle(e)
-        check('#44 100k: the file is saved as it was', saved_bytes(e) == big)
+        want = b''.join(l + b'\r\n' for l in model)
+        got = saved_bytes(e)
+        check(f'#44 100k: the file is what the model says ({len(got)} bytes, '
+              f'{n0} lines before the refusals)', got == want)
     finally:
         e.close()
-
 
 # ---------------------------------------------------------------------------
 # The wrapped pass of a search (issue #35).  The first pass pages from the
@@ -11248,6 +11577,7 @@ def main():
         print('\n=== / ? n N vs vim ===', flush=True)
         srch_like_vim()
         srch_cmds()
+        opsrch_like_vim()
         paint_cost()
     if not args or 'vim' in args or 'swrap' in args:
         print('\n=== a wrapped search reads the file where it lies ===', flush=True)
