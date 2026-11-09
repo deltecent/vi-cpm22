@@ -68,7 +68,7 @@ back to one of them.
   between the top of the program and the BDOS (`BUFEND = [0006H] - 1`; WM's
   `INIT` stops 7 pages lower only when that vector's low byte is not 06H, which
   is something loaded under the BDOS, a debugger for one). With a 56 K CP/M it
-  is 23,298 bytes in this build. **Every byte of the image comes out of
+  is 21,551 bytes in this build. **Every byte of the image comes out of
   the arena**, so the binary is the scarce resource. Commands are priced in
   bytes before they are built, and a command that earns too little gets cut.
 - **The console is a 9600-baud serial line**, about 960 characters a second. A
@@ -355,12 +355,15 @@ move would break:
               pointer row, text + gap, Q-buffer (the yank register), undo region
     BUFEND  = BDOS base - 1   (B605H with a 56 K CP/M; see section 1)
 
-In this build the `.COM` file is 21504 bytes (168 records). **The size that
+In this build the `.COM` file is 23040 bytes (180 records). **The size that
 matters is a 4 K BLOCK BOUNDARY**, because that is what the 8 MB disk
 allocates in: 20480 bytes occupy five blocks and one byte more occupies six.
-This build is past that line by 1024 bytes, by decision (objective 6: the
+This build is past that line by 2560 bytes, by decision (objective 6: the
 bytes went on keys that answer at once), and the next boundary is **24576
 bytes**, so everything between here and there costs the same 24 K on disk.
+What is left that could shrink the image without cutting a command was
+priced for #28: about 1,200 bytes, short of the 2560 that five blocks would
+need.
 What each byte does cost is arena: the yank register and the room to edit in.
 
 **Why a reserve block.** L80 writes every byte up to the top of the image into
